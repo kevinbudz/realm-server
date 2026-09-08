@@ -124,8 +124,9 @@ namespace RotMG.Game.Entities
             }
 
             Parent.MoveEntity(this, pos);
-            if (CheckProjectiles(time))
-                return;
+            //Verify-don't-kill: server never deals bullet damage here, it only
+            //flags systematically unreported contacts (see VerifyProjectiles).
+            VerifyProjectiles(time);
 
             if (desc.Push)
             {
