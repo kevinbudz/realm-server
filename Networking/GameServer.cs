@@ -1,6 +1,7 @@
 ﻿using RotMG.Common;
 using RotMG.Game;
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
@@ -50,15 +51,22 @@ namespace RotMG.Networking
     public class SendState
     {
         public int BytesWritten;
-        public int PacketLength;
-        public byte[] PacketBytes;
+        public int PacketLength; //Total coalesced bytes staged in Data.
         public SocketEventState State;
 
-        public readonly byte[] Data;
+        public byte[] Data; //Pooled single-flush buffer (BufferSize), rented lazily.
 
-        public SendState()
+        public void EnsureBuffer()
         {
-            Data = new byte[0x50000];
+            if (Data == null)
+                Data = ArrayPool<byte>.Shared.Rent(GameServer.BufferSize);
+        }
+
+        public void Grow(int minimumLength)
+        {
+            if (Data != null)
+                ArrayPool<byte>.Shared.Return(Data);
+            Data = ArrayPool<byte>.Shared.Rent(minimumLength);
         }
 
         public void Reset()
@@ -66,7 +74,11 @@ namespace RotMG.Networking
             State = SocketEventState.Awaiting;
             PacketLength = 0;
             BytesWritten = 0;
-            PacketBytes = null;
+            if (Data != null && Data.Length > GameServer.BufferSize)
+            {
+                ArrayPool<byte>.Shared.Return(Data); //Return oversized overflow buffer.
+                Data = null;
+            }
         }
     }
 

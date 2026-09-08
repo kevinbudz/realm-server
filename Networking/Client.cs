@@ -40,6 +40,8 @@ namespace RotMG.Networking
         public bool Active; //Used in escape to stop incoming packets (so you don't die)
         public int DCTime;
 
+        private const int MaxPendingPackets = 256;
+        private const int MaxPendingDisconnect = 1024;
         private Socket _socket;
         private Queue<byte[]> _pending;
         private SendState _send;
@@ -71,21 +73,37 @@ namespace RotMG.Networking
                 Program.Print(PrintType.Error, ex.ToString());
             }
 #endif
-            //Save what's needed
+            //Save what's needed. DB writes go to the worker queue so the tick thread never blocks.
             if (Account != null)
             {
                 Account.Connected = false;
-                Account.Save();
                 Manager.AccountIdToClientId.Remove(Account.Id);
 
+                AccountModel acc = Account;
+                CharacterModel ch = Character;
                 if (Player != null && Player.Parent != null)
                 {
                     Player.SaveToCharacter();
                     Player.Parent.RemoveEntity(Player);
-                    if (!Character.Dead) //Already saved during death.
+                    bool dead = ch == null || ch.Dead; //Already saved during death.
+                    Program.PushWork(() =>
                     {
-                        Database.SaveCharacter(Character);
-                    }
+                        try
+                        {
+                            acc.Save();
+                            if (!dead)
+                                Database.SaveCharacter(ch);
+                        }
+                        catch { }
+                    });
+                }
+                else
+                {
+                    Program.PushWork(() =>
+                    {
+                        try { acc.Save(); }
+                        catch { }
+                    });
                 }
             }
 
@@ -169,6 +187,15 @@ namespace RotMG.Networking
 
         public void Send(byte[] packet)
         {
+            if (_pending.Count >= MaxPendingPackets)
+            {
+                if (_pending.Count >= MaxPendingDisconnect)
+                {
+                    Disconnect(); //Client is not draining; drop it instead of growing without bound.
+                    return;
+                }
+                _pending.TryDequeue(out _); //Drop the stalest packet to make room for fresh state.
+            }
             _pending.Enqueue(packet);
         }
 
@@ -214,27 +241,63 @@ namespace RotMG.Networking
 
         private void StartSend()
         {
-            switch (_send.State)
+            //One coalesced flush per tick: frame everything queued into the pooled
+            //buffer and push it with a single socket send. The socket is non-blocking
+            //(see BeginHandling), so a full kernel buffer just defers the remainder
+            //to a later tick instead of stalling the tick thread.
+            if (_send.State == SocketEventState.Awaiting)
             {
-                case SocketEventState.Awaiting:
-                    if (_pending.TryDequeue(out byte[] packet))
+                if (_pending.Count == 0)
+                    return;
+
+                _send.EnsureBuffer();
+                byte[] buf = _send.Data;
+                int total = 0;
+                int queued = _pending.Count;
+                while (queued-- > 0)
+                {
+                    byte[] packet = _pending.Peek();
+                    int framed = packet.Length + GameServer.PrefixLengthWithId;
+                    if (total + framed > buf.Length)
                     {
-                        _send.PacketBytes = packet;
-                        _send.PacketLength = packet.Length;
-                        _send.State = SocketEventState.InProgress;
-                        StartSend();
+                        if (total == 0)
+                        {
+                            //Single packet larger than the pooled buffer: rent an
+                            //exact-size buffer for this flush (returned on Reset).
+                            _send.Grow(framed);
+                            buf = _send.Data;
+                        }
+                        else break;
                     }
-                    break;
-                case SocketEventState.InProgress:
-                    Buffer.BlockCopy(_send.PacketBytes, 0, _send.Data, GameServer.PrefixLengthWithId, _send.PacketLength);
-                    Buffer.BlockCopy(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(_send.PacketLength + GameServer.PrefixLengthWithId)), 0, _send.Data, 0, GameServer.PrefixLengthWithId);
-                    int written = _socket.Send(_send.Data, _send.BytesWritten, _send.PacketLength + GameServer.PrefixLengthWithId - _send.BytesWritten, SocketFlags.None);
-                    if (written < _send.PacketLength + GameServer.PrefixLengthWithId)
-                        _send.BytesWritten += written;
-                    else
-                        _send.Reset();
-                    StartSend();
-                    break;
+                    _pending.Dequeue();
+                    int length = packet.Length + GameServer.PrefixLengthWithId;
+                    buf[total] = (byte)(length >> 24);
+                    buf[total + 1] = (byte)(length >> 16);
+                    buf[total + 2] = (byte)(length >> 8);
+                    buf[total + 3] = (byte)length;
+                    Buffer.BlockCopy(packet, 0, buf, total + GameServer.PrefixLengthWithId, packet.Length);
+                    total += length;
+                }
+
+                if (total == 0)
+                    return;
+
+                _send.PacketLength = total;
+                _send.BytesWritten = 0;
+                _send.State = SocketEventState.InProgress;
+            }
+
+            try
+            {
+                int written = _socket.Send(_send.Data, _send.BytesWritten, _send.PacketLength - _send.BytesWritten, SocketFlags.None);
+                if (written < _send.PacketLength - _send.BytesWritten)
+                    _send.BytesWritten += written;
+                else
+                    _send.Reset();
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.WouldBlock)
+            {
+                //Kernel buffer full; the remainder goes out on a later tick.
             }
         }
     }

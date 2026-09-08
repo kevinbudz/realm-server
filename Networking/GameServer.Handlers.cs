@@ -382,296 +382,258 @@ namespace RotMG.Networking
 
         public static int Write(Client client, byte[] buffer, int offset, byte[] packet)
         {
-            MemoryStream stream = new MemoryStream(buffer, offset + 4, buffer.Length - offset - 4);
-            stream.Write(packet);
-            int length = (int)stream.Position;
-            Buffer.BlockCopy(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(length + 5)), 0, buffer, offset, 4);
-            return length + 5;
+            int length = packet.Length + 5;
+            buffer[offset] = (byte)(length >> 24);
+            buffer[offset + 1] = (byte)(length >> 16);
+            buffer[offset + 2] = (byte)(length >> 8);
+            buffer[offset + 3] = (byte)length;
+            Buffer.BlockCopy(packet, 0, buffer, offset + 4, packet.Length);
+            return length;
         }
 
         public static byte[] MapInfo(int width, int height, string name, string displayName, uint seed, int background, bool showDisplays, bool allowPlayerTeleport)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.MapInfo);
-                wtr.Write(width);
-                wtr.Write(height);
-                wtr.Write(name);
-                wtr.Write(displayName);
-                wtr.Write(seed);
-                wtr.Write(background);
-                wtr.Write(showDisplays);
-                wtr.Write(allowPlayerTeleport);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.MapInfo);
+            wtr.Write(width);
+            wtr.Write(height);
+            wtr.Write(name);
+            wtr.Write(displayName);
+            wtr.Write(seed);
+            wtr.Write(background);
+            wtr.Write(showDisplays);
+            wtr.Write(allowPlayerTeleport);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] InvResult(int result)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.InvResult);
-                wtr.Write(result);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.InvResult);
+            wtr.Write(result);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] Failure(int errorId, string description)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.Failure);
-                wtr.Write(errorId);
-                wtr.Write(description);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Failure);
+            wtr.Write(errorId);
+            wtr.Write(description);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] CreateSuccess(int objectId, int charId)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.CreateSuccess);
-                wtr.Write(objectId);
-                wtr.Write(charId);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.CreateSuccess);
+            wtr.Write(objectId);
+            wtr.Write(charId);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] Update(List<TileData> tiles, List<ObjectDefinition> adds, List<ObjectDrop> drops)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.Update);
-                wtr.Write((short)tiles.Count);
-                foreach (TileData k in tiles)
-                    k.Write(wtr);
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Update);
+            wtr.Write((short)tiles.Count);
+            foreach (TileData k in tiles)
+                k.Write(wtr);
 
-                wtr.Write((short)adds.Count);
-                foreach (ObjectDefinition k in adds)
-                    k.Write(wtr);
+            wtr.Write((short)adds.Count);
+            foreach (ObjectDefinition k in adds)
+                k.Write(wtr);
 
-                wtr.Write((short)drops.Count);
-                foreach (ObjectDrop k in drops)
-                    k.Write(wtr);
+            wtr.Write((short)drops.Count);
+            foreach (ObjectDrop k in drops)
+                k.Write(wtr);
 
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] NewTick(List<ObjectStatus> statuses, Dictionary<StatType, object> playerStats)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.NewTick);
+            wtr.Write((short)statuses.Count);
+            foreach (ObjectStatus k in statuses)
+                k.Write(wtr);
+            if (playerStats.Count > 0)
             {
-                wtr.Write((byte)PacketId.NewTick);
-                wtr.Write((short)statuses.Count);
-                foreach (ObjectStatus k in statuses)
-                    k.Write(wtr);
-                if (playerStats.Count > 0)
+                wtr.Write((byte)playerStats.Count);
+                foreach (KeyValuePair<StatType, object> k in playerStats)
                 {
-                    wtr.Write((byte)playerStats.Count);
-                    foreach (KeyValuePair<StatType, object> k in playerStats)
-                    {
-                        wtr.Write((byte)k.Key);
-                        if (ObjectStatus.IsStringStat(k.Key))
-                            wtr.Write((string)k.Value);
-                        else
-                            wtr.Write((int)k.Value);
-                    }
+                    wtr.Write((byte)k.Key);
+                    if (ObjectStatus.IsStringStat(k.Key))
+                        wtr.Write((string)k.Value);
+                    else
+                        wtr.Write((int)k.Value);
                 }
-                return (wtr.BaseStream as MemoryStream).ToArray();
             }
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] EnemyShoot(int bulletId, int ownerId, byte bulletType, Position startPos, float angle, short damage, byte numShots, float angleInc)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.EnemyShoot);
+            wtr.Write(bulletId);
+            wtr.Write(ownerId);
+            wtr.Write(bulletType);
+            startPos.Write(wtr);
+            wtr.Write(angle);
+            wtr.Write(damage);
+            if (numShots > 1)
             {
-                wtr.Write((byte)PacketId.EnemyShoot);
-                wtr.Write(bulletId);
-                wtr.Write(ownerId);
-                wtr.Write(bulletType);
-                startPos.Write(wtr);
-                wtr.Write(angle);
-                wtr.Write(damage);
-                if (numShots > 1)
-                {
-                    wtr.Write(numShots);
-                    wtr.Write(angleInc);
-                }
-                return (wtr.BaseStream as MemoryStream).ToArray();
+                wtr.Write(numShots);
+                wtr.Write(angleInc);
             }
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] ShowEffect(ShowEffectIndex effect, int targetObjectId, uint color, Position pos1 = new Position(), Position pos2 = new Position())
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.ShowEffect);
-                wtr.Write((byte)effect);
-                wtr.Write(targetObjectId);
-                wtr.Write((int)color);
-                pos1.Write(wtr);
-                if (pos2.X != 0 || pos2.Y != 0)
-                    pos2.Write(wtr);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.ShowEffect);
+            wtr.Write((byte)effect);
+            wtr.Write(targetObjectId);
+            wtr.Write((int)color);
+            pos1.Write(wtr);
+            if (pos2.X != 0 || pos2.Y != 0)
+                pos2.Write(wtr);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] Goto(int objectId, Position pos)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.Goto);
-                wtr.Write(objectId);
-                pos.Write(wtr);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Goto);
+            wtr.Write(objectId);
+            pos.Write(wtr);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] Aoe(Position pos, float radius, int damage, ConditionEffectIndex effect, uint color)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.Aoe);
-                pos.Write(wtr);
-                wtr.Write(radius);
-                wtr.Write((short)damage);
-                wtr.Write((byte)effect);
-                wtr.Write((int)color);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Aoe);
+            pos.Write(wtr);
+            wtr.Write(radius);
+            wtr.Write((short)damage);
+            wtr.Write((byte)effect);
+            wtr.Write((int)color);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] Damage(int targetId, ConditionEffectIndex[] effects, int damage)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.Damage);
-                wtr.Write(targetId);
-                wtr.Write((byte)effects.Length);
-                for (int i = 0; i < effects.Length; i++)
-                    wtr.Write((byte)(effects[i]));
-                wtr.Write((ushort)damage);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Damage);
+            wtr.Write(targetId);
+            wtr.Write((byte)effects.Length);
+            for (int i = 0; i < effects.Length; i++)
+                wtr.Write((byte)(effects[i]));
+            wtr.Write((ushort)damage);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] Death(int accountId, int charId, string killer)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.Death);
-                wtr.Write(accountId);
-                wtr.Write(charId);
-                wtr.Write(killer);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Death);
+            wtr.Write(accountId);
+            wtr.Write(charId);
+            wtr.Write(killer);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] AllyShoot(int ownerId, int containerType, float angle)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.AllyShoot);
-                wtr.Write(ownerId);
-                wtr.Write((short)containerType);
-                wtr.Write(angle);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.AllyShoot);
+            wtr.Write(ownerId);
+            wtr.Write((short)containerType);
+            wtr.Write(angle);
+            return PacketWriter.RentedBytes();
         }
         
         public static byte[] PlaySound(string sound)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.PlaySound);
-                wtr.Write(sound);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.PlaySound);
+            wtr.Write(sound);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] Text(string name, int objectId, int numStars, int bubbleTime, string recipent, string text)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.Text);
-                wtr.Write(name);
-                wtr.Write(objectId);
-                wtr.Write(numStars);
-                wtr.Write((byte)bubbleTime);
-                wtr.Write(recipent);
-                wtr.Write(text);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Text);
+            wtr.Write(name);
+            wtr.Write(objectId);
+            wtr.Write(numStars);
+            wtr.Write((byte)bubbleTime);
+            wtr.Write(recipent);
+            wtr.Write(text);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] AccountList(int accountListId, List<int> accountIds)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.AccountList);
-                wtr.Write(accountListId);
-                wtr.Write((short)accountIds.Count);
-                for (int i = 0; i < accountIds.Count; i++)
-                    wtr.Write(accountIds[i]);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.AccountList);
+            wtr.Write(accountListId);
+            wtr.Write((short)accountIds.Count);
+            for (int i = 0; i < accountIds.Count; i++)
+                wtr.Write(accountIds[i]);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] ServerPlayerShoot(int bulletId, int ownerId, int containerType, Position startPos, float angle, float angleInc, List<Projectile> projs)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.ServerPlayerShoot);
-                wtr.Write(bulletId);
-                wtr.Write(ownerId);
-                wtr.Write((short)containerType);
-                startPos.Write(wtr);
-                wtr.Write(angle);
-                wtr.Write(angleInc);
-                wtr.Write((byte)projs.Count);
-                for (int i = 0; i < projs.Count; i++)
-                    wtr.Write((short)projs[i].Damage);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.ServerPlayerShoot);
+            wtr.Write(bulletId);
+            wtr.Write(ownerId);
+            wtr.Write((short)containerType);
+            startPos.Write(wtr);
+            wtr.Write(angle);
+            wtr.Write(angleInc);
+            wtr.Write((byte)projs.Count);
+            for (int i = 0; i < projs.Count; i++)
+                wtr.Write((short)projs[i].Damage);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] Reconnect(int gameId)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.Reconnect);
-                wtr.Write(gameId);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Reconnect);
+            wtr.Write(gameId);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] Notification(int objectId, string text, uint color)
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.Write((byte)PacketId.Notification);
-                wtr.Write(objectId);
-                wtr.Write(text);
-                wtr.Write((int)color);
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Notification);
+            wtr.Write(objectId);
+            wtr.Write(text);
+            wtr.Write((int)color);
+            return PacketWriter.RentedBytes();
         }
 
         public static byte[] PolicyFile = _policyFile();
         static byte[] _policyFile()
         {
-            using (PacketWriter wtr = new PacketWriter(new MemoryStream()))
-            {
-                wtr.WriteNullTerminatedString(
-                    @"<cross-domain-policy>" +
-                    @"<allow-access-from domain=""*"" to-ports=""*"" />" +
-                    @"</cross-domain-policy>");
-                wtr.Write((byte)'\r');
-                wtr.Write((byte)'\n');
-                return (wtr.BaseStream as MemoryStream).ToArray();
-            }
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.WriteNullTerminatedString(
+                @"<cross-domain-policy>" +
+                @"<allow-access-from domain=""*"" to-ports=""*"" />" +
+                @"</cross-domain-policy>");
+            wtr.Write((byte)'\r');
+            wtr.Write((byte)'\n');
+            return PacketWriter.RentedBytes();
         }
     }
 }

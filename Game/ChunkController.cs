@@ -95,9 +95,9 @@ namespace RotMG.Game
             en.CurrentChunk = null;
         }
 
-        public List<Entity> HitTest(Position target, float radius)
+        public void HitTest(Position target, float radius, List<Entity> result)
         {
-            List<Entity> result = new List<Entity>();
+            result.Clear();
             int size = Convert(radius);
             int beginX = Convert(target.X);
             int beginY = Convert(target.Y);
@@ -111,7 +111,12 @@ namespace RotMG.Game
                     foreach (Entity en in Chunks[x, y].Entities)
                         if (target.Distance(en) < radius)
                             result.Add(en);
+        }
 
+        public List<Entity> HitTest(Position target, float radius)
+        {
+            List<Entity> result = new List<Entity>();
+            HitTest(target, radius, result);
             return result;
         }
 

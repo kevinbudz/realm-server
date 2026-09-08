@@ -32,9 +32,38 @@ namespace RotMG.Networking
 
         public override void Write(float value)
         {
-            byte[] b = BitConverter.GetBytes(value);
-            Array.Reverse(b);
-            base.Write(b);
+            int bits = BitConverter.SingleToInt32Bits(value);
+            base.Write((byte)(bits >> 24));
+            base.Write((byte)(bits >> 16));
+            base.Write((byte)(bits >> 8));
+            base.Write((byte)bits);
+        }
+
+        [ThreadStatic]
+        private static MemoryStream _scratchStream;
+        [ThreadStatic]
+        private static PacketWriter _scratchWriter;
+
+        //Rents a PacketWriter over a per-thread reusable MemoryStream (no per-packet
+        //stream allocation). Not re-entrant: copy RentedBytes() before Rent() again.
+        public static PacketWriter Rent()
+        {
+            if (_scratchStream == null)
+            {
+                _scratchStream = new MemoryStream(512);
+                _scratchWriter = new PacketWriter(_scratchStream);
+            }
+            else
+            {
+                _scratchStream.SetLength(0);
+                _scratchStream.Position = 0;
+            }
+            return _scratchWriter;
+        }
+
+        public static byte[] RentedBytes()
+        {
+            return _scratchStream.ToArray();
         }
 
         public override void Write(string value)
@@ -58,11 +87,10 @@ namespace RotMG.Networking
 
         public static void BlockCopyInt32(byte[] data, int int32)
         {
-            byte[] lengthBytes = BitConverter.GetBytes(IPAddress.NetworkToHostOrder(int32));
-            data[0] = lengthBytes[0];
-            data[1] = lengthBytes[1];
-            data[2] = lengthBytes[2];
-            data[3] = lengthBytes[3];
+            data[0] = (byte)(int32 >> 24);
+            data[1] = (byte)(int32 >> 16);
+            data[2] = (byte)(int32 >> 8);
+            data[3] = (byte)int32;
         }
     }
 }

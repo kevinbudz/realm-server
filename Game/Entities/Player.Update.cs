@@ -67,6 +67,8 @@ namespace RotMG.Game.Entities
         public Dictionary<int, int> EntityUpdates;
         public HashSet<Entity> Entities;
         public HashSet<IntPoint> CalculatedSightCircle;
+        private readonly List<Entity> _hitTestScratch = new List<Entity>();
+        private readonly List<Entity> _dropScratch = new List<Entity>();
 
         public void SendNewTick()
         {
@@ -89,10 +91,10 @@ namespace RotMG.Game.Entities
             HashSet<IntPoint> sight = Parent.BlockSight == 0 ? SightCircle :
                     nUpdate ? CalculateSightCircle() : CalculatedSightCircle;
 
-            List<TileData> tiles = new List<TileData>();
-            List<ObjectDefinition> adds = new List<ObjectDefinition>();
-            List<ObjectDrop> drops = new List<ObjectDrop>();
-            HashSet<int> droppedIds = new HashSet<int>();
+            List<TileData> tiles = null;
+            List<ObjectDefinition> adds = null;
+            List<ObjectDrop> drops = null;
+            HashSet<int> droppedIds = null;
 
             if (nUpdate)
             {
@@ -106,6 +108,8 @@ namespace RotMG.Game.Entities
                     if (tile == null || TileUpdates[x, y] == tile.UpdateCount)
                         continue;
 
+                    if (tiles == null)
+                        tiles = new List<TileData>();
                     tiles.Add(new TileData
                     {
                         TileType = tile.Type,
@@ -117,7 +121,7 @@ namespace RotMG.Game.Entities
                 }
 
                 //Add statics
-                foreach (IntPoint p in SightCircle)
+                foreach (IntPoint p in sight)
                 {
                     int x = p.X + (int)Position.X;
                     int y = p.Y + (int)Position.Y;
@@ -130,6 +134,8 @@ namespace RotMG.Game.Entities
                     {
                         if (Entities.Add(tile.StaticObject))
                         {
+                            if (adds == null)
+                                adds = new List<ObjectDefinition>();
                             adds.Add(tile.StaticObject.GetObjectDefinition());
                             EntityUpdates.Add(tile.StaticObject.Id, tile.StaticObject.UpdateCount);
                         }
@@ -137,80 +143,81 @@ namespace RotMG.Game.Entities
                 }
             }
 
-            foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
+            //Add players (chunk-routed, sight-gated; self passes at 0,0 and must stay tracked for NewTick)
+            Parent.PlayerChunks.HitTest(Position, SightRadius, _hitTestScratch);
+            foreach (Entity en in _hitTestScratch)
             {
+                int dx = (int)en.Position.X - (int)Position.X;
+                int dy = (int)en.Position.Y - (int)Position.Y;
+                if (!sight.Contains(new IntPoint(dx, dy)))
+                    continue;
+
                 if (Entities.Add(en))
                 {
+                    if (adds == null)
+                        adds = new List<ObjectDefinition>();
                     adds.Add(en.GetObjectDefinition());
                     EntityUpdates.Add(en.Id, en.UpdateCount);
                 }
             }
 
-            //Add players
-            foreach (Player player in Parent.Players.Values)
-            {
-                if (Entities.Add(player))
-                {
-                    adds.Add(player.GetObjectDefinition());
-                    EntityUpdates.Add(player.Id, player.UpdateCount);
-                }
-            }
-
             //Add entities
-            foreach (Entity en in Parent.EntityChunks.HitTest(Position, SightRadius))
+            Parent.EntityChunks.HitTest(Position, SightRadius, _hitTestScratch);
+            foreach (Entity en in _hitTestScratch)
             {
-                IntPoint point = new IntPoint
-                {
-                    X = (int)en.Position.X - (int)Position.X,
-                    Y = (int)en.Position.Y - (int)Position.Y
-                };
+                Container container = en as Container;
+                if (container != null && container.OwnerId != -1 && container.OwnerId != Id)
+                    continue;
 
-                if (en is Container)
-                    if ((en as Container).OwnerId != -1 && (en as Container).OwnerId != Id)
-                        continue;
-
-                if (sight.Contains(point) && Entities.Add(en))
+                int dx = (int)en.Position.X - (int)Position.X;
+                int dy = (int)en.Position.Y - (int)Position.Y;
+                if (sight.Contains(new IntPoint(dx, dy)) && Entities.Add(en))
                 {
+                    if (adds == null)
+                        adds = new List<ObjectDefinition>();
                     adds.Add(en.GetObjectDefinition());
                     EntityUpdates.Add(en.Id, en.UpdateCount);
                 }
             }
 
             //Remove entities and statics (as they end up in the same Entities dictionary
+            _dropScratch.Clear();
             foreach (Entity en in Entities)
             {
-                IntPoint point = new IntPoint
-                {
-                    X = (int)en.Position.X - (int)Position.X,
-                    Y = (int)en.Position.Y - (int)Position.Y
-                };
+                if (en == this)
+                    continue;
 
-                if (en.Desc.Static)
+                if (en.Parent != null)
                 {
-                    if (en.Parent == null || !SightCircle.Contains(point))
-                    {
-                        drops.Add(en.GetObjectDrop());
-                        droppedIds.Add(en.Id);
-                        EntityUpdates.Remove(en.Id);
-                    }
+                    int dx = (int)en.Position.X - (int)Position.X;
+                    int dy = (int)en.Position.Y - (int)Position.Y;
+                    if (sight.Contains(new IntPoint(dx, dy)))
+                        continue;
                 }
-                else
-                {
-                    if (en.Parent == null || (!sight.Contains(point) && !en.Desc.Player))
-                    {
-                        drops.Add(en.GetObjectDrop());
-                        droppedIds.Add(en.Id);
-                        EntityUpdates.Remove(en.Id);
-                    }
-                }
+
+                if (drops == null)
+                    drops = new List<ObjectDrop>();
+                if (droppedIds == null)
+                    droppedIds = new HashSet<int>();
+                drops.Add(en.GetObjectDrop());
+                droppedIds.Add(en.Id);
+                EntityUpdates.Remove(en.Id);
+                _dropScratch.Add(en);
             }
 
-            Entities.RemoveWhere(k => droppedIds.Contains(k.Id));
+            foreach (Entity en in _dropScratch)
+                Entities.Remove(en);
 
-            if (tiles.Count > 0 || adds.Count > 0 || drops.Count > 0)
+            int tileCount = tiles == null ? 0 : tiles.Count;
+            int addCount = adds == null ? 0 : adds.Count;
+            int dropCount = drops == null ? 0 : drops.Count;
+            if (tileCount > 0 || addCount > 0 || dropCount > 0)
             {
-                Client.Send(GameServer.Update(tiles, adds, drops));
-                FameStats.TilesUncovered += tiles.Count;
+                Client.Send(GameServer.Update(
+                    tiles == null ? new List<TileData>() : tiles,
+                    adds == null ? new List<ObjectDefinition>() : adds,
+                    drops == null ? new List<ObjectDrop>() : drops));
+                FameStats.TilesUncovered += tileCount;
             }
         }
 

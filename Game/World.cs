@@ -50,6 +50,10 @@ namespace RotMG.Game
         public string Name;
         public string DisplayName;
 
+        private const int SightChunkRadius = (Player.SightRadius + ChunkController.Size - 1) / ChunkController.Size;
+        private readonly HashSet<Chunk> _activeChunks;
+        private readonly HashSet<Entity> _activeEntities;
+
         public World(JSMap map, WorldDesc desc)
         {
             Map = map;
@@ -72,6 +76,9 @@ namespace RotMG.Game
 
             EntityChunks = new ChunkController(Width, Height);
             PlayerChunks = new ChunkController(Width, Height);
+
+            _activeChunks = new HashSet<Chunk>((SightChunkRadius * 2 + 1) * (SightChunkRadius * 2 + 1));
+            _activeEntities = new HashSet<Entity>(256);
 
             ChatMessages = new List<string>();
 
@@ -352,29 +359,33 @@ namespace RotMG.Game
 
         public void Tick()
         {
-            HashSet<Chunk> chunks = new HashSet<Chunk>();
+            if (Players.Count == 0)
+                return;
+
+            _activeChunks.Clear();
             foreach (Entity en in Players.Values)
             {
-                for (int k = -ChunkController.ActiveRadius; k <= ChunkController.ActiveRadius; k++)
-                    for (int j = -ChunkController.ActiveRadius; j <= ChunkController.ActiveRadius; j++)
+                for (int k = -SightChunkRadius; k <= SightChunkRadius; k++)
+                    for (int j = -SightChunkRadius; j <= SightChunkRadius; j++)
                     {
                         Chunk chunk = EntityChunks.GetChunk(en.CurrentChunk.X + k, en.CurrentChunk.Y + j);
                         if (chunk != null)
-                            chunks.Add(chunk);
+                            _activeChunks.Add(chunk);
                     }
             }
 
-            HashSet<Entity> entities = new HashSet<Entity>();
-            entities.UnionWith(Players.Values);
-            entities.UnionWith(Constants.Values);
-            entities.UnionWith(EntityChunks.GetActiveChunks(chunks));
+            _activeEntities.Clear();
+            _activeEntities.UnionWith(Players.Values);
+            _activeEntities.UnionWith(Constants.Values);
+            foreach (Chunk chunk in _activeChunks)
+                _activeEntities.UnionWith(chunk.Entities);
 
             //Send Updates to players
             foreach (Player player in Players.Values)
                 player.SendUpdate();
 
             //Tick logic first
-            foreach (Entity en in entities) 
+            foreach (Entity en in _activeEntities) 
                 if (en.TickEntity())
                     en.Tick();
 
@@ -383,7 +394,7 @@ namespace RotMG.Game
                 player.SendNewTick();
 
             //Clear new stats
-            foreach (Entity en in entities)
+            foreach (Entity en in _activeEntities)
                 if (en.TickEntity())
                     en.NewSVs.Clear();
 

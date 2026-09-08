@@ -120,7 +120,9 @@ namespace RotMG.Game
         public List<State> CurrentStates;
         public Dictionary<int, int> StateCooldown; //Used for cooldowns (could be merged with DynamicObjects but it's faster this way)
         public Dictionary<int, object> StateObject; //Used for things like WanderStates etc.
-        public List<Position> History;
+        public List<Position> History; //Fixed-capacity ring buffer backing store (_historyHead is newest).
+        private int _historyHead;
+        private int _historyCount;
         public bool Dead;
         public bool Constant;
         public int? Lifetime;
@@ -204,7 +206,14 @@ namespace RotMG.Game
             InitStates();
 
             if (this is Player || Behavior != null || Desc.Enemy)
-                History = new List<Position>(Settings.TicksPerSecond * 10);
+            {
+                int historyCapacity = Settings.TicksPerSecond * 10;
+                History = new List<Position>(historyCapacity);
+                for (int i = 0; i < historyCapacity; i++)
+                    History.Add(new Position());
+                _historyHead = -1;
+                _historyCount = 0;
+            }
         }
 
         public virtual void Tick()
@@ -214,9 +223,12 @@ namespace RotMG.Game
 
             if (History != null)
             {
-                if (History.Count == History.Capacity)
-                    History.RemoveAt(History.Capacity - 1);
-                History.Insert(0, Position);
+                _historyHead++;
+                if (_historyHead >= History.Count)
+                    _historyHead = 0;
+                History[_historyHead] = Position;
+                if (_historyCount < History.Count)
+                    _historyCount++;
             }
 
             if (Lifetime != null)
@@ -242,8 +254,14 @@ namespace RotMG.Game
             if (History == null)
                 throw new Exception("This entity does not support position history.");
 #endif
-            if (History.Count > ticksBackwards)
-                return History[ticksBackwards];
+            if (_historyCount > ticksBackwards)
+            {
+                int historySize = History.Count;
+                int historyIndex = (_historyHead - ticksBackwards) % historySize;
+                if (historyIndex < 0)
+                    historyIndex += historySize;
+                return History[historyIndex];
+            }
             return Position;
         }
 

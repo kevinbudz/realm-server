@@ -77,6 +77,9 @@ namespace RotMG
 #if DEBUG
                 Thread.Sleep(2);
 #endif
+#if RELEASE
+                Thread.Sleep(1);
+#endif
             }
 
             Terminate(null, null);

@@ -25,7 +25,9 @@ namespace RotMG.Game
         public static Dictionary<int, int> AccountIdToClientId;
         public static Dictionary<int, Client> Clients;
         public static Dictionary<int, World> Worlds;
-        public static List<Tuple<int, Action>> Timers;
+        public static SortedDictionary<int, Queue<Action>> Timers;
+        private static readonly List<Client> ClientSnapshot = new List<Client>();
+        private static readonly List<World> WorldSnapshot = new List<World>();
         public static BehaviorDb Behaviors;
         public static Stopwatch TickWatch;
         public static int TotalTicks;
@@ -43,7 +45,7 @@ namespace RotMG.Game
             AccountIdToClientId = new Dictionary<int, int>();
             Clients = new Dictionary<int, Client>();
             Worlds = new Dictionary<int, World>();
-            Timers = new List<Tuple<int, Action>>();
+            Timers = new SortedDictionary<int, Queue<Action>>();
 
             Behaviors = new BehaviorDb();
 
@@ -117,7 +119,13 @@ namespace RotMG.Game
 
         public static void AddTimedAction(int time, Action action)
         {
-            Timers.Add(Tuple.Create(TotalTicks + TicksFromTime(time), action));
+            int due = TotalTicks + TicksFromTime(time);
+            if (!Timers.TryGetValue(due, out Queue<Action> queue))
+            {
+                queue = new Queue<Action>();
+                Timers[due] = queue;
+            }
+            queue.Enqueue(action);
         }
 
         public static int TicksFromTime(int time)
@@ -133,21 +141,28 @@ namespace RotMG.Game
         {
             TotalTimeUnsynced = (int)TickWatch.ElapsedMilliseconds;
 
-            foreach (Client client in Clients.Values.ToArray())
+            ClientSnapshot.Clear();
+            ClientSnapshot.AddRange(Clients.Values);
+            foreach (Client client in ClientSnapshot)
                 client.Tick();
 
             if ((int)TickWatch.ElapsedMilliseconds - LastTickTime >= (Settings.MillisecondsPerTick - TickDelta))
             {
                 LastTickTime = (int)TickWatch.ElapsedMilliseconds;
 
-                foreach (Tuple<int, Action> timer in Timers.ToArray())
-                    if (timer.Item1 == TotalTicks)
-                    {
-                        timer.Item2();
-                        Timers.Remove(timer);
-                    }
+                while (Timers.Count > 0)
+                {
+                    KeyValuePair<int, Queue<Action>> next = Timers.First();
+                    if (next.Key > TotalTicks)
+                        break;
+                    Timers.Remove(next.Key);
+                    while (next.Value.Count > 0)
+                        next.Value.Dequeue()();
+                }
 
-                foreach (World world in Worlds.Values.ToArray())
+                WorldSnapshot.Clear();
+                WorldSnapshot.AddRange(Worlds.Values);
+                foreach (World world in WorldSnapshot)
                     world.Tick();
 
                 TickDelta = (int)(TickWatch.ElapsedMilliseconds - LastTickTime);
