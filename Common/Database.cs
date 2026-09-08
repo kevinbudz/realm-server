@@ -1,4 +1,5 @@
-﻿using RotMG.Game;
+﻿using Microsoft.Data.Sqlite;
+using RotMG.Game;
 using RotMG.Game.Entities;
 using RotMG.Utils;
 using System;
@@ -12,7 +13,7 @@ using System.Xml.Linq;
 
 namespace RotMG.Common
 {
-    //XML/Text files combined storage system
+    //SQLite (WAL mode) key/value storage system. Each legacy `.file` key is one row.
     public static class Database
     {
         private const int MaxLegends = 20;
@@ -45,12 +46,48 @@ namespace RotMG.Common
         private const int CharSlotPrice = 2000; //Fame
         private const int SkinPrice = 1000; //Credits
 
+        //Serializes all database access. This is what makes the single-writer
+        //limit of SQLite a non-issue: writes queue here instead of hitting SQLITE_BUSY.
+        private static readonly object _lock = new object();
+        private static string _connectionString;
+
         public static void Init()
         {
             InvalidLoginAttempts = new Dictionary<string, byte>();
             RegisteredAccounts = new Dictionary<string, byte>();
-            if (!Directory.Exists(Settings.DatabaseDirectory))
+            if (!string.IsNullOrWhiteSpace(Settings.DatabaseDirectory) && !Directory.Exists(Settings.DatabaseDirectory))
                 Directory.CreateDirectory(Settings.DatabaseDirectory);
+
+            SqliteConnectionStringBuilder builder = new SqliteConnectionStringBuilder
+            {
+                DataSource = Settings.DatabasePath,
+                Cache = SqliteCacheMode.Shared
+            };
+            _connectionString = builder.ToString();
+
+            lock (_lock)
+            {
+                using (SqliteConnection conn = OpenConnection())
+                {
+                    using (SqliteCommand cmd = conn.CreateCommand())
+                    {
+                        cmd.CommandText = "CREATE TABLE IF NOT EXISTS kv(path TEXT PRIMARY KEY, value TEXT NOT NULL);";
+                        cmd.ExecuteNonQuery();
+                    }
+                    using (SqliteCommand cmd = conn.CreateCommand())
+                    {
+                        cmd.CommandText = "PRAGMA journal_mode=WAL;";
+                        cmd.ExecuteScalar();
+                    }
+                    using (SqliteCommand cmd = conn.CreateCommand())
+                    {
+                        cmd.CommandText = "PRAGMA synchronous=NORMAL;";
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+            }
+
+            MigrateLegacyFiles();
 
             CreateKey("nextAccId", "0", true);
             CreateKey("news", "", true);
@@ -59,6 +96,79 @@ namespace RotMG.Common
                 CreateKey($"legends.{span}", "", true);
 
             FlushLegends();
+        }
+
+        public static void Shutdown()
+        {
+            try
+            {
+                lock (_lock)
+                {
+                    using (SqliteConnection conn = OpenConnection())
+                    using (SqliteCommand cmd = conn.CreateCommand())
+                    {
+                        cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private static SqliteConnection OpenConnection()
+        {
+            SqliteConnection conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using (SqliteCommand cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "PRAGMA busy_timeout = 5000;";
+                cmd.ExecuteNonQuery();
+            }
+            return conn;
+        }
+
+        //Imports pre-existing `*.file` keys once. Originals are left in place as backup.
+        private static void MigrateLegacyFiles()
+        {
+            string dir = Settings.DatabaseDirectory;
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+                return;
+            string[] files;
+            try { files = Directory.GetFiles(dir, "*.file"); }
+            catch { return; }
+            if (files.Length == 0)
+                return;
+            int imported = 0;
+            foreach (string file in files)
+            {
+                string name = Path.GetFileName(file);
+                if (name == null || !name.EndsWith(".file"))
+                    continue;
+                string key = name.Substring(0, name.Length - ".file".Length);
+                string contents;
+                try { contents = File.ReadAllText(file); }
+                catch { continue; }
+                try
+                {
+                    lock (_lock)
+                    {
+                        using (SqliteConnection conn = OpenConnection())
+                        using (SqliteCommand cmd = conn.CreateCommand())
+                        {
+                            cmd.CommandText = "INSERT OR IGNORE INTO kv(path, value) VALUES(@p, @v);";
+                            cmd.Parameters.AddWithValue("@p", key);
+                            cmd.Parameters.AddWithValue("@v", contents);
+                            if (cmd.ExecuteNonQuery() > 0)
+                                imported++;
+                        }
+                    }
+                }
+                catch { }
+            }
+#if DEBUG
+            if (imported > 0)
+                Program.Print(PrintType.Debug, $"Database migrated {imported} legacy keys to SQLite");
+#endif
         }
 
         public static void Tick()
@@ -91,45 +201,85 @@ namespace RotMG.Common
 
         private static void CreateKey(string path, string contents, bool global = false)
         {
-            string combined = CombineKeyPath(path, global);
-            if (!File.Exists(combined))
-                File.WriteAllText(combined, contents);
+            string key = CombineKeyPath(path, global);
+            lock (_lock)
+            {
+                using (SqliteConnection conn = OpenConnection())
+                using (SqliteCommand cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "INSERT OR IGNORE INTO kv(path, value) VALUES(@p, @v);";
+                    cmd.Parameters.AddWithValue("@p", key);
+                    cmd.Parameters.AddWithValue("@v", contents ?? "");
+                    cmd.ExecuteNonQuery();
+                }
+            }
         }
 
         public static void DeleteKey(string path, bool global = false)
         {
-            File.Delete(CombineKeyPath(path, global));
+            string key = CombineKeyPath(path, global);
+            lock (_lock)
+            {
+                using (SqliteConnection conn = OpenConnection())
+                using (SqliteCommand cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "DELETE FROM kv WHERE path = @p;";
+                    cmd.Parameters.AddWithValue("@p", key);
+                    cmd.ExecuteNonQuery();
+                }
+            }
         }
 
-        private static void SetKey(string path, string contents, bool global = false)
+        public static void SetKey(string path, string contents, bool global = false)
         {
-            File.WriteAllText(CombineKeyPath(path, global), contents);
+            string key = CombineKeyPath(path, global);
+            lock (_lock)
+            {
+                using (SqliteConnection conn = OpenConnection())
+                using (SqliteCommand cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "INSERT INTO kv(path, value) VALUES(@p, @v) ON CONFLICT(path) DO UPDATE SET value = excluded.value;";
+                    cmd.Parameters.AddWithValue("@p", key);
+                    cmd.Parameters.AddWithValue("@v", contents ?? "");
+                    cmd.ExecuteNonQuery();
+                }
+            }
         }
 
-        private static void SetKeyLines(string path, string[] contents, bool global = false)
+        public static void SetKeyLines(string path, string[] contents, bool global = false)
         {
-            File.WriteAllLines(CombineKeyPath(path, global), contents);
+            SetKey(path, string.Join("\n", contents ?? new string[0]), global);
         }
 
-        private static string GetKey(string path, bool global = false)
+        public static string GetKey(string path, bool global = false)
         {
-            string combined = CombineKeyPath(path, global);
-            if (!File.Exists(combined))
+            string key = CombineKeyPath(path, global);
+            lock (_lock)
+            {
+                using (SqliteConnection conn = OpenConnection())
+                using (SqliteCommand cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT value FROM kv WHERE path = @p;";
+                    cmd.Parameters.AddWithValue("@p", key);
+                    object result = cmd.ExecuteScalar();
+                    return result == null || result == DBNull.Value ? null : (string)result;
+                }
+            }
+        }
+
+        public static string[] GetKeyLines(string path, bool global = false)
+        {
+            string value = GetKey(path, global);
+            if (value == null)
                 return null;
-            return File.ReadAllText(combined);
-        }
-
-        private static string[] GetKeyLines(string path, bool global = false)
-        {
-            string combined = CombineKeyPath(path, global);
-            if (!File.Exists(combined))
-                return null;
-            return File.ReadAllLines(combined);
+            if (value.Length == 0)
+                return new string[0];
+            return value.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
         }
 
         public static string CombineKeyPath(string path, bool global = false)
         {
-            return $"{Settings.DatabaseDirectory}/{(global ? "@" : "")}{path}.file";
+            return (global ? "@" : "") + path;
         }
 
         public static bool CanRegisterAccount(string ip)
@@ -212,14 +362,20 @@ namespace RotMG.Common
             if (IdFromUsername(username) != -1)
                 return RegisterStatus.UsernameTaken;
 
-            int id = int.Parse(GetKey("nextAccId", true));
+            //Account id allocation plus its login keys must be atomic so two
+            //concurrent registers can never receive the same id.
+            int id;
             string salt = MathUtils.GenerateSalt();
-            SetKey("nextAccId", (id + 1).ToString(), true);
+            lock (_lock)
+            {
+                id = int.Parse(GetKey("nextAccId", true));
+                SetKey("nextAccId", (id + 1).ToString(), true);
 
-            SetKey($"login.username.{username}", id.ToString());
-            SetKey($"login.id.{id}", username);
-            SetKey($"login.hash.{id}", (password + salt).ToSHA1());
-            SetKey($"login.salt.{id}", salt);
+                SetKey($"login.username.{username}", id.ToString());
+                SetKey($"login.id.{id}", username);
+                SetKey($"login.hash.{id}", (password + salt).ToSHA1());
+                SetKey($"login.salt.{id}", salt);
+            }
 
             AccountModel acc = new AccountModel(id)
             {

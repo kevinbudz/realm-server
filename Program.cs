@@ -101,6 +101,11 @@ namespace RotMG
                 GameServer.Stop();
             }
             catch { }
+            try
+            {
+                Database.Shutdown();
+            }
+            catch { }
         }
 
         public static void StartTerminating()

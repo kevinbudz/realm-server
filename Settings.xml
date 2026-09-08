@@ -1,4 +1,5 @@
 ﻿<Settings res="Resources" db="Database">
+<!--db is a directory (realm.db is created inside it) or a direct .db file path-->
 	<MaxClients>256</MaxClients>
 	<Address>127.0.0.1</Address>
 	<Ports>7777:2050</Ports>

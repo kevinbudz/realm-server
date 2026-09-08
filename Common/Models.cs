@@ -18,26 +18,27 @@ namespace RotMG.Common
     public abstract class DatabaseModel : IDatabaseInfo
     {
         public XElement Data;
-        public readonly string Path;
+        public readonly string Key;
+        public string Path => Key;
         public DatabaseModel(string key)
         {
             if (!string.IsNullOrWhiteSpace(key))
             {
-                Path = Database.CombineKeyPath(key);
+                Key = key;
                 Reload();
             }
         }
 
         public void Reload()
         {
-            if (File.Exists(Path))
-                Data = XElement.Parse(File.ReadAllText(Path));
+            string raw = Database.GetKey(Key);
+            Data = string.IsNullOrWhiteSpace(raw) ? null : XElement.Parse(raw);
         }
 
         public void Save()
         {
             Data = Export(false);
-            File.WriteAllText(Path, Data.ToString());
+            Database.SetKey(Key, Data.ToString());
         }
 
         public bool IsNull => Data == null;
