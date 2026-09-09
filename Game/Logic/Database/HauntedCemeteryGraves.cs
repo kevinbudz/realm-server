@@ -477,7 +477,6 @@ namespace RotMG.Game.Logic.Database
                 )
             );
             db.Init("Arena Grave Caretaker",
-                new ScaleHP2(35),
                 new State("Ini",
                     new Prioritize(
                         new StayBack(0.6, 4),

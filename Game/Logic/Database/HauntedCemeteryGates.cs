@@ -461,7 +461,6 @@ namespace RotMG.Game.Logic.Database
                 new Shoot(24, 8, 45, 0, fixedAngle: 22.5f, cooldown: 600)
             );
             db.Init("Arena Ghost Bride",
-                new ScaleHP2(35),
                 new State("Ini",
                     new Prioritize(
                         new Wander(0.3f),
@@ -530,7 +529,6 @@ namespace RotMG.Game.Logic.Database
                 )
             );
             db.Init("Arena Statue Right",
-                new ScaleHP2(35),
                 new State("Ini",
                     new ConditionalEffect(ConditionEffectIndex.Invincible),
                     new SetAltTexture(1)
@@ -596,7 +594,6 @@ namespace RotMG.Game.Logic.Database
                 )
             );
             db.Init("Arena Statue Left",
-                new ScaleHP2(35),
                 new State("Ini",
                     new ConditionalEffect(ConditionEffectIndex.Invincible),
                     new SetAltTexture(1)

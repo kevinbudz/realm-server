@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 namespace RotMG.Game.Logic.Behaviors
 {
-    public class ScaleHP2 : Behavior
+    public class ScaleHP : Behavior
     {
         private class ScaleState
         {
@@ -17,7 +17,7 @@ namespace RotMG.Game.Logic.Behaviors
         public readonly int ScaleAfter;
         public readonly float Range;
 
-        public ScaleHP2(int amount, int scaleStart = 0, double range = 25.0)
+        public ScaleHP(int amount, int scaleStart = 0, double range = 25.0)
         {
             Percentage = amount;
             ScaleAfter = scaleStart;

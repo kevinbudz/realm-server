@@ -425,7 +425,8 @@ namespace RotMG.Game
                 throw new Exception("Entity has already been added.");
 #endif
 
-            if (GetTileF(at.X, at.Y) == null)
+            Tile targetTile = GetTileF(at.X, at.Y);
+            if (targetTile == null)
                 return -1;
 
             en.Id = ++NextObjectId;
@@ -433,9 +434,18 @@ namespace RotMG.Game
             en.Position = at;
             MoveEntity(en, en.Position);
 
-            if (en is StaticObject)
+            if (en is StaticObject staticObj)
             {
-                Statics.Add(en.Id, en as StaticObject);
+                Statics.Add(en.Id, staticObj);
+                //Clients discover statics through their tile (see Player
+                //updates); without this link runtime-spawned portals and
+                //other statics stay invisible (mirrors PlacePortal).
+                if (targetTile.StaticObject == null)
+                {
+                    targetTile.StaticObject = staticObj;
+                    targetTile.UpdateCount++;
+                    UpdateCount++;
+                }
                 return en.Id;
             }
 
@@ -475,9 +485,18 @@ namespace RotMG.Game
             if (en.Id == 0)
                 throw new Exception("Entity has not been added yet.");
 #endif     
-            if (en is StaticObject)
+            if (en is StaticObject staticObj)
             {
                 Statics.Remove(en.Id);
+                //Clear the tile link so removed statics (e.g. expired
+                //portals) disappear instead of lingering as ghosts.
+                Tile tile = GetTileF(en.Position.X, en.Position.Y);
+                if (tile != null && tile.StaticObject == staticObj)
+                {
+                    tile.StaticObject = null;
+                    tile.UpdateCount++;
+                    UpdateCount++;
+                }
                 en.Dispose();
                 return;
             }

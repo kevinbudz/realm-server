@@ -585,6 +585,85 @@ namespace RotMG.Game.Logic.Database
                 ),
                 new Shoot(8, 1, index: 0, cooldown: 800)
             );
+            db.Init("Troll 1",
+                new Prioritize(
+                    new Charge(1.1, 8, 3000),
+                    new Follow(0.5, 15, 2, 4000, 2000)
+                ),
+                new Shoot(5, 1, index: 0, cooldown: 1000)
+            );
+            db.Init("Troll 2",
+                new Orbit(0.5, 5, 10),
+                new Prioritize(
+                    new Follow(1.1, 15, 6, 4000, 5000)
+                ),
+                new Shoot(8, 1, index: 0, predictive: 1, cooldown: 1600),
+                new Grenade(radius: 3, range: 6, damage: 85, cooldown: 2000)
+            );
+            db.Init("Troll 3",
+                new State("Ini",
+                    new ConditionalEffect(ConditionEffectIndex.Invincible),
+                    new State("Check1",
+                        new EntityExistsTransition("Area 1 Controller", 999, "2")
+                    ),
+                    new State("2",
+                        new MoveTo(0.9f, 21f, 21f)
+                    ),
+                    new Taunt("This forest will be your tomb!"),
+                    new TossObject("Arena Mushroom", 7, cooldown: 3000),
+                    new TimedTransition(2000, "Normal")
+                ),
+                new State("Normal",
+                    new Prioritize(
+                        new Wander(0.3f)
+                    ),
+                    new Follow(0.6, 10, 3, 5000, 5500),
+                    new Shoot(8, 1, index: 0, cooldown: 1000),
+                    new Shoot(24, 6, 60, 1, fixedAngle: 30, cooldown: 2000),
+                    new TossObject("Arena Mushroom", 7, cooldown: 3000),
+                    new HpLessTransition(0.7, "Summon")
+                ),
+                new State("Summon",
+                    new ConditionalEffect(ConditionEffectIndex.Invulnerable),
+                    new Taunt("I call upon the aid of warriors past! Smite these trespassers!"),
+                    new Spawn("Arena Skeleton", maxChildren: 5, cooldown: 4000),
+                    new Shoot(24, 6, 60, 1, fixedAngle: 0, cooldown: 1500),
+                    new Shoot(24, 6, 60, 1, fixedAngle: 30, cooldown: 1500),
+                    new TossObject("Arena Mushroom", 7, cooldown: 3000),
+                    new EntitiesNotExistsTransition(99, "Enrage", "Arena Skeleton")
+                ),
+                new State("Enrage",
+                    new Flash(0xFFFFFF, 0.1, 15),
+                    new ChangeSize(1, 200),
+                    new Follow(1.1, 10, 3, 5000, 5500),
+                    new Charge(1.3, 7, 3000),
+                    new Shoot(24, 6, 60, 1, fixedAngle: 0, cooldown: 900),
+                    new TossObject("Arena Mushroom", 7, cooldown: 1500),
+                    new TimedTransition(15000, "Normal 2")
+                ),
+                new State("Normal 2",
+                    new Wander(0.3f),
+                    new ChangeSize(1, 150),
+                    new Follow(1.1, 10, 3, 5000, 5500),
+                    new TossObject("Arena Mushroom", 7, cooldown: 3000),
+                    new Shoot(8, 1, index: 0, cooldown: 1000),
+                    new HpLessTransition(0.4, "Summon")
+                ),
+                new Threshold(0.005f,
+                    new TierLoot(10, TierLoot.LootType.Weapon, 0.07f),
+                    new TierLoot(11, TierLoot.LootType.Weapon, 0.07f),
+                    new TierLoot(4, TierLoot.LootType.Ability, 0.07f),
+                    new TierLoot(5, TierLoot.LootType.Ability, 0.07f),
+                    new TierLoot(11, TierLoot.LootType.Armor, 0.07f),
+                    new TierLoot(12, TierLoot.LootType.Armor, 0.07f),
+                    new TierLoot(4, TierLoot.LootType.Ring, 0.07f),
+                    new TierLoot(5, TierLoot.LootType.Ring, 0.07f)
+                ),
+                new Threshold(0.01f,
+                    new ItemLoot("Potion of Speed", 0.8f),
+                    new ItemLoot("Potion of Wisdom", 0.8f)
+                )
+            );
             db.Init("Arena Mushroom",
                 new State("Ini",
                     new PlayerWithinTransition(3, "A1", seeInvis: true)

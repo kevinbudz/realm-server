@@ -73,7 +73,6 @@ namespace RotMG.Game.Logic.Database
                 )
             );
             db.Init("Ghost of Skuld",
-                new ScaleHP2(20),
                 new State("wait1",
                     new ConditionalEffect(ConditionEffectIndex.Invulnerable),
                     new Taunt("Hello Heroes!"),
