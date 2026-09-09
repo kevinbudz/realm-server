@@ -500,9 +500,16 @@ namespace RotMG.Networking
                     return;
                 }
 
+                if (world is RealmWorld && !world.AllowedAccess(client))
+                {
+                    client.Send(Failure(0, "Realm closed."));
+                    Manager.AddTimedAction(1000, client.Disconnect);
+                    return;
+                }
+
                 uint seed = (uint)MathUtils.NextInt(1, int.MaxValue - 1);
                 client.Random = new wRandom(seed);
-                client.Send(MapInfo(world.Width, world.Height, world.Name, world.DisplayName, seed, world.Background, world.ShowDisplays, world.AllowTeleport));
+                client.Send(MapInfo(world.Width, world.Height, world.Name, world.GetDisplayName(), seed, world.Background, world.ShowDisplays, world.AllowTeleport));
                 client.State = ProtocolState.Awaiting; //Allow the processing of Load/Create.
             }
         }
@@ -523,6 +530,12 @@ namespace RotMG.Networking
                 }
 
                 World world = Manager.GetWorld(client.TargetWorldId);
+                if (world is RealmWorld && !world.AllowedAccess(client))
+                {
+                    client.Send(Failure(0, "Realm closed."));
+                    Manager.AddTimedAction(1000, client.Disconnect);
+                    return;
+                }
                 client.Character = character;
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
@@ -546,6 +559,12 @@ namespace RotMG.Networking
                 }
 
                 World world = Manager.GetWorld(client.TargetWorldId);
+                if (world is RealmWorld && !world.AllowedAccess(client))
+                {
+                    client.Send(Failure(0, "Realm closed."));
+                    Manager.AddTimedAction(1000, client.Disconnect);
+                    return;
+                }
                 client.Character = character;
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;

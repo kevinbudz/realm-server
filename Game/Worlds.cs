@@ -29,7 +29,17 @@ namespace RotMG.Game
 
         public RealmWorld(JSMap map, WorldDesc desc) : base(map, desc)
         {
+            SBName = Oryx.GetRandomRealmName();
+            Setpieces.SetPieces.ApplySetPieces(this);
             Overseer = new Oryx(this);
+        }
+
+        //The closing realm resets its map, so even admins cannot stay
+        //(mirrors reference Realm.AllowedAccess). Client.Account has no
+        //Admin flag in this codebase, so there is no bypass.
+        public override bool AllowedAccess(Client client)
+        {
+            return !Closed;
         }
 
         protected override void OnTick()

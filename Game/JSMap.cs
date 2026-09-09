@@ -92,8 +92,8 @@ namespace RotMG.Game
                 loc o = json.dict[i];
                 dict[(ushort)i] = new JSTile
                 {
-                    GroundType = o.ground == null ? (ushort)255 : Resources.Id2Tile[o.ground].Type,
-                    ObjectType = o.objs == null ? (ushort)255 : Resources.Id2Object[o.objs[0].id].Type,
+                    GroundType = o.ground == null ? (ushort)255 : ResolveGround(o.ground),
+                    ObjectType = o.objs == null ? (ushort)255 : ResolveObject(o.objs[0].id),
                     Key = o.objs == null ? null : o.objs[0].name,
                     Region = o.regions == null ? Region.None : ParseRegion(o.regions[0].id)
                 };
@@ -128,6 +128,26 @@ namespace RotMG.Game
 
             InitRegions();
         } 
+
+        //realm-src-master stores map object ids as strings and resolves them at
+        //instantiate time, so maps may reference ids with no GameData entry
+        //(e.g. OryxCastle.jm's md placer markers). Warn and drop them instead
+        //of crashing the world load.
+        private static ushort ResolveGround(string id)
+        {
+            if (Resources.Id2Tile.TryGetValue(id, out TileDesc desc))
+                return desc.Type;
+            Program.Print(PrintType.Warn, $"Unknown map ground <{id}>, treating as <none>.");
+            return 255;
+        }
+
+        private static ushort ResolveObject(string id)
+        {
+            if (Resources.Id2Object.TryGetValue(id, out ObjectDesc desc))
+                return desc.Type;
+            Program.Print(PrintType.Warn, $"Unknown map object <{id}>, skipping.");
+            return 255;
+        }
 
         private static Region ParseRegion(string id)
         {

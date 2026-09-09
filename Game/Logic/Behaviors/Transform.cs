@@ -20,6 +20,7 @@ namespace RotMG.Game.Logic.Behaviors
             World world = host.Parent;
             world.RemoveEntity(host);
             Entity entity = Entity.Resolve(type);
+            entity.Spawned = host.Spawned;
             world.AddEntity(entity, at);
             return true;
         }

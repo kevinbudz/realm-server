@@ -3,6 +3,7 @@ using RotMG.Networking;
 using RotMG.Utils;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace RotMG.Game.Entities
@@ -100,6 +101,92 @@ namespace RotMG.Game.Entities
 
             TrySetSV(StatType.EXP, EXP - GetLevelEXP(Level));
             return levelledUp;
+        }
+
+        //Ported from realm-src-master wServer/realm/entities/player/Player.Leveling.cs.
+        //QuestDat: (priority, minLevel, maxLevel) keyed by ObjectDesc.Id.
+        private static readonly Dictionary<string, Tuple<int, int, int>> QuestDat =
+            new Dictionary<string, Tuple<int, int, int>>()
+        {
+            { "Scorpion Queen", Tuple.Create(1, 1, 6) },
+            { "Bandit Leader", Tuple.Create(1, 1, 6) },
+            { "Hobbit Mage", Tuple.Create(3, 3, 8) },
+            { "Undead Hobbit Mage", Tuple.Create(3, 3, 8) },
+            { "Giant Crab", Tuple.Create(3, 3, 8) },
+            { "Desert Werewolf", Tuple.Create(3, 3, 8) },
+            { "Sandsman King", Tuple.Create(4, 4, 9) },
+            { "Goblin Mage", Tuple.Create(4, 4, 9) },
+            { "Elf Wizard", Tuple.Create(4, 4, 9) },
+            { "Dwarf King", Tuple.Create(5, 5, 10) },
+            { "Swarm", Tuple.Create(6, 6, 11) },
+            { "Shambling Sludge", Tuple.Create(6, 6, 11) },
+            { "Great Lizard", Tuple.Create(7, 7, 12) },
+            { "Wasp Queen", Tuple.Create(8, 7, 20) },
+            { "Horned Drake", Tuple.Create(8, 7, 20) },
+            { "Deathmage", Tuple.Create(5, 6, 11) },
+            { "Great Coil Snake", Tuple.Create(6, 6, 12) },
+            { "Lich", Tuple.Create(8, 6, 20) },
+            { "Actual Lich", Tuple.Create(8, 7, 20) },
+            { "Ent Ancient", Tuple.Create(9, 7, 20) },
+            { "Actual Ent Ancient", Tuple.Create(9, 7, 20) },
+            { "Oasis Giant", Tuple.Create(10, 8, 20) },
+            { "Phoenix Lord", Tuple.Create(10, 9, 20) },
+            { "Ghost King", Tuple.Create(11, 10, 20) },
+            { "Actual Ghost King", Tuple.Create(11, 10, 20) },
+            { "Cyclops God", Tuple.Create(12, 10, 20) },
+            { "Red Demon", Tuple.Create(13, 15, 20) },
+            { "Skull Shrine", Tuple.Create(14, 15, 20) },
+            { "Pentaract", Tuple.Create(14, 15, 20) },
+            { "Cube God", Tuple.Create(14, 15, 20) },
+            { "Grand Sphinx", Tuple.Create(14, 15, 20) },
+            { "Lord of the Lost Lands", Tuple.Create(14, 15, 20) },
+            { "Hermit God", Tuple.Create(14, 15, 20) },
+            { "Ghost Ship", Tuple.Create(14, 15, 20) },
+            { "Dragon Head", Tuple.Create(14, 15, 20) },
+            { "Lucky Ent God", Tuple.Create(14, 15, 20) },
+            { "Lucky Djinn", Tuple.Create(14, 15, 20) },
+            { "Zombie Horde", Tuple.Create(14, 15, 20) },
+            { "Oryx the Mad God 1", Tuple.Create(15, 1, 20) },
+            { "Oryx the Mad God 2", Tuple.Create(15, 1, 20) },
+            { "Oryx the Mad God 3", Tuple.Create(15, 1, 20) },
+            { "Oryx the Mad God 4", Tuple.Create(15, 1, 20) },
+        };
+
+        private Entity FindQuest()
+        {
+            Entity ret = null;
+            double? bestScore = null;
+            foreach (Entity quest in Parent.Quests.Values
+                .OrderBy(q => Position.DistanceSquared(q.Position)))
+            {
+                if (quest.Desc == null || !quest.Desc.Quest)
+                    continue;
+                if (!QuestDat.TryGetValue(quest.Desc.Id, out Tuple<int, int, int> range))
+                    continue;
+                if (Level < range.Item2 || Level > range.Item3)
+                    continue;
+                double score = (20 - Math.Abs(quest.Desc.Level - Level)) * range.Item1
+                    - Position.Distance(quest.Position) / 100;
+                if (bestScore == null || score > bestScore)
+                {
+                    bestScore = score;
+                    ret = quest;
+                }
+            }
+            return ret;
+        }
+
+        public void HandleQuest(bool force = false)
+        {
+            if (force || Manager.TotalTicks % 500 == 0 || Quest == null || Quest.Parent == null)
+            {
+                Entity newQuest = FindQuest();
+                if (newQuest != null && newQuest != Quest)
+                {
+                    Quest = newQuest;
+                    Client.Send(GameServer.QuestObjId(newQuest.Id));
+                }
+            }
         }
     }
 }

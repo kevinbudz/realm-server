@@ -285,6 +285,25 @@ namespace RotMG.Game.Entities
                         SendInfo($"Base Fame: {fameStats.BaseFame}");
                         SendInfo($"Total Fame: {fameStats.TotalFame}");
                         break;
+                    case "/closerealm":
+                        if (!Client.Account.Ranked)
+                        {
+                            SendError("Not ranked");
+                            return;
+                        }
+                        RealmWorld realm = Parent as RealmWorld;
+                        if (realm == null)
+                        {
+                            SendError("Not in a realm.");
+                            return;
+                        }
+                        if (realm.Closing || realm.Closed)
+                        {
+                            SendError("Realm already closing.");
+                            return;
+                        }
+                        realm.Overseer.InitCloseRealm();
+                        break;
                     default:
                         SendError("Unknown command");
                         break;

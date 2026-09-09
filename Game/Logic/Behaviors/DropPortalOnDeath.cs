@@ -17,7 +17,9 @@ namespace RotMG.Game.Logic.Behaviors
 
         public override void Death(Entity host)
         {
-            if (host.Parent == null || !MathUtils.Chance(Probability))
+            if (host.Parent == null || host.Spawned)
+                return;
+            if (host.Parent.Name.Contains("Arena") || !MathUtils.Chance(Probability))
                 return;
             if (!BehaviorHelpers.TryGetObjType(Target, out ushort type))
                 return;

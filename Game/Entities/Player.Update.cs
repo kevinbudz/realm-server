@@ -72,6 +72,7 @@ namespace RotMG.Game.Entities
 
         public void SendNewTick()
         {
+            HandleQuest();
             List<ObjectStatus> statuses = new List<ObjectStatus>();
             foreach (Entity en in Entities)
                 if (EntityUpdates[en.Id] != en.UpdateCount)

@@ -1,6 +1,7 @@
 ﻿using RotMG.Common;
 using RotMG.Game.Entities;
 using RotMG.Game.Entities.Vendors;
+using RotMG.Networking;
 using RotMG.Utils;
 using System;
 using System.Collections.Generic;
@@ -50,6 +51,7 @@ namespace RotMG.Game
 
         public string Name;
         public string DisplayName;
+        public string SBName;
 
         private const int SightChunkRadius = (Player.SightRadius + ChunkController.Size - 1) / ChunkController.Size;
         private readonly HashSet<Chunk> _activeChunks;
@@ -178,6 +180,80 @@ namespace RotMG.Game
             if (!Map.Regions.ContainsKey(region))
                 return new IntPoint(0, 0);
             return Map.Regions[region][MathUtils.Next(Map.Regions[region].Count)];
+        }
+
+        public virtual bool AllowedAccess(Client client)
+        {
+            return true;
+        }
+
+        public string GetDisplayName()
+        {
+            if (!string.IsNullOrEmpty(SBName))
+                return SBName;
+            return DisplayName;
+        }
+
+        //Reference semantics from realm-src-master
+        //wServer/realm/worlds/World.cs: in-bounds, walkable ground
+        //(Resources.Type2Tile NoWalk), no blocking static
+        //(FullOccupy/EnemyOccupySquare always block; OccupySquare
+        //blocks only when spawning).
+        public bool IsPassable(int x, int y, bool spawning = false)
+        {
+            Tile tile = GetTile(x, y);
+            if (tile == null)
+                return false;
+            if (Resources.Type2Tile.TryGetValue(tile.Type, out TileDesc ground) && ground.NoWalk)
+                return false;
+            ObjectDesc blocking = tile.StaticObject?.Desc;
+            if (blocking != null && (blocking.FullOccupy || blocking.EnemyOccupySquare || (spawning && blocking.OccupySquare)))
+                return false;
+            return true;
+        }
+
+        public bool AnyPlayerNearby(double x, double y, double radius = 10)
+        {
+            foreach (Player player in Players.Values)
+            {
+                double dx = player.Position.X - x;
+                double dy = player.Position.Y - y;
+                if (dx * dx + dy * dy < radius * radius)
+                    return true;
+            }
+            return false;
+        }
+
+        //Moves everyone to another world, adapted from realm-src-master
+        //World.QuakeToWorld. There is no earthquake ShowEffect locally
+        //(ShowEffectIndex has no Earthquake member), so the warning
+        //broadcast is skipped; reconnect/disconnect below mirrors
+        //GameServer.Escape and Oryx.CloseRealm. The reference diverts
+        //Paused players to the Nexus, but this codebase has no Paused
+        //condition effect, so everyone goes to newWorld.
+        public void QuakeToWorld(World newWorld)
+        {
+            if (this is RealmWorld realm)
+                realm.Closed = true;
+
+            Manager.AddTimedAction(8000, () =>
+            {
+                foreach (Player player in Players.Values.ToArray())
+                {
+                    Client client = player.Client;
+                    if (client == null)
+                        continue;
+                    client.Active = false;
+                    client.Send(GameServer.Reconnect(newWorld.Id));
+                }
+            });
+            Manager.AddTimedAction(20000, () =>
+            {
+                //Ensure stragglers still here leave the world.
+                foreach (Player player in Players.Values.ToArray())
+                    if (player.Parent == this && player.Client != null)
+                        player.Client.Disconnect();
+            });
         }
 
         public void UpdateTile(int x, int y, ushort type)

@@ -121,6 +121,7 @@ namespace RotMG.Game.Logic.Behaviors
         public static Entity SpawnChild(Entity host, ushort type, Position at)
         {
             Entity entity = Entity.Resolve(type);
+            entity.Spawned = true;
             if (host.Parent.AddEntity(entity, at) == -1)
                 return null;
             return entity;

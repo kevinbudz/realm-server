@@ -31,4 +31,11 @@
 		<ShowDisplays>false</ShowDisplays>
 		<BlockSight>0</BlockSight>
 	</World>
+	<World id="Castle" display="Oryx's Castle">
+		<Maps>Castle/0.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>false</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>1</BlockSight>
+	</World>
 </Worlds>

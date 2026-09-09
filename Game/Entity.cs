@@ -128,6 +128,7 @@ namespace RotMG.Game
         public bool Dead;
         public bool Constant;
         public int? Lifetime;
+        public bool Spawned { get; set; }
 
         public int[] Effects;
         private ConditionEffects _conditionEffects;

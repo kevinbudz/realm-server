@@ -1,0 +1,94 @@
+using RotMG.Common;
+using System;
+
+namespace RotMG.Game.Setpieces
+{
+    //Ported from realm-src-master wServer/realm/setpieces/LichyTemple.cs.
+    public class LichyTemple : ISetPiece
+    {
+        public int Size { get { return 26; } }
+
+        private static readonly string Floor = "Blue Floor";
+        private static readonly string WallA = "Blue Wall";
+        private static readonly string WallB = "Destructible Blue Wall";
+        private static readonly string PillarA = "Blue Pillar";
+        private static readonly string PillarB = "Broken Blue Pillar";
+
+        private readonly Random _rand = new Random();
+
+        public void RenderSetPiece(World world, IntPoint pos)
+        {
+            int[,] t = new int[25, 26];
+
+            for (int x = 2; x < 23; x++)    //Floor
+                for (int y = 1; y < 24; y++)
+                    t[x, y] = _rand.Next() % 10 == 0 ? 0 : 1;
+
+            for (int y = 1; y < 24; y++)    //Perimeters
+                t[2, y] = t[22, y] = 2;
+            for (int x = 2; x < 23; x++)
+                t[x, 23] = 2;
+            for (int x = 0; x < 3; x++)
+                for (int y = 0; y < 3; y++)
+                    t[x + 1, y] = t[x + 21, y] = 2;
+            for (int x = 0; x < 5; x++)
+                for (int y = 0; y < 5; y++)
+                {
+                    if ((x == 0 && y == 0) ||
+                        (x == 0 && y == 4) ||
+                        (x == 4 && y == 0) ||
+                        (x == 4 && y == 4)) continue;
+                    t[x, y + 21] = t[x + 20, y + 21] = 2;
+                }
+
+            for (int y = 0; y < 6; y++)     //Pillars
+                t[9, 4 + 3 * y] = t[15, 4 + 3 * y] = 4;
+
+            for (int x = 0; x < 25; x++)    //Corruption
+                for (int y = 0; y < 26; y++)
+                {
+                    if (t[x, y] == 1 || t[x, y] == 0) continue;
+                    double p = _rand.NextDouble();
+                    if (p < 0.1)
+                        t[x, y] = 1;
+                    else if (p < 0.4)
+                        t[x, y]++;
+                }
+
+            int r = _rand.Next(0, 4);
+            for (int i = 0; i < r; i++)     //Rotation
+                t = SetPieces.RotateCW(t);
+            int w = t.GetLength(0), h = t.GetLength(1);
+
+            for (int x = 0; x < w; x++)    //Rendering
+                for (int y = 0; y < h; y++)
+                {
+                    if (t[x, y] == 1)
+                        SetPieces.PutGround(world, x + pos.X, y + pos.Y, Floor);
+                    else if (t[x, y] == 2)
+                    {
+                        SetPieces.PutGround(world, x + pos.X, y + pos.Y, Floor);
+                        SetPieces.PutStatic(world, x + pos.X, y + pos.Y, WallA);
+                    }
+                    else if (t[x, y] == 3)
+                    {
+                        SetPieces.PutGround(world, x + pos.X, y + pos.Y, Floor);
+                        SetPieces.PutEntity(world, WallB, x + pos.X + 0.5f, y + pos.Y + 0.5f);
+                    }
+                    else if (t[x, y] == 4)
+                    {
+                        SetPieces.PutGround(world, x + pos.X, y + pos.Y, Floor);
+                        SetPieces.PutStatic(world, x + pos.X, y + pos.Y, PillarA);
+                    }
+                    else if (t[x, y] == 5)
+                    {
+                        SetPieces.PutGround(world, x + pos.X, y + pos.Y, Floor);
+                        SetPieces.PutStatic(world, x + pos.X, y + pos.Y, PillarB);
+                    }
+                }
+
+            //Boss
+            SetPieces.SpawnEnemy(world, "Lich", pos.X + Size / 2, pos.Y + Size / 2);
+        }
+    }
+}

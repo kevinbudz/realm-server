@@ -1,5 +1,6 @@
-﻿using RotMG.Common;
+using RotMG.Common;
 using RotMG.Game.Entities;
+using RotMG.Game.Logic.Behaviors;
 using RotMG.Game.Setpieces;
 using SP = RotMG.Game.Setpieces.SetPieces;
 using RotMG.Networking;
@@ -23,7 +24,7 @@ namespace RotMG.Game
             public string[] Killed;
         }
 
-        private static readonly Tuple<string, TauntData>[] CriticalEnemies =
+        private static readonly Tuple<string, TauntData>[] CriticalEnemies = new Tuple<string, TauntData>[]
         {
             Tuple.Create("Lich", new TauntData()
             {
@@ -102,23 +103,29 @@ namespace RotMG.Game
                     "A Red Demon still guards me!"
                 }
             }),
+
             Tuple.Create("Skull Shrine", new TauntData()
             {
                 Spawn = new string[] {
                     "Your futile efforts are no match for a Skull Shrine!"
                 },
                 NumberOfEnemies = new string[] {
-                    "Insects! {COUNT} Skull Shrines still protect me!",
+                    "Insects!  {COUNT} Skull Shrines still protect me",
+                    "You hairless apes will never overcome my {COUNT} Skull Shrines!",
+                    "You frail humans will never defeat my {COUNT} Skull Shrines!",
+                    "Miserable worms like you cannot stand against my {COUNT} Skull Shrines!",
                     "Imbeciles! My {COUNT} Skull Shrines make me invincible!"
                 },
                 Final = new string[] {
-                    "Pathetic fools! A Skull Shrine guards me!",
-                    "Miserable scum! My Skull Shrine is invincible!"
+                    "Pathetic fools!  A Skull Shrine guards me!",
+                    "Miserable scum!  My Skull Shrine is invincible!"
                 },
                 Killed = new string[] {
-                    "You defaced a Skull Shrine! Minions, to arms!",
+                    "You defaced a Skull Shrine!  Minions, to arms!",
                     "{PLAYER} razed one of my Skull Shrines -- I WILL HAVE MY REVENGE!",
-                    "{PLAYER}, you will rue the day you dared to defile my Skull Shrine!"
+                    "{PLAYER}, you will rue the day you dared to defile my Skull Shrine!",
+                    "{PLAYER}, you contemptible pig! Ruining my Skull Shrine will be the last mistake you ever make!",
+                    "{PLAYER}, you insignificant cur! The penalty for destroying a Skull Shrine is death!"
                 }
             }),
             Tuple.Create("Cube God", new TauntData()
@@ -128,16 +135,21 @@ namespace RotMG.Game
                 },
                 NumberOfEnemies = new string[] {
                     "Filthy vermin! My {COUNT} Cube Gods will exterminate you!",
-                    "You piteous cretins! {COUNT} Cube Gods still guard me!"
+                    "Loathsome slugs! My {COUNT} Cube Gods will defeat you!",
+                    "You piteous cretins! {COUNT} Cube Gods still guard me!",
+                    "Your pathetic rabble will never survive against my {COUNT} Cube Gods!",
+                    "You feeble creatures have no hope against my {COUNT} Cube Gods!"
                 },
                 Final = new string[] {
                     "Worthless mortals! A mighty Cube God defends me!",
-                    "Wretched mongrels! An unconquerable Cube God is my bulwark!"
+                    "Wretched mongrels!  An unconquerable Cube God is my bulwark!"
                 },
                 Killed = new string[] {
                     "You have dispatched my Cube God, but you will never escape my Realm!",
                     "{PLAYER}, you pathetic swine! How dare you assault my Cube God?",
-                    "I have many more Cube Gods, {PLAYER}!"
+                    "{PLAYER}, you wretched dog! You killed my Cube God!",
+                    "{PLAYER}, you may have destroyed my Cube God but you will never defeat me!",
+                    "I have many more Cube Gods, {PLAYER}!",
                 }
             }),
             Tuple.Create("Pentaract", new TauntData()
@@ -147,7 +159,10 @@ namespace RotMG.Game
                 },
                 NumberOfEnemies = new string[] {
                     "Wretched creatures! {COUNT} Pentaracts remain!",
-                    "My {COUNT} Pentaracts will protect me forever!"
+                    "You detestable humans will never defeat my {COUNT} Pentaracts!",
+                    "My {COUNT} Pentaracts will protect me forever!",
+                    "Your weak efforts will never overcome my {COUNT} Pentaracts!",
+                    "Defiance is useless! My {COUNT} Pentaracts will crush you!"
                 },
                 Final = new string[] {
                     "I am invincible while my Pentaract stands!",
@@ -156,6 +171,8 @@ namespace RotMG.Game
                 Killed = new string[] {
                     "That was but one of many Pentaracts!",
                     "You have razed my Pentaract, but you will die here in my Realm!",
+                    "{PLAYER}, you lowly scum!  You'll regret that you ever touched my Pentaract!",
+                    "{PLAYER}, you flea-ridden animal! You destoryed my Pentaract!",
                     "{PLAYER}, by destroying my Pentaract you have sealed your own doom!"
                 }
             }),
@@ -165,16 +182,23 @@ namespace RotMG.Game
                     "At last, a Grand Sphinx will teach you to respect!"
                 },
                 NumberOfEnemies = new string[] {
+                    "You dull-spirited apes! You shall pose no challenge for {COUNT} Grand Sphinxes!",
+                    "Regret your choices, blasphemers! My {COUNT} Grand Sphinxes will teach you respect!",
                     "My {COUNT} Grand Sphinxes protect my Chamber with their lives!",
                     "My Grand Sphinxes will bewitch you with their beauty!"
                 },
                 Final = new string[] {
                     "A Grand Sphinx is more than a match for this rabble.",
+                    "You festering rat-catchers! A Grand Sphinx will make you doubt your purpose!",
                     "Gaze upon the beauty of the Grand Sphinx and feel your last hopes drain away."
                 },
                 Killed = new string[] {
                     "The death of my Grand Sphinx shall be avenged!",
-                    "My Grand Sphinx, she was so beautiful. I will kill you myself, {PLAYER}!"
+                    "My Grand Sphinx, she was so beautiful. I will kill you myself, {PLAYER}!",
+                    "My Grand Sphinx had lived for thousands of years! You, {PLAYER}, will not survive the day!",
+                    "{PLAYER}, you up-jumped goat herder! You shall pay for defeating my Grand Sphinx!",
+                    "{PLAYER}, you pestiferous lout! I will not forget what you did to my Grand Sphinx!",
+                    "{PLAYER}, you foul ruffian! Do not think I forget your defiling of my Grand Sphinx!"
                 }
             }),
             Tuple.Create("Lord of the Lost Lands", new TauntData()
@@ -184,16 +208,24 @@ namespace RotMG.Game
                     "My Lord of the Lost Lands will make short work of you!"
                 },
                 NumberOfEnemies = new string[] {
+                    "Cower before your destroyer! You stand no chance against {COUNT} Lords of the Lost Lands!",
+                    "Your pathetic band of fighters will be crushed under the might feet of my {COUNT} Lords of the Lost Lands!",
                     "Feel the awesome might of my {COUNT} Lords of the Lost Lands!",
-                    "Together, my {COUNT} Lords of the Lost Lands will squash you like a bug!"
+                    "Together, my {COUNT} Lords of the Lost Lands will squash you like a bug!",
+                    "Do not run! My {COUNT} Lords of the Lost Lands only wish to greet you!"
                 },
                 Final = new string[] {
                     "Give up now! You stand no chance against a Lord of the Lost Lands!",
-                    "Pathetic fools! My Lord of the Lost Lands will crush you all!"
+                    "Pathetic fools! My Lord of the Lost Lands will crush you all!",
+                    "You are nothing but disgusting slime to be scraped off the foot of my Lord of the Lost Lands!"
                 },
                 Killed = new string[] {
+                    "How dare you foul-mouthed hooligans treat my Lord of the Lost Lands with such indignity!",
                     "What trickery is this?! My Lord of the Lost Lands was invincible!",
-                    "You got lucky this time {PLAYER}, but you stand no chance against me!"
+                    "You win this time, {PLAYER}, but mark my words:  You will fall before the day is done.",
+                    "{PLAYER}, I will never forget you exploited my Lord of the Lost Lands' weakness!",
+                    "{PLAYER}, you have done me a service! That Lord of the Lost Lands was not worthy of serving me.",
+                    "You got lucky this time {PLAYER}, but you stand no chance against me!",
                 }
             }),
             Tuple.Create("Hermit God", new TauntData()
@@ -206,12 +238,17 @@ namespace RotMG.Game
                     "I will enjoy watching my {COUNT} Hermit Gods fight over your corpse!"
                 },
                 Final = new string[] {
+                    "You will be pulled to the bottom of the sea by my mighty Hermit God.",
                     "Flee from my Hermit God, unless you desire a watery grave!",
-                    "My Hermit God will pull you beneath the waves!"
+                    "My Hermit God awaits more sacrifices for the majestic Thessal.",
+                    "My Hermit God will pull you beneath the waves!",
+                    "You will make a tasty snack for my Hermit God!",
                 },
                 Killed = new string[] {
-                    "This is preposterous! There is no way you could have defeated my Hermit God!",
-                    "My Hermit God was more than you'll ever be, {PLAYER}. I will kill you myself!"
+                    "This is preposterous!  There is no way you could have defeated my Hermit God!",
+                    "You were lucky this time, {PLAYER}!  You will rue this day that you killed my Hermit God!",
+                    "You naive imbecile, {PLAYER}! Without my Hermit God, Dreadstump is free to roam the seas without fear!",
+                    "My Hermit God was more than you'll ever be, {PLAYER}. I will kill you myself!",
                 }
             }),
             Tuple.Create("Ghost Ship", new TauntData()
@@ -222,30 +259,30 @@ namespace RotMG.Game
                 },
                 Final = new string[] {
                     "My Ghost Ship will send you to a watery grave.",
+                    "You filthy mongrels stand no chance against my Ghost Ship!",
                     "My Ghost Ship's cannonballs will crush your pathetic Knights!"
                 },
                 Killed = new string[] {
+                    "My Ghost Ship will return!",
                     "Alas, my beautiful Ghost Ship has sunk!",
-                    "{PLAYER}, you foul creature. I shall see to your death personally!"
+                    "{PLAYER}, you foul creature.  I shall see to your death personally!",
+                    "{PLAYER}, has crossed me for the last time! My Ghost Ship shall be avenged.",
+                    "{PLAYER} is such a jerk!",
+                    "How could a creature like {PLAYER} defeat my dreaded Ghost Ship?!",
+                    "The spirits of the sea will seek revenge on your worthless soul, {PLAYER}!"
                 }
             }),
-            //The entries below reference content packs absent from this
-            //project's GameData (Draconis, Shatters, Cemetery bosses and the
-            //empty Boshy trio upstream). They are inert by construction: the
-            //announcer skips entries with no live matches, and the kill hook
-            //only fires on real kills. They activate automatically if the
-            //matching enemies ever gain descriptors and behaviors.
             Tuple.Create("Dragon Head", new TauntData()
             {
                 Spawn = new string[] {
                     "The Rock Dragon has been summoned.",
-                    "Beware my Rock Dragon. All who face him shall perish."
+                    "Beware my Rock Dragon. All who face him shall perish.",
                 },
                 Final = new string[] {
                     "My Rock Dragon will end your pathetic existence!",
                     "Fools, no one can withstand the power of my Rock Dragon!",
                     "The Rock Dragon will guard his post until the bitter end.",
-                    "The Rock Dragon will never let you enter the Lair of Draconis."
+                    "The Rock Dragon will never let you enter the Lair of Draconis.",
                 },
                 Killed = new string[] {
                     "My Rock Dragon will return!",
@@ -254,19 +291,19 @@ namespace RotMG.Game
                     "{PLAYER}, you have angered me for the last time!",
                     "{PLAYER} will never survive the trials that lie ahead.",
                     "A filthy weakling like {PLAYER} could never have defeated my Rock Dragon!!!",
-                    "You shall not live to see the next sunrise, {PLAYER}!"
+                    "You shall not live to see the next sunrise, {PLAYER}!",
                 }
             }),
             Tuple.Create("shtrs Defense System", new TauntData()
             {
                 Spawn = new string[] {
                     "The Shatters has been discovered!?!",
-                    "The Forgotten King has raised his Avatar!"
+                    "The Forgotten King has raised his Avatar!",
                 },
                 Final = new string[] {
                     "Attacking the Avatar of the Forgotten King would be...unwise.",
                     "Kill the Avatar, and you risk setting free an abomination.",
-                    "Before you enter the Shatters you must defeat the Avatar of the Forgotten King!"
+                    "Before you enter the Shatters you must defeat the Avatar of the Forgotten King!",
                 },
                 Killed = new string[] {
                     "The Avatar has been defeated!",
@@ -283,20 +320,39 @@ namespace RotMG.Game
                     "At last, my Zombie Horde will eradicate you like the vermin that you are!",
                     "The full strength of my Zombie Horde has been unleashed!",
                     "Let the apocalypse begin!",
-                    "Quiver with fear, peasants, my Zombie Horde has arrived!"
+                    "Quiver with fear, peasants, my Zombie Horde has arrived!",
                 },
                 Final = new string[] {
                     "A small taste of my Zombie Horde should be enough to eliminate you!",
-                    "My Zombie Horde will teach you the meaning of fear!"
+                    "My Zombie Horde will teach you the meaning of fear!",
                 },
                 Killed = new string[] {
                     "The death of my Zombie Horde is unacceptable! You will pay for your insolence!",
-                    "{PLAYER}, I will kill you myself and turn you into the newest member of my Zombie Horde!"
+                    "{PLAYER}, I will kill you myself and turn you into the newest member of my Zombie Horde!",
                 }
             }),
             Tuple.Create("Boshy", new TauntData()),
             Tuple.Create("The Kid", new TauntData()),
             Tuple.Create("Sanic", new TauntData())
+        };
+
+        private static string[] _realmNames = 
+        {
+            "Lich", "Goblin", "Ghost",
+            "Giant", "Gorgon","Blob",
+            "Leviathan", "Unicorn", "Minotaur",
+            "Cube", "Pirate", "Spider",
+            "Snake", "Deathmage", "Gargoyle",
+            "Scorpion", "Djinn", "Phoenix",
+            "Satyr", "Drake", "Orc",
+            "Flayer", "Cyclops", "Sprite",
+            "Chimera", "Kraken", "Hydra",
+            "Slime", "Ogre", "Hobbit",
+            "Titan", "Medusa", "Golem",
+            "Demon", "Skeleton", "Mummy",
+            "Imp", "Bat", "Wyrm",
+            "Spectre", "Reaper", "Beholder",
+            "Dragon", "Harpy"
         };
 
         private const int TauntIntervalMS = 20000;
@@ -305,117 +361,155 @@ namespace RotMG.Game
         private const int FirstEventDelayMS = 3 * 60 * 1000;
         private const int RealmLifetimeMS = 30 * 60 * 1000;
         private const int CloseWarningMS = 60000;
-        private const int MaxRespawnsPerPass = 20;
-        private const int PortalIntervalMS = 2 * 60 * 1000;
 
         private readonly RealmWorld _world;
         private readonly Random _rand = new Random();
-        private Dictionary<ushort, int> _initialCounts = new Dictionary<ushort, int>();
-        private Dictionary<ushort, List<TerrainType>> _seedTerrains = new Dictionary<ushort, List<TerrainType>>();
+        private readonly int[] _enemyMaxCounts = new int[12];
+        private readonly int[] _enemyCounts = new int[12];
         private IntPoint _spawn;
         private int _bornAt;
         private int _nextTaunt;
         private int _nextPopulation;
         private int _nextEvent;
-        private int _nextPortals;
+        private readonly HashSet<string> _spawnedUniques = new HashSet<string>();
 
-        // Terrain-anchored seed population adapted from the RegionMobs table in
-        // realm-src-master wServer/realm/Oryx.cs. Each entry pairs a terrain
-        // with a density divisor (one mob per <divisor> tiles of that
-        // terrain) and the weighted mob pool for it. The .jm map carries no
-        // painted terrain channel, so tiles are classified by
-        // TerrainClassifier (ground tile id + distance from spawn). Divisors
-        // are scaled from the reference to match this map's measured tile
-        // coverage, yielding roughly the old SeedTarget of 2200 mobs.
-        // Mob pools are unchanged; only placement is terrain-anchored.
-        private static readonly Tuple<string, double>[] MidMobs = new Tuple<string, double>[]
-        {
-            Tuple.Create("Red Demon", 0.2),
-            Tuple.Create("Ogre", 0.2),
-            Tuple.Create("Lizard God", 0.1),
-            Tuple.Create("Ghost God", 0.1),
-            Tuple.Create("Medusa", 0.1),
-            Tuple.Create("Slime God", 0.1),
-            Tuple.Create("Sprite God", 0.1),
-            Tuple.Create("White Demon", 0.1)
-        };
-
-        private static readonly Tuple<string, double>[] HighMobs = new Tuple<string, double>[]
-        {
-            Tuple.Create("Cyclops God", 0.2),
-            Tuple.Create("Phoenix Lord", 0.2),
-            Tuple.Create("Ghost King", 0.2),
-            Tuple.Create("Lich", 0.1),
-            Tuple.Create("Ent Ancient", 0.1),
-            Tuple.Create("Oasis Giant", 0.1),
-            Tuple.Create("Red Demon", 0.1)
-        };
-
-        // MidPlains extends the shared Mid pool with the sprites, matching
-        // their placement in the reference RegionMobs table.
-        private static readonly Tuple<string, double>[] MidPlainsMobs = new Tuple<string, double>[]
-        {
-            Tuple.Create("Red Demon", 0.2),
-            Tuple.Create("Ogre", 0.2),
-            Tuple.Create("Lizard God", 0.1),
-            Tuple.Create("Ghost God", 0.1),
-            Tuple.Create("Medusa", 0.1),
-            Tuple.Create("Slime God", 0.1),
-            Tuple.Create("Sprite God", 0.1),
-            Tuple.Create("White Demon", 0.1),
-            Tuple.Create("Fire Sprite", 0.1),
-            Tuple.Create("Ice Sprite", 0.1),
-            Tuple.Create("Magic Sprite", 0.1)
-        };
-
+        #region "Spawn data"
         private static readonly Dictionary<TerrainType, Tuple<int, Tuple<string, double>[]>> RegionMobs =
             new Dictionary<TerrainType, Tuple<int, Tuple<string, double>[]>>()
         {
-            { TerrainType.ShoreSand, Tuple.Create(500, new Tuple<string, double>[]
+            { TerrainType.ShoreSand, Tuple.Create(
+                100, new []
                 {
                     Tuple.Create("Pirate", 0.3),
                     Tuple.Create("Piratess", 0.1),
                     Tuple.Create("Snake", 0.2),
-                    Tuple.Create("Scorpion Queen", 0.4)
+                    Tuple.Create("Scorpion Queen", 0.4),
                 })
             },
-            { TerrainType.ShorePlains, Tuple.Create(750, new Tuple<string, double>[]
+            { TerrainType.ShorePlains, Tuple.Create(
+                150, new []
                 {
                     Tuple.Create("Bandit Leader", 0.4),
                     Tuple.Create("Red Gelatinous Cube", 0.2),
                     Tuple.Create("Purple Gelatinous Cube", 0.2),
-                    Tuple.Create("Green Gelatinous Cube", 0.2)
+                    Tuple.Create("Green Gelatinous Cube", 0.2),
                 })
             },
-            { TerrainType.LowPlains, Tuple.Create(1000, new Tuple<string, double>[]
+            { TerrainType.LowPlains, Tuple.Create(
+                200, new []
                 {
                     Tuple.Create("Hobbit Mage", 0.5),
                     Tuple.Create("Undead Hobbit Mage", 0.4),
-                    Tuple.Create("Sumo Master", 0.1)
+                    Tuple.Create("Sumo Master", 0.1),
                 })
             },
-            { TerrainType.LowForest, Tuple.Create(1000, new Tuple<string, double>[]
+            { TerrainType.LowForest, Tuple.Create(
+                200, new []
                 {
                     Tuple.Create("Elf Wizard", 0.2),
                     Tuple.Create("Goblin Mage", 0.2),
-                    Tuple.Create("Forest Nymph", 0.3)
+                    Tuple.Create("Easily Enraged Bunny", 0.3),
+                    Tuple.Create("Forest Nymph", 0.3),
                 })
             },
-            { TerrainType.LowSand, Tuple.Create(1000, new Tuple<string, double>[]
+            { TerrainType.LowSand, Tuple.Create(
+                200, new []
                 {
                     Tuple.Create("Sandsman King", 0.4),
                     Tuple.Create("Giant Crab", 0.2),
-                    Tuple.Create("Sand Devil", 0.4)
+                    Tuple.Create("Sand Devil", 0.4),
                 })
             },
-            { TerrainType.MidPlains, Tuple.Create(750, MidPlainsMobs) },
-            { TerrainType.MidForest, Tuple.Create(750, MidMobs) },
-            { TerrainType.MidSand, Tuple.Create(1500, MidMobs) },
-            { TerrainType.HighPlains, Tuple.Create(1500, HighMobs) },
-            { TerrainType.HighForest, Tuple.Create(1500, HighMobs) },
-            { TerrainType.HighSand, Tuple.Create(1250, HighMobs) },
-            { TerrainType.Mountains, Tuple.Create(500, HighMobs) }
+            { TerrainType.MidPlains, Tuple.Create(
+                150, new []
+                {
+                    Tuple.Create("Fire Sprite", 0.1),
+                    Tuple.Create("Ice Sprite", 0.1),
+                    Tuple.Create("Magic Sprite", 0.1),
+                    Tuple.Create("Pink Blob", 0.07),
+                    Tuple.Create("Gray Blob", 0.07),
+                    Tuple.Create("Earth Golem", 0.04),
+                    Tuple.Create("Paper Golem", 0.04),
+                    Tuple.Create("Big Green Slime", 0.08),
+                    Tuple.Create("Swarm", 0.05),
+                    Tuple.Create("Wasp Queen", 0.2),
+                    Tuple.Create("Shambling Sludge", 0.03),
+                    Tuple.Create("Orc King", 0.06),
+                    Tuple.Create("Candy Gnome", 0.02)
+                })
+            },
+            { TerrainType.MidForest, Tuple.Create(
+                150, new []
+                {
+                    Tuple.Create("Dwarf King", 0.3),
+                    Tuple.Create("Metal Golem", 0.05),
+                    Tuple.Create("Clockwork Golem", 0.05),
+                    Tuple.Create("Werelion", 0.1),
+                    Tuple.Create("Horned Drake", 0.3),
+                    Tuple.Create("Red Spider", 0.1),
+                    Tuple.Create("Black Bat", 0.1)
+                })
+            },
+            { TerrainType.MidSand, Tuple.Create(
+                300, new []
+                {
+                    Tuple.Create("Desert Werewolf", 0.25),
+                    Tuple.Create("Fire Golem", 0.1),
+                    Tuple.Create("Darkness Golem", 0.1),
+                    Tuple.Create("Sand Phantom", 0.2),
+                    Tuple.Create("Nomadic Shaman", 0.25),
+                    Tuple.Create("Great Lizard", 0.1),
+                })
+            },
+            { TerrainType.HighPlains, Tuple.Create(
+                300, new []
+                {
+                    Tuple.Create("Shield Orc Key", 0.2),
+                    Tuple.Create("Urgle", 0.2),
+                    Tuple.Create("Undead Dwarf God", 0.6)
+                })
+            },
+            { TerrainType.HighForest, Tuple.Create(
+                300, new []
+                {
+                    Tuple.Create("Ogre King", 0.4),
+                    Tuple.Create("Dragon Egg", 0.1),
+                    Tuple.Create("Lizard God", 0.5),
+                    Tuple.Create("Beer God", 0.1)
+                })
+            },
+            { TerrainType.HighSand, Tuple.Create(
+                250, new []
+                {
+                    Tuple.Create("Minotaur", 0.4),
+                    Tuple.Create("Flayer God", 0.4),
+                    Tuple.Create("Flamer King", 0.2)
+                })
+            },
+            { TerrainType.Mountains, Tuple.Create(
+                100, new []
+                {
+                    Tuple.Create("White Demon", 0.1),
+                    Tuple.Create("Sprite God", 0.11),
+                    Tuple.Create("Medusa", 0.1),
+                    Tuple.Create("Ent God", 0.1),
+                    Tuple.Create("Beholder", 0.1),
+                    Tuple.Create("Flying Brain", 0.1),
+                    Tuple.Create("Slime God", 0.09),
+                    Tuple.Create("Ghost God", 0.09),
+                    Tuple.Create("Rock Bot", 0.05),
+                    Tuple.Create("Djinn", 0.09),
+                    Tuple.Create("Leviathan", 0.09),
+                    Tuple.Create("Arena Headless Horseman", 0.04)
+                })
+            },
         };
+        #endregion
+
+        public static string GetRandomRealmName()
+        {
+            return _realmNames[new Random().Next(_realmNames.Length)];
+        }
 
         public Oryx(RealmWorld world)
         {
@@ -425,12 +519,9 @@ namespace RotMG.Game
                 ? spawns[0]
                 : new IntPoint(_world.Width / 2, _world.Height / 2);
             SeedPopulation();
-            SnapshotPopulation();
             _nextTaunt = _bornAt + TauntIntervalMS;
             _nextPopulation = _bornAt + PopulationIntervalMS;
             _nextEvent = _bornAt + FirstEventDelayMS;
-            _nextPortals = _bornAt + PortalIntervalMS;
-            MaintainDungeonPortals();
         }
 
         public void Tick()
@@ -440,14 +531,14 @@ namespace RotMG.Game
             if (_world.Closed)
             {
                 if (_world.Players.Count == 0)
-                    Reopen();
+                    Manager.ResetRealm();
                 return;
             }
 
             if (now - _bornAt >= RealmLifetimeMS - CloseWarningMS && !_world.Closing)
             {
                 _world.Closing = true;
-                Announce(_world.Name + " closing in 1 minute.");
+                Announce(_world.GetDisplayName() + " closing in 1 minute.");
             }
 
             if (now - _bornAt >= RealmLifetimeMS)
@@ -476,75 +567,95 @@ namespace RotMG.Game
                 _nextEvent = now + EventIntervalMS;
                 SpawnRandomEvent();
             }
-
-            if (now >= _nextPortals)
-            {
-                _nextPortals = now + PortalIntervalMS;
-                MaintainDungeonPortals();
-            }
         }
 
-        //Keeps a rotating set of unlocked dungeon portals in the realm,
-        //mirroring the dungeon-portal upkeep of the master PortalMonitor.
-        private void MaintainDungeonPortals()
+        private static double GetUniform(Random rand)
         {
-            int count = 0;
-            foreach (Entity en in _world.Statics.Values)
-            {
-                if (en is Portal portal && !string.IsNullOrWhiteSpace(portal.Desc.DungeonName))
-                    count++;
-            }
-            if (count >= 3)
-                return;
-
-            List<Dungeons.DungeonDef> defs = new List<Dungeons.DungeonDef>(Dungeons.DungeonDefs.All);
-            Dungeons.DungeonDef def = defs[_rand.Next(defs.Count)];
-
-            ObjectDesc portalDesc;
-            if (!Resources.Id2Object.TryGetValue(def.PortalObject, out portalDesc))
-                return;
-
-            for (int attempt = 0; attempt < 30; attempt++)
-            {
-                int x = _rand.Next(2, Math.Max(3, _world.Width - 2));
-                int y = _rand.Next(2, Math.Max(3, _world.Height - 2));
-                Tile tile = _world.GetTile(x, y);
-                if (tile == null || tile.StaticObject != null)
-                    continue;
-                TileDesc ground = Resources.Type2Tile[tile.Type];
-                if (ground.NoWalk || ground.Damage > 0)
-                    continue;
-
-                Portal portal = new Portal(portalDesc.Type);
-                if (_world.AddEntity(portal, new Position(x + 0.5f, y + 0.5f)) == -1)
-                    return;
-                tile.StaticObject = portal;
-                tile.UpdateCount++;
-                _world.UpdateCount++;
-                return;
-            }
+            // 0 <= u < 2^32
+            uint u = (uint)(rand.NextDouble() * uint.MaxValue);
+            // The magic number below is 1/(2^32 + 2).
+            // The result is strictly between 0 and 1.
+            return (u + 1.0) * 2.328306435454494e-10;
         }
 
-        private string PickMob(Tuple<string, double>[] table)
+        private static double GetNormal(Random rand)
         {
-            double roll = _rand.NextDouble() * table.Sum(t => t.Item2);
-            foreach (Tuple<string, double> entry in table)
-            {
-                roll -= entry.Item2;
-                if (roll <= 0)
-                    return entry.Item1;
-            }
-            return table[table.Length - 1].Item1;
+            // Use Box-Muller algorithm
+            double u1 = GetUniform(rand);
+            double u2 = GetUniform(rand);
+            double r = Math.Sqrt(-2.0 * Math.Log(u1));
+            double theta = 2.0 * Math.PI * u2;
+            return r * Math.Sin(theta);
         }
 
-        private bool IsSpawnableGround(Tile tile)
+        private static double GetNormal(Random rand, double mean, double standardDeviation)
         {
-            if (tile == null || tile.StaticObject != null)
-                return false;
-            TileDesc ground = Resources.Type2Tile[tile.Type];
-            if (ground.NoWalk || ground.Damage > 0 || ground.Sinking)
-                return false;
-            return ground.Id.IndexOf("water", StringComparison.OrdinalIgnoreCase) < 0;
+            return mean + standardDeviation * GetNormal(rand);
+        }
+
+        private ushort GetRandomObjType(IEnumerable<Tuple<string, double>> dat)
+        {
+            double p = _rand.NextDouble();
+            double n = 0;
+            ushort objType = 0;
+            foreach (Tuple<string, double> k in dat)
+            {
+                n += k.Item2;
+                if (n > p)
+                {
+                    if (BehaviorHelpers.TryGetObjType(k.Item1, out ushort type))
+                        objType = type;
+                    break;
+                }
+            }
+            return objType;
+        }
+
+        private int Spawn(ObjectDesc desc, TerrainType terrain, int w, int h)
+        {
+            int ret = 0;
+            IntPoint pt = new IntPoint();
+
+            if (desc.Spawn != null)
+            {
+                int num = (int)GetNormal(_rand, desc.Spawn.Mean, desc.Spawn.StdDev);
+
+                if (num > desc.Spawn.Max)
+                    num = desc.Spawn.Max;
+                else if (num < desc.Spawn.Min)
+                    num = desc.Spawn.Min;
+
+                do
+                {
+                    pt.X = _rand.Next(0, w);
+                    pt.Y = _rand.Next(0, h);
+                } while (GetTileTerrain(pt.X, pt.Y) != terrain ||
+                         !_world.IsPassable(pt.X, pt.Y) ||
+                         _world.AnyPlayerNearby(pt.X, pt.Y));
+
+                for (int k = 0; k < num; k++)
+                {
+                    Enemy enemy = new Enemy(desc.Type) { Terrain = terrain };
+                    if (_world.AddEntity(enemy,
+                        new Position(pt.X + (float)(_rand.NextDouble() * 2 - 1) * 5,
+                                     pt.Y + (float)(_rand.NextDouble() * 2 - 1) * 5)) != -1)
+                        ret++;
+                }
+                return ret;
+            }
+
+            do
+            {
+                pt.X = _rand.Next(0, w);
+                pt.Y = _rand.Next(0, h);
+            } while (GetTileTerrain(pt.X, pt.Y) != terrain ||
+                     !_world.IsPassable(pt.X, pt.Y) ||
+                     _world.AnyPlayerNearby(pt.X, pt.Y));
+
+            Enemy single = new Enemy(desc.Type) { Terrain = terrain };
+            if (_world.AddEntity(single, new Position(pt.X, pt.Y)) != -1)
+                ret++;
+            return ret;
         }
 
         private TerrainType GetTileTerrain(int x, int y)
@@ -561,147 +672,131 @@ namespace RotMG.Game
 
         private void SeedPopulation()
         {
-            // Collect spawnable tiles per terrain in a single pass, mirroring
-            // the reference Init(). Sampling the lists directly guarantees
-            // exact per-terrain targets with no rejection-sampling shortfall.
-            Dictionary<TerrainType, List<IntPoint>> candidates = new Dictionary<TerrainType, List<IntPoint>>();
-            foreach (KeyValuePair<TerrainType, Tuple<int, Tuple<string, double>[]>> kv in RegionMobs)
-                candidates[kv.Key] = new List<IntPoint>();
-            for (int y = 2; y < _world.Height - 2; y++)
-                for (int x = 2; x < _world.Width - 2; x++)
+            int w = _world.Width;
+            int h = _world.Height;
+            int[] stats = new int[12];
+
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
                 {
-                    TerrainType terrain = GetTileTerrain(x, y);
-                    if (terrain == TerrainType.None || !IsSpawnableGround(_world.GetTile(x, y)))
-                        continue;
-                    candidates[terrain].Add(new IntPoint(x, y));
+                    int idx = (int)GetTileTerrain(x, y) - 1;
+                    if (idx >= 0 && idx < stats.Length)
+                        stats[idx]++;
                 }
 
-            int seeded = 0;
-            _seedTerrains.Clear();
             foreach (KeyValuePair<TerrainType, Tuple<int, Tuple<string, double>[]>> kv in RegionMobs)
             {
                 TerrainType terrain = kv.Key;
-                List<IntPoint> spots = candidates[terrain];
-                int target = spots.Count / kv.Value.Item1;
-                for (int i = 0; i < target && spots.Count > 0; i++)
+                int idx = (int)terrain - 1;
+                int enemyCount = stats[idx] / kv.Value.Item1;
+                _enemyMaxCounts[idx] = enemyCount;
+                _enemyCounts[idx] = 0;
+
+                for (int j = 0; j < enemyCount; j++)
                 {
-                    int idx = _rand.Next(spots.Count);
-                    IntPoint spot = spots[idx];
-                    spots[idx] = spots[spots.Count - 1];
-                    spots.RemoveAt(spots.Count - 1);
+                    ushort objType = GetRandomObjType(kv.Value.Item2);
 
-                    Entity en = SetPieces.SpawnEnemy(_world, PickMob(kv.Value.Item2), spot.X + 0.5f, spot.Y + 0.5f);
-                    if (en is Enemy enemy)
-                    {
-                        enemy.Terrain = terrain;
-                        if (!_seedTerrains.TryGetValue(enemy.Type, out List<TerrainType> terrains))
-                            _seedTerrains[enemy.Type] = terrains = new List<TerrainType>();
-                        terrains.Add(terrain);
-                        seeded++;
-                    }
+                    if (objType == 0)
+                        continue;
+
+                    _enemyCounts[idx] += Spawn(Resources.Type2Object[objType], terrain, w, h);
+
+                    if (_enemyCounts[idx] >= enemyCount)
+                        break;
                 }
-            }
-
-            // Anchor map-placed mobs (painted packs and their behavior-spawned
-            // children) to the terrain under them so upkeep respawns them
-            // near home instead of anywhere on the map.
-            foreach (Entity en in _world.Entities.Values)
-            {
-                if (!(en is Enemy enemy) || enemy.Terrain != TerrainType.None)
-                    continue;
-                TerrainType terrain = GetTileTerrain((int)enemy.Position.X, (int)enemy.Position.Y);
-                if (terrain == TerrainType.None)
-                    continue;
-                enemy.Terrain = terrain;
-                if (!_seedTerrains.TryGetValue(enemy.Type, out List<TerrainType> terrains))
-                    _seedTerrains[enemy.Type] = terrains = new List<TerrainType>();
-                terrains.Add(terrain);
-            }
-#if DEBUG
-            Program.Print(PrintType.Debug, $"Oryx seeded <{seeded}> realm minions.");
-#endif
-        }
-
-        private void SnapshotPopulation()
-        {
-            _initialCounts.Clear();
-            foreach (Entity en in _world.Entities.Values)
-            {
-                if (!(en is Enemy))
-                    continue;
-                if (_initialCounts.TryGetValue(en.Type, out int count))
-                    _initialCounts[en.Type] = count + 1;
-                else
-                    _initialCounts[en.Type] = 1;
             }
         }
 
         private void EnsurePopulation()
         {
-            Dictionary<ushort, int> current = new Dictionary<ushort, int>();
-            foreach (Entity en in _world.Entities.Values)
+            RecalculateEnemyCount();
+
+            int[] state = new int[12];
+            int[] diff = new int[12];
+            int c = 0;
+
+            for (int i = 0; i < state.Length; i++)
             {
-                if (!(en is Enemy))
+                if (_enemyCounts[i] > _enemyMaxCounts[i] * 1.5) //Kill some
+                {
+                    state[i] = 1;
+                    diff[i] = _enemyCounts[i] - _enemyMaxCounts[i];
+                    c++;
                     continue;
-                if (current.TryGetValue(en.Type, out int count))
-                    current[en.Type] = count + 1;
-                else
-                    current[en.Type] = 1;
+                }
+
+                if (_enemyCounts[i] < _enemyMaxCounts[i] * 0.75) //Add some
+                {
+                    state[i] = 2;
+                    diff[i] = _enemyMaxCounts[i] - _enemyCounts[i];
+                    continue;
+                }
+
+                state[i] = 0;
             }
 
-            int spawned = 0;
-            foreach (KeyValuePair<ushort, int> kv in _initialCounts)
+            foreach (Entity en in _world.Entities.Values.ToArray()) //Kill
             {
-                current.TryGetValue(kv.Key, out int have);
-                int deficit = kv.Value - have;
-                for (int i = 0; i < deficit && spawned < MaxRespawnsPerPass; i++)
-                    if (Respawn(kv.Key))
-                        spawned++;
-                if (spawned >= MaxRespawnsPerPass)
+                Enemy enemy = en as Enemy;
+                if (enemy == null)
+                    continue;
+                int idx = (int)enemy.Terrain - 1;
+
+                if (idx < 0 || idx >= state.Length || state[idx] == 0 ||
+                    _world.AnyPlayerNearby(enemy.Position.X, enemy.Position.Y, 10) ||
+                    diff[idx] == 0)
+                    continue;
+
+                if (state[idx] == 1)
+                {
+                    _world.RemoveEntity(enemy);
+                    diff[idx]--;
+                    if (diff[idx] == 0)
+                        c--;
+                }
+
+                if (c == 0)
                     break;
             }
+
+            int w = _world.Map.Width;
+            int h = _world.Map.Height;
+
+            for (int i = 0; i < state.Length; i++) //Add
+            {
+                if (state[i] != 2)
+                    continue;
+
+                int x = diff[i];
+                TerrainType t = (TerrainType)(i + 1);
+                for (int j = 0; j < x;)
+                {
+                    ushort objType = GetRandomObjType(RegionMobs[t].Item2);
+
+                    if (objType == 0)
+                        continue;
+
+                    j += Spawn(Resources.Type2Object[objType], t, w, h);
+                }
+            }
+            RecalculateEnemyCount();
         }
 
-        private bool Respawn(ushort type)
+        private void RecalculateEnemyCount()
         {
-            // Respawn into one of the terrains this type was seeded in (one
-            // entry per seeded mob, so common terrains are picked
-            // proportionally), keeping populations terrain-anchored instead
-            // of diffusing map-wide.
-            bool anchored = _seedTerrains.TryGetValue(type, out List<TerrainType> terrains) && terrains.Count > 0;
-            for (int attempt = 0; attempt < 200; attempt++)
+            for (int i = 0; i < _enemyCounts.Length; i++)
+                _enemyCounts[i] = 0;
+
+            foreach (Entity en in _world.Entities.Values)
             {
-                int x = _rand.Next(2, Math.Max(3, _world.Width - 2));
-                int y = _rand.Next(2, Math.Max(3, _world.Height - 2));
-                if (!IsSpawnableGround(_world.GetTile(x, y)))
+                Enemy enemy = en as Enemy;
+                if (enemy == null || enemy.Terrain == TerrainType.None)
                     continue;
 
-                TerrainType terrain = TerrainType.None;
-                if (anchored)
-                {
-                    terrain = terrains[_rand.Next(terrains.Count)];
-                    if (GetTileTerrain(x, y) != terrain)
-                        continue;
-                }
-
-                bool nearPlayer = false;
-                foreach (Player player in _world.Players.Values)
-                {
-                    float dx = player.Position.X - (x + 0.5f);
-                    float dy = player.Position.Y - (y + 0.5f);
-                    if (dx * dx + dy * dy < 100)
-                    {
-                        nearPlayer = true;
-                        break;
-                    }
-                }
-                if (nearPlayer)
-                    continue;
-
-                Enemy enemy = new Enemy(type) { Terrain = terrain };
-                return _world.AddEntity(enemy, new Position(x + 0.5f, y + 0.5f)) != -1;
+                int idx = (int)enemy.Terrain - 1;
+                if (idx >= 0 && idx < _enemyCounts.Length)
+                    _enemyCounts[idx]++;
             }
-            return false;
         }
 
         private void HandleAnnouncements()
@@ -737,7 +832,7 @@ namespace RotMG.Game
 
         public void OnEnemyKilled(Enemy enemy, Player killer)
         {
-            if (enemy.Desc == null || !enemy.Desc.Quest)
+            if (enemy.Desc == null || !enemy.Desc.Quest || enemy.Spawned)
                 return;
 
             TauntData? dat = null;
@@ -759,7 +854,7 @@ namespace RotMG.Game
                         .Replace("{PLAYER}", killer != null ? killer.Name : ""));
             }
 
-            Tuple<string, ISetPiece> evt = SP.Events[_rand.Next(SP.Events.Count)];
+            Tuple<string, ISetPiece> evt = PickEvent();
             SpawnEvent(evt.Item1, evt.Item2);
 
             foreach (Tuple<string, TauntData> entry in CriticalEnemies)
@@ -769,52 +864,81 @@ namespace RotMG.Game
                 OryxSay(entry.Item2.Spawn[_rand.Next(entry.Item2.Spawn.Length)]);
                 break;
             }
+
+            foreach (Player player in _world.Players.Values)
+                player.HandleQuest(force: true);
         }
 
         private void SpawnRandomEvent()
         {
-            Tuple<string, ISetPiece> evt = SP.Events[_rand.Next(SP.Events.Count)];
+            Tuple<string, ISetPiece> evt = PickEvent();
             SpawnEvent(evt.Item1, evt.Item2);
         }
 
+        //One-per-realm event bosses (PerRealmMax == 1, e.g. Lord of the Lost
+        //Lands) spawn at most once per realm incarnation, mirroring the
+        //event-list removal in realm-src-master wServer/realm/Oryx.cs
+        //OnEnemyKilled. The shared SP.Events registry is never mutated;
+        //spawned uniques are tracked per overseer instead.
+        private Tuple<string, ISetPiece> PickEvent()
+        {
+            Tuple<string, ISetPiece> evt = SP.Events[_rand.Next(SP.Events.Count)];
+            for (int attempt = 0; attempt < 10 && _spawnedUniques.Contains(evt.Item1); attempt++)
+                evt = SP.Events[_rand.Next(SP.Events.Count)];
+            if (IsPerRealmUnique(evt.Item1))
+                _spawnedUniques.Add(evt.Item1);
+            return evt;
+        }
+
+        private static bool IsPerRealmUnique(string name)
+        {
+            if (!BehaviorHelpers.TryGetObjType(name, out ushort type))
+                return false;
+            if (!Resources.Type2Object.TryGetValue(type, out ObjectDesc desc))
+                return false;
+            return desc.PerRealmMax == 1;
+        }
+
+        //Event bosses emerge in the harder tiers, mirroring the terrain-band
+        //placement of realm-src-master wServer/realm/Oryx.cs SpawnEvent.
+        //(The reference spins unbounded; attempts are capped here so a
+        //crowded realm can never hang the world tick.)
         private void SpawnEvent(string name, ISetPiece setpiece)
         {
-            int margin = setpiece.Size / 2 + 2;
-            for (int attempt = 0; attempt < 30; attempt++)
+            IntPoint pt = new IntPoint();
+            bool placed = false;
+            for (int attempt = 0; attempt < 200 && !placed; attempt++)
             {
-                int cx = _rand.Next(margin, Math.Max(margin + 1, _world.Width - margin));
-                int cy = _rand.Next(margin, Math.Max(margin + 1, _world.Height - margin));
+                pt.X = _rand.Next(0, _world.Width);
+                pt.Y = _rand.Next(0, _world.Height);
 
-                bool blocked = false;
-                for (int x = cx - margin; x <= cx + margin && !blocked; x++)
-                    for (int y = cy - margin; y <= cy + margin && !blocked; y++)
-                    {
-                        Tile tile = _world.GetTile(x, y);
-                        if (tile == null || tile.StaticObject != null)
-                            blocked = true;
-                    }
-                if (blocked)
+                TerrainType terrain = GetTileTerrain(pt.X, pt.Y);
+                if (terrain < TerrainType.Mountains || terrain > TerrainType.MidForest)
                     continue;
-
-                foreach (Player player in _world.Players.Values)
-                {
-                    float dx = player.Position.X - cx;
-                    float dy = player.Position.Y - cy;
-                    if (dx * dx + dy * dy < (margin + 5) * (margin + 5))
-                    {
-                        blocked = true;
-                        break;
-                    }
-                }
-                if (blocked)
+                if (!_world.IsPassable(pt.X, pt.Y, true))
                     continue;
-
-                setpiece.RenderSetPiece(_world, new IntPoint(cx - (setpiece.Size - 1) / 2, cy - (setpiece.Size - 1) / 2));
-#if DEBUG
-                Program.Print(PrintType.Debug, $"Oryx spawned <{name}> at <{cx},{cy}>.");
-#endif
-                return;
+                if (_world.AnyPlayerNearby(pt.X, pt.Y))
+                    continue;
+                placed = true;
             }
+            if (!placed)
+                return;
+
+            pt.X -= (setpiece.Size - 1) / 2;
+            pt.Y -= (setpiece.Size - 1) / 2;
+            setpiece.RenderSetPiece(_world, pt);
+#if DEBUG
+            Program.Print(PrintType.Debug, $"Oryx spawned <{name}> at <{pt.X},{pt.Y}>.");
+#endif
+        }
+
+        public void InitCloseRealm()
+        {
+            if (_world.Closing || _world.Closed)
+                return;
+            _world.Closing = true;
+            Announce(string.Format("{0} closing in 1 minute.", _world.GetDisplayName()));
+            Manager.AddTimedAction(60000, () => CloseRealm());
         }
 
         private void CloseRealm()
@@ -822,29 +946,18 @@ namespace RotMG.Game
             _world.Closed = true;
             OryxSay("I HAVE CLOSED THIS REALM!");
             OryxSay("YOU WILL NOT LIVE TO SEE THE LIGHT OF DAY!");
-
-            foreach (Player player in _world.Players.Values.ToArray())
-            {
-                Client client = player.Client;
-                client.Active = false;
-                client.Send(GameServer.Reconnect(Manager.NexusId));
-                Manager.AddTimedAction(2000, client.Disconnect);
-            }
+            Manager.AddTimedAction(22000, () => SendToCastle());
         }
 
-        private void Reopen()
+        private void SendToCastle()
         {
-            foreach (Entity en in _world.Entities.Values.ToArray())
-                if (en is Enemy)
-                    _world.RemoveEntity(en);
-            _world.Closed = false;
-            _world.Closing = false;
-            _bornAt = Manager.TotalTime;
-            SnapshotPopulation();
-            _nextTaunt = _bornAt + TauntIntervalMS;
-            _nextPopulation = _bornAt + PopulationIntervalMS;
-            _nextEvent = _bornAt + FirstEventDelayMS;
-            _nextPortals = Manager.TotalTime + PortalIntervalMS;
+            OryxSay("MY MINIONS HAVE FAILED ME!");
+            OryxSay("BUT NOW YOU SHALL FEEL MY WRATH!");
+            OryxSay("COME MEET YOUR DOOM AT THE WALLS OF MY CASTLE!");
+
+            if (_world.Players.Count == 0)
+                return;
+            Manager.QuakeRealmToCastle(_world);
         }
 
         private void OryxSay(string message)

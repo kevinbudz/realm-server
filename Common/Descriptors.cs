@@ -198,6 +198,10 @@ namespace RotMG.Common
         public readonly int MaxHP;
         public readonly int Defense;
 
+        public readonly SpawnCount Spawn;
+
+        public readonly int PerRealmMax;
+
         public readonly Dictionary<int, ProjectileDesc> Projectiles;
 
         public ObjectDesc(XElement e, string id, ushort type)
@@ -242,6 +246,11 @@ namespace RotMG.Common
             MaxHP = e.ParseInt("MaxHitPoints");
             Defense = e.ParseInt("Defense");
 
+            if (e.Element("Spawn") != null)
+                Spawn = new SpawnCount(e.Element("Spawn"));
+
+            PerRealmMax = e.ParseInt("PerRealmMax");
+
             Projectiles = new Dictionary<int, ProjectileDesc>();
             foreach (XElement k in e.Elements("Projectile"))
             {
@@ -252,6 +261,24 @@ namespace RotMG.Common
 #endif
                 Projectiles[desc.BulletType] = desc;
             }
+        }
+    }
+
+    //Pack-size distribution for realm seeding, mirroring realm-src-master
+    //common/resources/XmlDescriptors.cs SpawnCount.
+    public class SpawnCount
+    {
+        public readonly int Mean;
+        public readonly int StdDev;
+        public readonly int Min;
+        public readonly int Max;
+
+        public SpawnCount(XElement e)
+        {
+            Mean = e.ParseInt("Mean");
+            StdDev = e.ParseInt("StdDev");
+            Min = e.ParseInt("Min");
+            Max = e.ParseInt("Max");
         }
     }
 

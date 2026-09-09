@@ -60,8 +60,9 @@ namespace RotMG.Game
             AddWorld(Resources.Worlds["Realm"], RealmId);
             AddWorld(Resources.Worlds["Vault"], VaultId);
 
-            PlacePortal(Worlds[NexusId], "Realm Portal", Worlds[RealmId]);
+            Portal realmPortal = PlacePortal(Worlds[NexusId], "Realm Portal", Worlds[RealmId]);
             PlacePortal(Worlds[NexusId], "Vault Portal", Worlds[VaultId]);
+            ((NexusWorld)Worlds[NexusId]).Monitor.AddPortal(RealmId, realmPortal);
         }
 
         public static World CreateWorld(WorldDesc desc, int mapIndex = -1)
@@ -102,7 +103,7 @@ namespace RotMG.Game
             return world.Id;
         }
 
-        public static void PlacePortal(World world, string portalId, World target)
+        public static Portal PlacePortal(World world, string portalId, World target)
         {
             ushort type = Resources.Id2Object[portalId].Type;
             IntPoint spawn = world.GetRegion(Region.Spawn);
@@ -122,12 +123,13 @@ namespace RotMG.Game
 #if DEBUG
                             Program.Print(PrintType.Debug, $"Placed portal <{portalId}> to <{target.Name}> at <{spawn.X + dx},{spawn.Y + dy}>");
 #endif
-                            return;
+                            return portal;
                         }
                     }
 #if DEBUG
             Program.Print(PrintType.Error, $"Failed to place portal <{portalId}>.");
 #endif
+            return null;
         }
 
         public static World GetWorld(int id)
@@ -187,6 +189,53 @@ namespace RotMG.Game
             }
             GuildHallWorlds[guildName] = world;
             return world;
+        }
+
+        //Castle siege world for a quaking realm, mirroring the castle
+        //spawn in realm-src-master wServer/realm/Oryx.cs SendToCastle.
+        //Castle.PlayersEntering fans out spawn points there; this
+        //codebase has no spawn fan-out, so playersEntering is kept for
+        //caller compatibility and unused. The "Castle" map file and
+        //Worlds.xml entry are added by hand.
+        public static World CreateCastleWorld(int playersEntering)
+        {
+            World world = CreateWorld(Resources.Worlds["Castle"]);
+            AddWorld(world);
+            return world;
+        }
+
+        public static void QuakeRealmToCastle(RealmWorld realm)
+        {
+            if (realm.Players.Count == 0)
+                return;
+            World castle = CreateCastleWorld(realm.Players.Count);
+            realm.QuakeToWorld(castle);
+        }
+
+        //Drops an empty closed realm and builds a fresh one under the
+        //same id, re-pointing the Nexus realm portal at it. Adapted
+        //from reference Realm.Tick, which re-Inits the world in place;
+        //static maps here cannot reset in place, so the world is
+        //recreated (the constructor re-rolls SBName, setpieces and
+        //the overseer).
+        public static void ResetRealm()
+        {
+            if (!(Worlds.TryGetValue(RealmId, out World world) && world is RealmWorld))
+                return;
+            if (world.Players.Count > 0)
+                return;
+            Worlds.Remove(RealmId);
+            World fresh = CreateWorld(Resources.Worlds["Realm"]);
+            fresh.Id = RealmId;
+            Worlds[RealmId] = fresh;
+            if (Worlds.TryGetValue(NexusId, out World nexus))
+            {
+                foreach (StaticObject stat in nexus.Statics.Values.ToArray())
+                    if (stat is Portal portal && portal.WorldInstance == world)
+                        portal.WorldInstance = fresh;
+                if (nexus is NexusWorld nexusWorld)
+                    nexusWorld.Monitor.UpdateWorldInstance(RealmId, fresh);
+            }
         }
 
         public static Player GetPlayer(string name)

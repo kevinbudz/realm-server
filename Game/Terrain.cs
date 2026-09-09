@@ -1,9 +1,10 @@
-﻿using System;
+using System;
 
 namespace RotMG.Game
 {
     // Difficulty-biome classification for realm mob seeding, mirroring the
-    // TerrainType/RegionMobs design of realm-src-master wServer/realm/Oryx.cs.
+    // TerrainType/RegionMobs design of realm-src-master wServer/realm/Oryx.cs
+    // (enum order kept identical so tier-band checks port verbatim).
     // The .jm map format carries no painted terrain channel, so terrain is
     // derived per tile: the ground tile id selects the biome
     // (Sand/Plains/Forest/Mountains) and distance from the realm spawn
@@ -11,18 +12,19 @@ namespace RotMG.Game
     public enum TerrainType
     {
         None,
-        ShoreSand,
-        ShorePlains,
-        LowSand,
-        LowPlains,
-        LowForest,
-        MidSand,
-        MidPlains,
-        MidForest,
+        Mountains,
         HighSand,
         HighPlains,
         HighForest,
-        Mountains
+        MidSand,
+        MidPlains,
+        MidForest,
+        LowSand,
+        LowPlains,
+        LowForest,
+        ShoreSand,
+        ShorePlains,
+        BeachTowels
     }
 
     public static class TerrainClassifier
