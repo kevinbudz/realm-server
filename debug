@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# debug — build the RotMG server (Debug), then start it,
+# or restart it if it is already running.
+#
+# Usage:
+#   ./debug [--skip-build] [--stop]
+#
+# Behavior:
+#   1. Builds the server with `dotnet build -c Debug` (unless --skip-build).
+#      If the build fails, any already-running server is left untouched.
+#   2. Checks whether the server is already running (a managed server
+#      process and/or its ports from Settings.xml are active).
+#   3. If running: stops it, then starts a fresh instance (restart).
+#      If not running: starts a new instance.
+#
+# Note: `release` and `debug` manage the same server ports (from the
+# shared Settings.xml), so starting one while the other is running
+# restarts the server with the newly requested build. Only server
+# processes started from this config's output dir are stopped;
+# anything else holding the ports is reported, never killed.
+#
+# The server is started detached (survives terminal close) with its
+# working directory set to the build output dir, so the relative
+# Settings.xml / Resources / Database paths resolve. Logs go to
+#   bin/Debug/net8.0/server.log
+# and the PID is recorded in
+#   bin/Debug/net8.0/server.pid
+set -u
+
+CONFIG="Debug"
+SKIP_BUILD=0
+STOP_ONLY=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --skip-build)
+            SKIP_BUILD=1
+            shift
+            ;;
+        --stop)
+            STOP_ONLY=1
+            shift
+            ;;
+        -h|--help)
+            sed -n '2,/^set -u/p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1 (try --help)" >&2
+            exit 2
+            ;;
+    esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+OUT_DIR="$SCRIPT_DIR/bin/$CONFIG/net8.0"
+SETTINGS_XML="$SCRIPT_DIR/Settings.xml"
+LOG_FILE="$OUT_DIR/server.log"
+PID_FILE="$OUT_DIR/server.pid"
+
+# Matches the server process, whether launched as `dotnet RotMG.dll`
+# or via the native apphost `./RotMG`. Candidates from this pattern
+# are ALWAYS validated by server_pids() below before signalling,
+# so unrelated commands that merely mention RotMG are never touched.
+PROC_PATTERN='RotMG\.dll|/RotMG( |$)'
+
+# Ports the server listens on, parsed from <Ports>7777:2050</Ports>
+# in Settings.xml (AppServer HTTP : GameServer TCP).
+read_ports() {
+    local ports=""
+    if [[ -f "$SETTINGS_XML" ]]; then
+        ports="$(grep -o '<Ports>[^<]*</Ports>' "$SETTINGS_XML" | head -n 1 \
+            | sed -e 's/<\/*Ports>//g' -e 's/:/ /g' | tr -s ' ' | xargs)"
+    fi
+    [[ -z "$ports" ]] && ports="7777 2050"
+    echo "$ports"
+}
+
+# PIDs of server processes managed by this script: the command line
+# must match AND the process must run out of OUT_DIR (apphost binary
+# lives there, or `dotnet RotMG.dll` was launched with cwd there).
+# Never returns our own shell or PID 1.
+server_pids() {
+    local pids pid exe cwd count
+    pids="$(pgrep -f "$PROC_PATTERN" 2>/dev/null || true)"
+    count=0
+    for pid in $pids; do
+        [[ "$pid" == "$$" || "$pid" == "1" ]] && continue
+        [[ -d "/proc/$pid" ]] || continue
+        exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+        cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+        if [[ "$exe" == "$OUT_DIR/"* || "$cwd" == "$OUT_DIR" ]]; then
+            echo "$pid"
+            count=$((count + 1))
+        fi
+    done
+    if [[ "$count" -gt 20 ]]; then
+        echo "ERROR: refusing to signal $count processes; something is wrong with process matching." >&2
+        return 1
+    fi
+}
+
+port_open() {
+    local port="$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | grep -q ":$port[[:space:]]"
+    else
+        # Fallback: bare TCP connect works for both the HTTP and game ports.
+        (echo > "/dev/tcp/127.0.0.1/$port") >/dev/null 2>&1
+    fi
+}
+
+any_port_open() {
+    local port
+    for port in $(read_ports); do
+        if port_open "$port"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+server_is_open() {
+    # Open = managed server process alive, or any of its ports listening
+    # (covers an externally started instance holding the ports).
+    if [[ -n "$(server_pids)" ]]; then
+        return 0
+    fi
+    any_port_open
+}
+
+stop_server() {
+    local pids waited
+    pids="$(server_pids)" || return 1
+    if [[ -z "$pids" ]]; then
+        echo "No managed server process found."
+        if any_port_open; then
+            echo "WARNING: server port(s) ($(read_ports)) are busy but held by an unmanaged process; it will NOT be killed." >&2
+        fi
+    else
+        echo "Stopping server (PID(s): $(echo "$pids" | xargs))..."
+        # shellcheck disable=SC2086
+        kill $pids 2>/dev/null || true
+        waited=0
+        while [[ -n "$(server_pids)" && "$waited" -lt 10 ]]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        pids="$(server_pids)"
+        if [[ -n "$pids" ]]; then
+            echo "Server did not stop gracefully; forcing (SIGKILL)..."
+            # shellcheck disable=SC2086
+            kill -9 $pids 2>/dev/null || true
+            sleep 1
+        fi
+        if [[ -n "$(server_pids)" ]]; then
+            echo "ERROR: could not stop the server." >&2
+            return 1
+        fi
+        echo "Server stopped."
+    fi
+    rm -f "$PID_FILE"
+}
+
+start_server() {
+    if [[ ! -f "$OUT_DIR/RotMG.dll" ]]; then
+        echo "ERROR: $OUT_DIR/RotMG.dll not found. Build the server first (run without --skip-build)." >&2
+        return 1
+    fi
+    if any_port_open; then
+        echo "ERROR: server port(s) ($(read_ports)) are already in use; not starting a second instance." >&2
+        return 1
+    fi
+    mkdir -p "$OUT_DIR"
+    echo "Starting server (config: $CONFIG)..."
+    (
+        cd "$OUT_DIR" || exit 1
+        if [[ -x "./RotMG" ]]; then
+            setsid nohup ./RotMG >>"$LOG_FILE" 2>&1 < /dev/null &
+        else
+            setsid nohup dotnet RotMG.dll >>"$LOG_FILE" 2>&1 < /dev/null &
+        fi
+        echo $! > "$PID_FILE"
+    )
+    # Verify the new instance actually came up.
+    local waited=0
+    while [[ "$waited" -lt 15 ]]; do
+        sleep 1
+        waited=$((waited + 1))
+        if server_is_open; then
+            break
+        fi
+    done
+    if server_is_open; then
+        echo "Server is up (PID: $(cat "$PID_FILE" 2>/dev/null || echo unknown), ports: $(read_ports), log: $LOG_FILE)."
+    else
+        echo "ERROR: server did not come up within ${waited}s. Check $LOG_FILE." >&2
+        return 1
+    fi
+}
+
+if [[ "$STOP_ONLY" -eq 1 ]]; then
+    stop_server
+    exit $?
+fi
+
+if [[ "$SKIP_BUILD" -eq 0 ]]; then
+    if ! command -v dotnet >/dev/null 2>&1; then
+        echo "ERROR: 'dotnet' SDK not found on PATH. Install the .NET 8 SDK to build." >&2
+        exit 1
+    fi
+    echo "Building server (config: $CONFIG)..."
+    if ! dotnet build "$SCRIPT_DIR/RotMG.csproj" -c "$CONFIG"; then
+        echo "ERROR: build failed; running server (if any) left untouched." >&2
+        exit 1
+    fi
+    echo "Build succeeded."
+else
+    echo "Skipping build (--skip-build)."
+fi
+
+if server_is_open; then
+    echo "Server is already running; restarting..."
+    stop_server || exit 1
+else
+    echo "Server is not running; starting a new instance..."
+fi
+
+start_server

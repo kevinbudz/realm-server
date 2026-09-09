@@ -213,7 +213,7 @@ namespace RotMG.Game.Dungeons
                 Name = "Haunted Cemetery Final Battle", PortalObject = "Haunted Cemetery Final Rest Portal",
                 Grounds = new[] { "Cemetery Grass", "Dirt" }, RockGround = "Dirt",
                 Walls = new[] { "Grey Wall", "Brown Wall" },
-                Mobs = new[] { "Blue Zombie", "Zombie Hulk", "Classic Ghost", "Werewolf", "Ghost of Skuld", "Flying Flame Skull" },
+                Mobs = new[] { "Ghost of Skuld", "Flying Flame Skull", "Blue Zombie", "Zombie Rise" },
                 Boss = "Ghost of Skuld",
                 MapFile = "Dungeons/Haunted Cemetery Final Battle.jm",
                 Width = 49, Height = 49, Rooms = 6
