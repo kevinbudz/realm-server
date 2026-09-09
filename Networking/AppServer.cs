@@ -82,6 +82,27 @@ namespace RotMG.Networking
                         case "/account/changePassword":
                             buffer = AccountChangePassword(context, query);
                             break;
+                        case "/account/setName":
+                            buffer = AccountSetName(context, query);
+                            break;
+                        case "/char/purchaseClassUnlock":
+                            buffer = CharPurchaseClassUnlock(context, query);
+                            break;
+                        case "/app/init":
+                            buffer = AppInit(context, query);
+                            break;
+                        case "/app/globalNews":
+                            buffer = AppGlobalNews(context, query);
+                            break;
+                        case "/guild/getBoard":
+                            buffer = GuildGetBoard(context, query);
+                            break;
+                        case "/guild/setBoard":
+                            buffer = GuildSetBoard(context, query);
+                            break;
+                        case "/guild/listMembers":
+                            buffer = GuildListMembers(context, query);
+                            break;
                         default:
                             Resources.WebFiles.TryGetValue(request, out buffer);
                             break;

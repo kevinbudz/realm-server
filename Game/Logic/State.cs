@@ -42,12 +42,26 @@ namespace RotMG.Game.Logic
         public void FindStateTransitions()
         {
             foreach (Transition transition in Transitions)
-                foreach (State state in Parent.States.Values)
-                    if (state.StringId == transition.StringTargetState)
-                        transition.TargetState = state.Id;
+                ResolveTransition(Parent.States.Values, transition);
 
             foreach (State state in States.Values)
                 state.FindStateTransitions();
+        }
+
+        public static void ResolveTransition(IEnumerable<State> states, Transition transition)
+        {
+            List<int> targets = new List<int>();
+            foreach (string name in transition.StringTargetStates)
+                foreach (State state in states)
+                    if (state.StringId == name)
+                    {
+                        targets.Add(state.Id);
+                        break;
+                    }
+
+            transition.TargetStates = targets.ToArray();
+            if (transition.TargetStates.Length > 0 && transition.TargetState == 0)
+                transition.TargetState = transition.TargetStates[transition.SelectedState];
         }
     }
 }

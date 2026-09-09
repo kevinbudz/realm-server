@@ -141,6 +141,33 @@ namespace RotMG.Common
         }
     }
 
+    public struct TradeItem
+    {
+        public int Item;
+        public int SlotType;
+        public bool Tradeable;
+        public bool Included;
+
+        public static TradeItem Read(PacketReader rdr)
+        {
+            return new TradeItem
+            {
+                Item = rdr.ReadInt32(),
+                SlotType = rdr.ReadInt32(),
+                Tradeable = rdr.ReadBoolean(),
+                Included = rdr.ReadBoolean()
+            };
+        }
+
+        public void Write(PacketWriter wtr)
+        {
+            wtr.Write(Item);
+            wtr.Write(SlotType);
+            wtr.Write(Tradeable);
+            wtr.Write(Included);
+        }
+    }
+
     public struct Position
     {
         public float X;

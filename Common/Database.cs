@@ -14,7 +14,7 @@ using System.Xml.Linq;
 namespace RotMG.Common
 {
     //SQLite (WAL mode) key/value storage system. Each legacy `.file` key is one row.
-    public static class Database
+    public static partial class Database
     {
         private const int MaxLegends = 20;
         private const int MinFameRequiredToEnterLegends = 0;
@@ -601,6 +601,10 @@ namespace RotMG.Common
             acc.Stats.Fame += totalFame;
             acc.Stats.TotalCredits += totalFame;
             acc.Save();
+
+            //Death fame accrues to the guild pool, as upstream.
+            if (!string.IsNullOrWhiteSpace(acc.GuildName))
+                AddGuildFame(acc.GuildName, totalFame);
 
             if (character.Fame >= MinFameRequiredToEnterLegends)
                 PushLegend(acc.Id, character.Id, totalFame, deathTime);

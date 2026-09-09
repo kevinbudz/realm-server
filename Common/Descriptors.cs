@@ -163,10 +163,14 @@ namespace RotMG.Common
         public readonly ushort Type;
 
         public readonly string DisplayId;
+        public readonly string Group;
+        public readonly string Class;
+        public readonly string DungeonName;
 
         public readonly bool Static;
         public readonly bool CaveWall;
         public readonly bool ConnectedWall;
+        public readonly bool Portal;
         public readonly bool BlocksSight;
 
         public readonly bool OccupySquare;
@@ -202,10 +206,15 @@ namespace RotMG.Common
             Type = type;
 
             DisplayId = e.ParseString("DisplayId", Id);
+            Group = e.ParseString("Group");
+            Class = e.ParseString("Class");
+            DungeonName = e.ParseString("DungeonName");
 
             Static = e.ParseBool("Static");
             CaveWall = e.ParseString("Class") == "CaveWall";
             ConnectedWall = e.ParseString("Class") == "ConnectedWall";
+            string objClass = e.ParseString("Class");
+            Portal = objClass == "Portal" || objClass == "GuildHallPortal";
             BlocksSight = e.ParseBool("BlocksSight");
 
             OccupySquare = e.ParseBool("OccupySquare");
@@ -364,7 +373,9 @@ namespace RotMG.Common
         public readonly float Radius;
         public readonly uint? Color;
         public readonly int MaxTargets;
-        
+        public readonly string LockedName;
+        public readonly string DungeonName;
+
         public ActivateEffectDesc(XElement e)
         {
             Index = (ActivateEffectIndex)Enum.Parse(typeof(ActivateEffectIndex), e.Value.Replace(" ", ""));
@@ -383,6 +394,8 @@ namespace RotMG.Common
 
             if (e.Attribute("color") != null)
                 Color = e.ParseUInt("@color");
+            LockedName = e.ParseString("@lockedName");
+            DungeonName = e.ParseString("@dungeonName");
         }
     }
     

@@ -1,5 +1,6 @@
 ﻿using RotMG.Common;
 using RotMG.Game.Entities;
+using RotMG.Game.Entities.Vendors;
 using RotMG.Game.Logic;
 using RotMG.Utils;
 using System;
@@ -101,7 +102,8 @@ namespace RotMG.Game
         ItemData_16,
         ItemData_17,
         ItemData_18,
-        ItemData_19
+        ItemData_19,
+        NameChosen
     }
 
     public class Entity : IDisposable
@@ -205,7 +207,7 @@ namespace RotMG.Game
         {
             InitStates();
 
-            if (this is Player || Behavior != null || Desc.Enemy)
+            if (this is Player || this is Decoy || Behavior != null || Desc.Enemy)
             {
                 int historyCapacity = Settings.TicksPerSecond * 10;
                 History = new List<Position>(historyCapacity);
@@ -250,10 +252,8 @@ namespace RotMG.Game
 
         public Position TryGetHistory(int ticksBackwards)
         {
-#if DEBUG
             if (History == null)
-                throw new Exception("This entity does not support position history.");
-#endif
+                return Position;
             if (_historyCount > ticksBackwards)
             {
                 int historySize = History.Count;
@@ -709,12 +709,52 @@ namespace RotMG.Game
         {
             ObjectDesc desc = Resources.Type2Object[type];
 
+            switch (desc.Class)
+            {
+                case "Sign":
+                    return new Sign(type);
+                case "Wall":
+                case "DoubleWall":
+                    return new Wall(type);
+                case "ConnectedWall":
+                case "CaveWall":
+                    return new ConnectedObject(type);
+                case "GameObject":
+                case "CharacterChanger":
+                case "MoneyChanger":
+                case "NameChanger":
+                case "GuildRegister":
+                case "GuildChronicle":
+                case "GuildBoard":
+                    return new StaticObject(type);
+                case "Container":
+                    return new Container(type);
+                case "Player":
 #if DEBUG
-            if (desc.Player) 
-                throw new Exception("Cannot dynamically resolve a player entity.");
+                    throw new Exception("Cannot dynamically resolve a player entity.");
+#else
+                    return new Entity(type);
 #endif
+                case "Character":
+                    return new Enemy(type);
+                case "ArenaPortal":
+                case "Portal":
+                    return new Portal(type);
+                case "GuildHallPortal":
+                    return new GuildHallPortal(type);
+                case "ClosedVaultChest":
+                    return new ClosedVaultChest(type);
+                case "ClosedGiftChest":
+                case "VaultChest":
+                    return new GiftChest(type);
+                case "GuildMerchant":
+                    return new GuildMerchant(type);
+                case "Merchant":
+                    return new WorldMerchant(type);
+            }
 
             if (desc.ConnectedWall || desc.CaveWall) return new ConnectedObject(type);
+            if (desc.Portal) return new Portal(type);
             if (desc.Static) return new StaticObject(type);
             if (desc.Enemy) return new Enemy(type);
             return new Entity(type);

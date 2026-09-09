@@ -98,6 +98,7 @@ namespace RotMG.Game.Entities
 
         public void DropItem(byte slot)
         {
+            CancelTradeIfTrading();
             UpdateInventorySlot(slot);
 
             if (!ValidSlot(slot))
@@ -133,6 +134,7 @@ namespace RotMG.Game.Entities
 
         public void SwapItem(SlotData slot1, SlotData slot2)
         {
+            CancelTradeIfTrading();
             Entity en1 = Parent.GetEntity(slot1.ObjectId);
             Entity en2 = Parent.GetEntity(slot2.ObjectId);
 
@@ -212,6 +214,17 @@ namespace RotMG.Game.Entities
             int data1 = con1.ItemDatas[slot1.SlotId];
             int item2 = con2.Inventory[slot2.SlotId];
             int data2 = con2.ItemDatas[slot2.SlotId];
+
+            //One-way containers (vault/gift chests) only dispense.
+            if ((en1 is OneWayContainer && item2 != -1) ||
+                (en2 is OneWayContainer && item1 != -1))
+            {
+#if DEBUG
+                Program.Print(PrintType.Error, "One-way container deposit attempt");
+#endif
+                Client.Send(InvalidInvSwap);
+                return;
+            }
             PlayerDesc d = Desc as PlayerDesc;
             ItemDesc d1;
             ItemDesc d2;

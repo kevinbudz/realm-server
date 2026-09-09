@@ -30,6 +30,8 @@ namespace RotMG.Game.Entities
                 return;
             }
 
+            CancelTradeIfTrading();
+
             if (slot.SlotId == HealthPotionSlotId)
             {
                 if (HealthPotions > 0 && !HasConditionEffect(ConditionEffectIndex.Sick))
@@ -484,6 +486,9 @@ namespace RotMG.Game.Entities
                             }
                         }
                         break;
+                    case ActivateEffectIndex.UnlockPortal:
+                        UnlockDungeon(eff, target);
+                        break;
                     case ActivateEffectIndex.Backpack:
                         if (HasBackpack)
                             callback = () =>
@@ -527,6 +532,57 @@ namespace RotMG.Game.Entities
             }
 
             callback?.Invoke();
+        }
+
+        //Consumes a dungeon key near a locked portal: creates the dungeon and
+        //replaces the lock with its open portal, mirroring AEUnlockPortal
+        //upstream.
+        private void UnlockDungeon(ActivateEffectDesc eff, Position target)
+        {
+            if (string.IsNullOrWhiteSpace(eff.LockedName) || string.IsNullOrWhiteSpace(eff.DungeonName))
+                return;
+
+            Portal locked = null;
+            float best = float.MaxValue;
+            foreach (Entity en in Parent.Statics.Values)
+            {
+                if (!(en is Portal portal) || portal.Desc.Id != eff.LockedName)
+                    continue;
+                float dist = target.Distance(portal);
+                if (dist <= 3 && dist < best)
+                {
+                    locked = portal;
+                    best = dist;
+                }
+            }
+            if (locked == null)
+                return;
+
+            Dungeons.DungeonDef def = Dungeons.DungeonDefs.ByName(eff.DungeonName);
+            if (def == null)
+            {
+                SendError("Dungeon not implemented.");
+                return;
+            }
+
+            ObjectDesc portalDesc;
+            if (!Resources.Id2Object.TryGetValue(def.PortalObject, out portalDesc))
+                return;
+
+            Position at = locked.Position;
+            Parent.RemoveStatic((int)at.X, (int)at.Y);
+
+            Portal open = new Portal(portalDesc.Type);
+            if (Parent.AddEntity(open, at) == -1)
+                return;
+            Tile tile = Parent.GetTile((int)at.X, (int)at.Y);
+            if (tile != null)
+            {
+                tile.StaticObject = open;
+                tile.UpdateCount++;
+                Parent.UpdateCount++;
+            }
+            Manager.GetDungeonWorld(open, def);
         }
     }
 }

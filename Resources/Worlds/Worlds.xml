@@ -10,4 +10,25 @@
 		<ShowDisplays>true</ShowDisplays>
 		<BlockSight>0</BlockSight>
 	</World>
+	<World id="Vault" display="Vault">
+		<Maps>Vault/0.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Realm" display="Realm">
+		<Maps>Realm/0.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="GuildHall" display="Guild Hall">
+		<Maps>GuildHall/0.jm;GuildHall/1.jm;GuildHall/2.jm;GuildHall/3.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>false</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
 </Worlds>

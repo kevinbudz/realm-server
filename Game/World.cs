@@ -1,5 +1,6 @@
 ﻿using RotMG.Common;
 using RotMG.Game.Entities;
+using RotMG.Game.Entities.Vendors;
 using RotMG.Utils;
 using System;
 using System.Collections.Generic;
@@ -55,18 +56,27 @@ namespace RotMG.Game
         private readonly HashSet<Entity> _activeEntities;
 
         public World(JSMap map, WorldDesc desc)
+            : this(map, desc.Id, desc.DisplayName, desc.Background)
+        {
+            ShowDisplays = desc.ShowDisplays;
+            AllowTeleport = desc.AllowTeleport;
+            BlockSight = desc.BlockSight;
+        }
+
+        //Generated dungeons bypass WorldDesc (see Game/Dungeons).
+        protected World(JSMap map, string name, string displayName, int background)
         {
             Map = map;
             Width = map.Width;
             Height = map.Height;
 
-            Background = desc.Background;
-            ShowDisplays = desc.ShowDisplays;
-            AllowTeleport = desc.AllowTeleport;
-            BlockSight = desc.BlockSight;
+            Background = background;
+            ShowDisplays = false;
+            AllowTeleport = true;
+            BlockSight = 0;
 
-            Name = desc.Id;
-            DisplayName = desc.DisplayName;
+            Name = name;
+            DisplayName = displayName;
 
             Entities = new Dictionary<int, Entity>();
             Quests = new Dictionary<int, Entity>();
@@ -98,19 +108,71 @@ namespace RotMG.Game
                     if (js.ObjectType != 0xff)
                     {
                         Entity entity = Entity.Resolve(js.ObjectType);
-                        if (entity.Desc.Static)
+                        if (entity is StaticObject staticObject)
                         {
                             if (entity.Desc.BlocksSight)
                                 tile.BlocksSight = true;
-                            tile.StaticObject = (StaticObject)entity;
+                            tile.StaticObject = staticObject;
                         }
 
                         AddEntity(entity, new Position(x + 0.5f, y + 0.5f));
                     }
                 }
+            InitMerchants();
             UpdateCount = int.MaxValue / 2;
         }
         
+        //Spawns rotating-stock shopkeepers on Store_* regions, mirroring
+        //realm-src-master wServer/realm/worlds/World.cs merchant init.
+        private void InitMerchants()
+        {
+            ObjectDesc merchantDesc;
+            if (!Resources.Id2Object.TryGetValue("Merchant", out merchantDesc))
+                return;
+
+            foreach (KeyValuePair<Region, List<ShopItem>> shop in MerchantLists.Shops)
+            {
+                List<IntPoint> locations;
+                if (!Map.Regions.TryGetValue(shop.Key, out locations) || locations.Count == 0)
+                    continue;
+
+                List<ShopItem> stock = shop.Value.FindAll(i => i.ItemId != ushort.MaxValue);
+                if (stock.Count == 0)
+                    continue;
+
+                CurrencyType currency = CurrencyType.Gold;
+                MerchantLists.ShopCurrency.TryGetValue(shop.Key, out currency);
+
+                bool rotate = stock.Count > locations.Count;
+                Queue<ShopItem> queue = new Queue<ShopItem>(stock);
+                int reloadOffset = 0;
+                foreach (IntPoint loc in locations)
+                {
+                    if (queue.Count == 0)
+                        foreach (ShopItem restock in stock)
+                            queue.Enqueue(restock);
+
+                    ShopItem item = queue.Dequeue();
+                    reloadOffset += 500;
+                    WorldMerchant merchant = new WorldMerchant(merchantDesc.Type)
+                    {
+                        ShopItem = item,
+                        Item = item.ItemId,
+                        Price = item.Price,
+                        Count = item.Count,
+                        Currency = currency,
+                        RankReq = 0,
+                        ItemList = shop.Value,
+                        ReloadOffset = reloadOffset,
+                        Rotate = rotate
+                    };
+                    merchant.SyncMerchantStats();
+                    merchant.SyncStockStats();
+                    AddEntity(merchant, new Position(loc.X + 0.5f, loc.Y + 0.5f));
+                }
+            }
+        }
+
         public IntPoint GetRegion(Region region)
         {
             if (!Map.Regions.ContainsKey(region))
@@ -359,6 +421,8 @@ namespace RotMG.Game
 
         public void Tick()
         {
+            OnTick();
+
             if (Players.Count == 0)
                 return;
 
@@ -399,6 +463,10 @@ namespace RotMG.Game
                     en.NewSVs.Clear();
 
             ChatMessages.Clear();
+        }
+
+        protected virtual void OnTick()
+        {
         }
 
         public void Dispose()

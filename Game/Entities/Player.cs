@@ -38,6 +38,13 @@ namespace RotMG.Game.Entities
             set { TrySetSV(StatType.Name, _name = value); }
         }
 
+        private bool _nameChosen;
+        public bool NameChosen
+        {
+            get { return _nameChosen; }
+            set { TrySetSV(StatType.NameChosen, (_nameChosen = value) ? 1 : 0); }
+        }
+
         private int _exp;
         public int EXP
         {
@@ -189,6 +196,7 @@ namespace RotMG.Game.Entities
             MP = client.Character.MP;
             AccountId = client.Account.Id;
             Name = client.Account.Name;
+            NameChosen = !string.IsNullOrWhiteSpace(client.Account.Name);
             Level = client.Character.Level;
 
             if (client.Character.HealthPotions != 0) HealthPotions = client.Character.HealthPotions;
@@ -240,6 +248,8 @@ namespace RotMG.Game.Entities
 
         public override void Init()
         {
+            base.Init();
+
             TileUpdates = new int[Parent.Width, Parent.Height];
             EntityUpdates = new Dictionary<int, int>();
             Entities = new HashSet<Entity>();
@@ -405,6 +415,7 @@ namespace RotMG.Game.Entities
 
             TickRegens();
             TickProjectiles();
+            CheckTradeTimeout();
             base.Tick();
         }
 
@@ -457,6 +468,7 @@ namespace RotMG.Game.Entities
 
         public override void Dispose()
         {
+            try { CancelTradeIfTrading(); } catch { }
             TileUpdates = null;
             EntityUpdates.Clear();
             Entities.Clear();

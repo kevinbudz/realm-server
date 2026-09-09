@@ -10,7 +10,7 @@ namespace RotMG.Game.Logic.Loots
     public class ItemLoot : Loot
     {
         public readonly ushort Item;
-        public readonly float Threshold;
+        public float Threshold { get; private set; }
         public readonly float Chance;
         public readonly int Min;
 
@@ -20,6 +20,11 @@ namespace RotMG.Game.Logic.Loots
             Threshold = threshold;
             Chance = chance;
             Min = min;
+        }
+
+        internal override void ApplyThreshold(float threshold)
+        {
+            Threshold = Math.Max(Threshold, threshold);
         }
 
         public override int TryObtainItem(Entity host, Player player, int position, float threshold)

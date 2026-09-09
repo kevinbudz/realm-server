@@ -15,6 +15,7 @@ namespace RotMG.Game
     {
         None,
         Spawn,
+        Realm_Portals,
         Regen,
         Blocks_Sight,
         Note,
@@ -41,7 +42,10 @@ namespace RotMG.Game
         Store_1,
         Store_2,
         Store_3,
-        Store_4
+        Store_4,
+        Store_5,
+        Store_6,
+        Vault
     }
 
     public struct JSTile
@@ -59,6 +63,23 @@ namespace RotMG.Game
         public int Height;
         public Dictionary<Region, List<IntPoint>> Regions;
 
+        //Blank map for generated dungeons (see Game/Dungeons).
+        public JSMap(int width, int height)
+        {
+            Width = width;
+            Height = height;
+            Tiles = new JSTile[width, height];
+            for (int x = 0; x < width; x++)
+                for (int y = 0; y < height; y++)
+                    Tiles[x, y] = new JSTile
+                    {
+                        GroundType = 255,
+                        ObjectType = 0xff,
+                        Region = Region.None
+                    };
+            InitRegions();
+        }
+
         public JSMap(string data)
         {
             json_dat json = JsonConvert.DeserializeObject<json_dat>(data);
@@ -74,7 +95,7 @@ namespace RotMG.Game
                     GroundType = o.ground == null ? (ushort)255 : Resources.Id2Tile[o.ground].Type,
                     ObjectType = o.objs == null ? (ushort)255 : Resources.Id2Object[o.objs[0].id].Type,
                     Key = o.objs == null ? null : o.objs[0].name,
-                    Region = o.regions == null ? Region.None : (Region)Enum.Parse(typeof(Region), o.regions[0].id.Replace(' ', '_'))
+                    Region = o.regions == null ? Region.None : ParseRegion(o.regions[0].id)
                 };
             }
 
@@ -107,6 +128,14 @@ namespace RotMG.Game
 
             InitRegions();
         } 
+
+        private static Region ParseRegion(string id)
+        {
+            if (Enum.TryParse(id.Replace(' ', '_'), out Region region))
+                return region;
+            Program.Print(PrintType.Warn, $"Unknown map region <{id}>, treating as <None>.");
+            return Region.None;
+        }
 
         public void InitRegions()
         {

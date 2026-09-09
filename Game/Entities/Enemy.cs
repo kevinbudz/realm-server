@@ -12,6 +12,7 @@ namespace RotMG.Game.Entities
     public class Enemy : Entity
     {
         public Dictionary<int, int> DamageStorage;
+        public TerrainType Terrain;
 
         public Enemy(ushort type) : base(type)
         {
@@ -148,6 +149,9 @@ namespace RotMG.Game.Entities
                     foreach (Behavior b in s.Behaviors)
                         b.Death(this);
             }
+
+            (Parent as RealmWorld)?.Overseer?.OnEnemyKilled(this, killer);
+            (Parent as Dungeons.DungeonWorld)?.OnBossKilled(this, killer);
 
             Dead = true;
             Parent.RemoveEntity(this);

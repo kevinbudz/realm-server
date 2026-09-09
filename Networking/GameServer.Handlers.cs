@@ -14,57 +14,72 @@ namespace RotMG.Networking
 {
     public static partial class GameServer
     {
+        //Wire values must match realm-client
+        //(src/kabam/rotmg/messaging/impl/GameServerConnection.as). Do NOT
+        //reorder or renumber: the client parses by raw byte value, so every
+        //value is explicit and insertions must never shift later IDs.
         public enum PacketId
         {
-            Failure,
-            CreateSuccess,
-            Create,
-            PlayerShoot,
-            Move,
-            PlayerText,
-            Text,
-            ServerPlayerShoot,
-            Damage,
-            Update,
-            Notification,
-            NewTick,
-            InvSwap,
-            UseItem,
-            ShowEffect,
-            Hello,
-            Goto,
-            InvDrop,
-            InvResult,
-            Reconnect,
-            MapInfo,
-            Load,
-            Teleport,
-            UsePortal,
-            Death,
-            Buy,
-            BuyResult,
-            Aoe,
-            PlayerHit,
-            EnemyHit,
-            AoeAck,
-            ShootAck,
-            SquareHit,
-            EditAccountList,
-            AccountList,
-            QuestObjId,
-            CreateGuild,
-            GuildResult,
-            GuildRemove,
-            GuildInvite,
-            AllyShoot,
-            EnemyShoot,
-            Escape,
-            InvitedToGuild,
-            JoinGuild,
-            ChangeGuildRank,
-            PlaySound,
-            Reskin,
-            GotoAck
+            Failure = 0,
+            CreateSuccess = 1,
+            Create = 2,
+            PlayerShoot = 3,
+            Move = 4,
+            PlayerText = 5,
+            Text = 6,
+            ServerPlayerShoot = 7,
+            Damage = 8,
+            Update = 9,
+            Notification = 10,
+            NewTick = 11,
+            InvSwap = 12,
+            UseItem = 13,
+            ShowEffect = 14,
+            Hello = 15,
+            Goto = 16,
+            InvDrop = 17,
+            InvResult = 18,
+            Reconnect = 19,
+            MapInfo = 20,
+            Load = 21,
+            Teleport = 22,
+            UsePortal = 23,
+            Death = 24,
+            Buy = 25,
+            BuyResult = 26,
+            Aoe = 27,
+            PlayerHit = 28,
+            EnemyHit = 29,
+            AoeAck = 30,
+            ShootAck = 31,
+            SquareHit = 32,
+            EditAccountList = 33,
+            AccountList = 34,
+            QuestObjId = 35,
+            CreateGuild = 36,
+            GuildResult = 37,
+            GuildRemove = 38,
+            GuildInvite = 39,
+            AllyShoot = 40,
+            EnemyShoot = 41,
+            Escape = 42,
+            InvitedToGuild = 43,
+            JoinGuild = 44,
+            ChangeGuildRank = 45,
+            PlaySound = 46,
+            Reskin = 47,
+            GotoAck = 48,
+            ChooseName = 49,
+            NameResult = 50,
+            RequestTrade = 51,
+            TradeRequested = 52,
+            TradeStart = 53,
+            ChangeTrade = 54,
+            TradeChanged = 55,
+            AcceptTrade = 56,
+            CancelTrade = 57,
+            TradeDone = 58,
+            TradeAccepted = 59
         }
 
         public static void Read(Client client, int id, byte[] data)
@@ -133,8 +148,50 @@ namespace RotMG.Networking
                     case (int)PacketId.Escape:
                         Escape(client, rdr);
                         break;
+                    case (int)PacketId.UsePortal:
+                        UsePortal(client, rdr);
+                        break;
+                    case (int)PacketId.ChooseName:
+                        ChooseName(client, rdr);
+                        break;
                     case (int)PacketId.InvDrop:
                         InvDrop(client, rdr);
+                        break;
+                    case (int)PacketId.Teleport:
+                        Teleport(client, rdr);
+                        break;
+                    case (int)PacketId.Buy:
+                        Buy(client, rdr);
+                        break;
+                    case (int)PacketId.RequestTrade:
+                        RequestTrade(client, rdr);
+                        break;
+                    case (int)PacketId.ChangeTrade:
+                        ChangeTrade(client, rdr);
+                        break;
+                    case (int)PacketId.AcceptTrade:
+                        AcceptTrade(client, rdr);
+                        break;
+                    case (int)PacketId.CancelTrade:
+                        CancelTrade(client, rdr);
+                        break;
+                    case (int)PacketId.CreateGuild:
+                        CreateGuild(client, rdr);
+                        break;
+                    case (int)PacketId.GuildRemove:
+                        GuildRemove(client, rdr);
+                        break;
+                    case (int)PacketId.GuildInvite:
+                        GuildInvite(client, rdr);
+                        break;
+                    case (int)PacketId.JoinGuild:
+                        JoinGuild(client, rdr);
+                        break;
+                    case (int)PacketId.ChangeGuildRank:
+                        ChangeGuildRank(client, rdr);
+                        break;
+                    case (int)PacketId.Reskin:
+                        Reskin(client, rdr);
                         break;
                 }
             }
@@ -160,6 +217,137 @@ namespace RotMG.Networking
         {
             int time = rdr.ReadInt32(); 
             client.Player.TryGotoAck(time);
+        }
+
+        public static void ChooseName(Client client, PacketReader rdr)
+        {
+            string name = rdr.ReadString();
+
+            Player player = client.Player;
+            if (player == null || player.Parent == null)
+                return;
+
+            if (client.Account == null || string.IsNullOrWhiteSpace(client.Account.Name))
+            {
+                client.Send(NameResult(false, "Not registered."));
+                return;
+            }
+
+            if (!Database.IsValidUsername(name))
+            {
+                client.Send(NameResult(false, "Invalid name."));
+                return;
+            }
+
+            int existingId = Database.IdFromUsername(name);
+            if (existingId != -1 && existingId != client.Account.Id)
+            {
+                client.Send(NameResult(false, "Name already taken."));
+                return;
+            }
+
+            if (name == client.Account.Name)
+            {
+                client.Send(NameResult(true, ""));
+                return;
+            }
+
+            const int price = 1000;
+            if (client.Account.Stats.Credits < price)
+            {
+                client.Send(NameResult(false, "Not enough gold."));
+                return;
+            }
+
+            client.Account.Stats.Credits -= price;
+            Database.DeleteKey($"login.username.{client.Account.Name}");
+            Database.SetKey($"login.username.{name}", client.Account.Id.ToString());
+            Database.SetKey($"login.id.{client.Account.Id}", name);
+            client.Account.Save();
+
+            AccountModel fresh = new AccountModel(client.Account.Id);
+            fresh.Load();
+            client.Account = fresh;
+
+            player.Name = name;
+            player.Credits = fresh.Stats.Credits;
+            player.NameChosen = true;
+            client.Send(NameResult(true, ""));
+        }
+
+        public static void UsePortal(Client client, PacketReader rdr)
+        {
+            int objectId = rdr.ReadInt32();
+
+            Player player = client.Player;
+            if (player == null || player.Parent == null)
+                return;
+
+            Portal portal = player.Parent.GetEntity(objectId) as Portal;
+            if (portal == null || !portal.Usable)
+                return;
+
+            //Drop instances reclaimed while empty (see Manager dungeon sweep).
+            if (portal.WorldInstance != null && Manager.GetWorld(portal.WorldInstance.Id) != portal.WorldInstance)
+                portal.WorldInstance = null;
+
+            World world = portal.WorldInstance ?? ResolvePortalWorld(player, portal);
+            if (world == null)
+                return;
+
+            client.Active = false;
+            client.Send(Reconnect(world.Id));
+            Manager.AddTimedAction(2000, client.Disconnect);
+        }
+
+        private static World ResolvePortalWorld(Player player, Portal portal)
+        {
+            switch (portal.Type)
+            {
+                case 0x0704: //Realm Portal
+                case 0x070e: //Glowing Realm Portal
+                    return Manager.GetWorld(Manager.RealmId);
+                case 0x0703: //Portal of Cowardice
+                case 0x070d: //Glowing Portal of Cowardice
+                case 0x0712: //Nexus Portal
+                case 0x071d: //Portal to Nexus
+                    return Manager.GetWorld(Manager.NexusId);
+                case 0x0720: //Vault Portal
+                    return Manager.GetVaultWorld(player.Client);
+                case 0x072f: //Guild Hall Portal
+                    if (string.IsNullOrWhiteSpace(player.GuildName))
+                    {
+                        player.SendError("You are not in a guild.");
+                        return null;
+                    }
+                    return Manager.GetGuildHallWorld(player.GuildName);
+                default:
+                    break;
+            }
+
+            //Key-unlocked portals remember their dungeon per instance.
+            if (Manager.PortalDungeons.TryGetValue(portal.Id, out string mappedName))
+            {
+                Game.Dungeons.DungeonDef mapped = Game.Dungeons.DungeonDefs.ByName(mappedName);
+                if (mapped != null)
+                    return Manager.GetDungeonWorld(portal, mapped);
+            }
+
+            //Generated dungeon portals carry their DungeonName in the object
+            //descriptor (see Game/Dungeons).
+            if (!string.IsNullOrWhiteSpace(portal.Desc.DungeonName))
+            {
+                Game.Dungeons.DungeonDef def = Game.Dungeons.DungeonDefs.ByName(portal.Desc.DungeonName);
+                if (def == null)
+                {
+                    player.SendInfo("Portal not implemented.");
+                    return null;
+                }
+                return Manager.GetDungeonWorld(portal, def);
+            }
+
+            player.SendInfo("Portal not implemented.");
+            return null;
         }
 
         public static void UseItem(Client client, PacketReader rdr)
@@ -339,6 +527,7 @@ namespace RotMG.Networking
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
                 client.Send(CreateSuccess(world.AddEntity(client.Player, world.GetRegion(Region.Spawn).ToPosition()), client.Character.Id));
+                (world as RealmWorld)?.Overseer?.OnPlayerEntered(client.Player);
             }
         }
 
@@ -361,6 +550,7 @@ namespace RotMG.Networking
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
                 client.Send(CreateSuccess(world.AddEntity(client.Player, world.GetRegion(Region.Spawn).ToPosition()), client.Character.Id));
+                (world as RealmWorld)?.Overseer?.OnPlayerEntered(client.Player);
             }
         }
 
@@ -420,6 +610,15 @@ namespace RotMG.Networking
             wtr.Write((byte)PacketId.Failure);
             wtr.Write(errorId);
             wtr.Write(description);
+            return PacketWriter.RentedBytes();
+        }
+
+        public static byte[] NameResult(bool success, string errorText)
+        {
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.NameResult);
+            wtr.Write(success);
+            wtr.Write(errorText);
             return PacketWriter.RentedBytes();
         }
 

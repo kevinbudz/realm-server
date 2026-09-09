@@ -25,6 +25,44 @@ namespace RotMG
 
             Settings.Init();
             Resources.Init();
+            if (args.Contains("--seed-test")) //TEMPORARY startup verification hook, reverted after use
+            {
+                Manager.Init();
+                RealmWorld realm = (RealmWorld)Manager.Worlds[Manager.RealmId];
+                int foes = 0;
+                System.Collections.Generic.Dictionary<TerrainType, int> byTerrain =
+                    new System.Collections.Generic.Dictionary<TerrainType, int>();
+                foreach (Entity en in realm.Entities.Values)
+                    if (en is RotMG.Game.Entities.Enemy e)
+                    {
+                        foes++;
+                        byTerrain.TryGetValue(e.Terrain, out int n);
+                        byTerrain[e.Terrain] = n + 1;
+                    }
+                Console.WriteLine($"Seed test: {foes} realm enemies.");
+                foreach (System.Collections.Generic.KeyValuePair<TerrainType, int> kv in byTerrain.OrderBy(k => k.Key.ToString()))
+                    Console.WriteLine($"  {kv.Key}: {kv.Value}");
+
+                System.Collections.Generic.List<IntPoint> spawnTiles =
+                    realm.Map.Regions.TryGetValue(Region.Spawn, out System.Collections.Generic.List<IntPoint> sp) ? sp
+                    : new System.Collections.Generic.List<IntPoint>();
+                Console.WriteLine($"Spawn tiles: {spawnTiles.Count}, first=({(spawnTiles.Count > 0 ? spawnTiles[0].X : -1)},{(spawnTiles.Count > 0 ? spawnTiles[0].Y : -1)})");
+
+                System.Collections.Generic.Dictionary<string, int> noneTypes =
+                    new System.Collections.Generic.Dictionary<string, int>();
+                foreach (Entity en in realm.Entities.Values)
+                    if (en is RotMG.Game.Entities.Enemy e && e.Terrain == TerrainType.None)
+                    {
+                        string name = en.Desc == null ? "<nodesc>" : en.Desc.Id;
+                        noneTypes.TryGetValue(name, out int n);
+                        noneTypes[name] = n + 1;
+                    }
+                Console.WriteLine("Top Terrain=None enemy types:");
+                foreach (System.Collections.Generic.KeyValuePair<string, int> kv in noneTypes.OrderByDescending(k => k.Value).Take(10))
+                    Console.WriteLine($"  {kv.Key}: {kv.Value}");
+                Console.WriteLine("Seed test complete, exiting.");
+                return;
+            }
             Database.Init();
             AppServer.Init();
             GameServer.Init();

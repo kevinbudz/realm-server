@@ -1,0 +1,154 @@
+using RotMG.Common;
+using RotMG.Game.Logic.Behaviors;
+using RotMG.Game.Logic.Conditionals;
+using RotMG.Game.Logic.Loots;
+using RotMG.Game.Logic.Transitions;
+using System;
+using System.Collections.Generic;
+using System.Text;
+
+namespace RotMG.Game.Logic.Database
+{
+    public class Shore : IBehaviorDatabase
+    {
+        public void Init(BehaviorDb db)
+        {
+            db.Init("Piratess",
+                new Prioritize(
+                        new Follow(1.1, range: 1, duration: 3000, cooldown: 1500),
+                        new Wander(0.6f)
+                        ),
+                new Shoot(3, cooldown: 2500),
+                new Reproduce("Pirate", densityMax: 5),
+                new Reproduce("Piratess", densityMax: 5),
+                new TierLoot(1, TierLoot.LootType.Armor, 0.2f),
+                new ItemLoot("Health Potion", 0.03f));
+            db.Init("Snake",
+                new Wander(0.8f),
+                new Shoot(10, cooldown: 2000),
+                new Reproduce(densityMax: 5),
+                new ItemLoot("Health Potion", 0.03f),
+                new ItemLoot("Magic Potion", 0.02f));
+            db.Init("Poison Scorpion",
+                new Prioritize(
+                        new Protect(0.4, "Scorpion Queen"),
+                        new Wander(0.4f)
+                        ),
+                new Shoot(8, cooldown: 2000));
+            db.Init("Scorpion Queen",
+                new ChangeSize(100, 200),
+                new Wander(0.2f),
+                new Spawn("Poison Scorpion"),
+                new Reproduce("Poison Scorpion", cooldown: 10000, densityMax: 10),
+                new Reproduce(densityMax: 2, densityRadius: 40),
+                new ItemLoot("Health Potion", 0.03f),
+                new ItemLoot("Magic Potion", 0.02f));
+            db.Init("Bandit Enemy",
+                new State("fast_follow",
+                        new Shoot(3),
+                        new Prioritize(
+                            new Protect(0.6, "Bandit Leader", acquireRange: 9, protectionRange: 7, reprotectRange: 3),
+                            new Follow(1, range: 1),
+                            new Wander(0.6f)
+                            ),
+                        new TimedTransition("scatter1", 3000)
+                        ),
+                new State("scatter1",
+                        new Prioritize(
+                            new Protect(0.6, "Bandit Leader", acquireRange: 9, protectionRange: 7, reprotectRange: 3),
+                            new Wander(1),
+                            new Wander(0.6f)
+                            ),
+                        new TimedTransition("slow_follow", 2000)
+                        ),
+                new State("slow_follow",
+                        new Shoot(4.5f),
+                        new Prioritize(
+                            new Protect(0.6, "Bandit Leader", acquireRange: 9, protectionRange: 7, reprotectRange: 3),
+                            new Follow(0.5, acquireRange: 9, range: 3.5, duration: 4000),
+                            new Wander(0.5f)
+                            ),
+                        new TimedTransition("scatter2", 3000)
+                        ),
+                new State("scatter2",
+                        new Prioritize(
+                            new Protect(0.6, "Bandit Leader", acquireRange: 9, protectionRange: 7, reprotectRange: 3),
+                            new Wander(1),
+                            new Wander(0.6f)
+                            ),
+                        new TimedTransition("fast_follow", 2000)
+                        ),
+                new State("escape",
+                        new StayBack(0.5, 8),
+                        new TimedTransition("fast_follow", 15000)
+                        ));
+            db.Init("Bandit Leader",
+                new Spawn("Bandit Enemy", cooldown: 8000, maxChildren: 4),
+                new State("bold",
+                        new State("warn_about_grenades",
+                            new Taunt(0.15, "Catch!"),
+                            new TimedTransition("wimpy_grenade1", 400)
+                            ),
+                        new State("wimpy_grenade1",
+                            new Grenade(radius: 1.4f, damage: 12, cooldown: 10000),
+                            new Prioritize(
+                                new StayAbove(0.3, 7),
+                                new Wander(0.3f)
+                                ),
+                            new TimedTransition("wimpy_grenade2", 2000)
+                            ),
+                        new State("wimpy_grenade2",
+                            new Grenade(radius: 1.4f, damage: 12, cooldown: 10000),
+                            new Prioritize(
+                                new StayAbove(0.5, 7),
+                                new Wander(0.5f)
+                                ),
+                            new TimedTransition("slow_follow", 3000)
+                            ),
+                        new State("slow_follow",
+                            new Shoot(13, cooldown: 1000),
+                            new Prioritize(
+                                new StayAbove(0.4, 7),
+                                new Follow(0.4, acquireRange: 9, range: 3.5, duration: 4000),
+                                new Wander(0.4f)
+                                ),
+                            new TimedTransition("warn_about_grenades", 4000)
+                            ),
+                        new HpLessTransition(0.45, "meek")
+                        ),
+                new State("meek",
+                        new Taunt(0.5, "Forget this... run for it!"),
+                        new StayBack(0.5, 6),
+                        new Order(10, "Bandit Enemy", "escape"),
+                        new TimedTransition("bold", 12000)
+                        ),
+                new TierLoot(1, TierLoot.LootType.Weapon, 0.2f),
+                new TierLoot(1, TierLoot.LootType.Armor, 0.2f),
+                new TierLoot(2, TierLoot.LootType.Weapon, 0.12f),
+                new TierLoot(2, TierLoot.LootType.Armor, 0.12f),
+                new ItemLoot("Health Potion", 0.12f),
+                new ItemLoot("Magic Potion", 0.14f));
+            db.Init("Red Gelatinous Cube",
+                new Shoot(8, count: 2, shootAngle: 10, predictive: 0.2f, cooldown: 1000),
+                new Wander(0.4f),
+                new Reproduce(densityMax: 5),
+                new DropPortalOnDeath("Pirate Cave Portal", .01),
+                new ItemLoot("Health Potion", 0.04f),
+                new ItemLoot("Magic Potion", 0.04f));
+            db.Init("Purple Gelatinous Cube",
+                new Shoot(8, predictive: 0.2f, cooldown: 600),
+                new Wander(0.4f),
+                new Reproduce(densityMax: 5),
+                new DropPortalOnDeath("Pirate Cave Portal", .01),
+                new ItemLoot("Health Potion", 0.04f),
+                new ItemLoot("Magic Potion", 0.04f));
+            db.Init("Green Gelatinous Cube",
+                new Shoot(8, count: 5, shootAngle: 72, predictive: 0.2f, cooldown: 1800),
+                new Wander(0.4f),
+                new Reproduce(densityMax: 5),
+                new DropPortalOnDeath("Pirate Cave Portal", .01),
+                new ItemLoot("Health Potion", 0.04f),
+                new ItemLoot("Magic Potion", 0.04f));
+        }
+    }
+}

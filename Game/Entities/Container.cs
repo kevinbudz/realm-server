@@ -1,4 +1,5 @@
-﻿using System;
+﻿using RotMG.Common;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -36,8 +37,17 @@ namespace RotMG.Game.Entities
         }
 
         public int OwnerId = -1;
+        public bool Persistent;
+        //Write-through link to a persistent vault chest (see Database.Vault).
+        public int VaultOwnerId = -1;
+        public int VaultIndex = -1;
         public int[] Inventory { get; set; }
         public int[] ItemDatas { get; set; }
+
+        public Container(ushort type) : this(type, -1, null)
+        {
+            Persistent = true;
+        }
 
         public Container(ushort type, int ownerId, int? lifetime) : base(type, lifetime)
         {
@@ -53,6 +63,12 @@ namespace RotMG.Game.Entities
 
         public override void Tick()
         {
+            if (Persistent)
+            {
+                base.Tick();
+                return;
+            }
+
             bool disappear = true;
             for (int i = 0; i < MaxSlots; i++)
                 if (Inventory[i] != -1)
@@ -123,6 +139,13 @@ namespace RotMG.Game.Entities
                     SetSV(StatType.Inventory_7, Inventory[7]);
                     SetSV(StatType.ItemData_7, ItemDatas[7]);
                     break;
+            }
+
+            //Persist personal vault chests on every mutation.
+            if (VaultOwnerId != -1 && VaultIndex >= 0)
+            {
+                try { Database.SetVaultItems(VaultOwnerId, VaultIndex, Inventory, ItemDatas); }
+                catch { }
             }
         }
     }

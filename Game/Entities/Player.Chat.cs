@@ -1,4 +1,6 @@
 ﻿using RotMG.Common;
+using RotMG.Game.Logic;
+using RotMG.Game.Logic.Transitions;
 using RotMG.Networking;
 using RotMG.Utils;
 using System;
@@ -19,6 +21,7 @@ namespace RotMG.Game.Entities
         public void SendError(string text) => Client.Send(GameServer.Text("*Error*", 0, -1, 0, "", text));
         public void SendHelp(string text) => Client.Send(GameServer.Text("*Help*", 0, -1, 0, "", text));
         public void SendClientText(string text) => Client.Send(GameServer.Text("*Client*", 0, -1, 0, "", text));
+        public void SendEnemy(string name, string text) => Client.Send(GameServer.Text(name, 0, -1, 0, "", text));
 
         public void Chat(string text)
         {
@@ -45,6 +48,17 @@ namespace RotMG.Game.Entities
             }
 
             LastChatTime = Manager.TotalTimeUnsynced;
+
+            if (Parent != null)
+                foreach (Entity en in Parent.Entities.Values.ToArray())
+                {
+                    if (en.CurrentStates == null)
+                        continue;
+                    foreach (State state in en.CurrentStates.ToArray())
+                        foreach (Transition transition in state.Transitions)
+                            if (transition is PlayerTextTransition textTransition)
+                                textTransition.OnChatReceived(this, validText);
+                }
 
             if (validText[0] == '/')
             {
@@ -216,6 +230,23 @@ namespace RotMG.Game.Entities
                         Player findTarget = Manager.GetPlayer(input);
                         if (findTarget == null) SendError("Couldn't find player");
                         else SendInfo(findTarget.ToString());
+                        break;
+                    case "/g":
+                    case "/guild":
+                        if (string.IsNullOrWhiteSpace(GuildName))
+                            SendError("You are not in a guild.");
+                        else if (string.IsNullOrWhiteSpace(input))
+                            SendHelp("/g <message>");
+                        else
+                            SendGuild($"<{Name}> {input}");
+                        break;
+                    case "/trade":
+                        if (string.IsNullOrWhiteSpace(input))
+                            SendHelp("/trade <player name>");
+                        else if (Parent == null)
+                            SendError("You are not in a world.");
+                        else
+                            RequestTrade(input);
                         break;
                     case "/fame":
                     case "/famestats":

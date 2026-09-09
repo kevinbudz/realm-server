@@ -1,4 +1,5 @@
 ﻿using RotMG.Common;
+using RotMG.Game.Logic.Loots;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -27,7 +28,8 @@ namespace RotMG.Game.Logic
             Loots = new List<Loot>();
             foreach (IBehavior bh in behaviors)
             {
-                if (bh is Loot) Loots.Add(bh as Loot);
+                if (bh is Threshold threshold) AddThresholdedLoots(Loots, threshold, 0);
+                else if (bh is Loot) Loots.Add(bh as Loot);
                 if (bh is Behavior) Behaviors.Add(bh as Behavior);
                 if (bh is State)
                 {
@@ -38,13 +40,26 @@ namespace RotMG.Game.Logic
 
             foreach (State s1 in States.Values)
                 foreach (Transition t in s1.Transitions)
-                    foreach (State s2 in States.Values)
-                        if (s2.StringId == t.StringTargetState)
-                            t.TargetState = s2.Id;
+                    State.ResolveTransition(States.Values, t);
 
             foreach (State s1 in States.Values)
                 foreach (State s2 in s1.States.Values)
                     s2.FindStateTransitions();
+        }
+
+        private static void AddThresholdedLoots(List<Loot> loots, Threshold threshold, float floor)
+        {
+            float value = Math.Max(floor, threshold.Value);
+            foreach (Loot child in threshold.Children)
+            {
+                if (child is Threshold nested)
+                    AddThresholdedLoots(loots, nested, value);
+                else
+                {
+                    child.ApplyThreshold(value);
+                    loots.Add(child);
+                }
+            }
         }
     }
 
@@ -72,7 +87,14 @@ namespace RotMG.Game.Logic
 
         public void Init(string id, params IBehavior[] behaviors)
         {
-            int type = Resources.Id2Object[id].Type;
+            if (!Resources.Id2Object.TryGetValue(id, out ObjectDesc desc))
+            {
+#if DEBUG
+                Program.Print(PrintType.Error, $"Failed to add behavior: {id}. Xml data not found.");
+#endif
+                return;
+            }
+            int type = desc.Type;
 #if DEBUG
             if (Models.ContainsKey(type))
                 throw new Exception("Behavior already resolved for this entity.");

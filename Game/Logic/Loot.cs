@@ -11,5 +11,7 @@ namespace RotMG.Game.Logic
         {
             return -1;
         }
+
+        internal virtual void ApplyThreshold(float threshold) { }
     }
 }

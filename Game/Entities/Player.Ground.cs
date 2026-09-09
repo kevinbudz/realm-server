@@ -145,6 +145,23 @@ namespace RotMG.Game.Entities
             PushSpeedToHistory(GetMovementSpeed(), MoveMultiplier); //Add a new entry
         }
 
+        public void TryGroundHit(int time, Position pos)
+        {
+            if (!ValidTime(time))
+            {
+                Client.Disconnect();
+                return;
+            }
+
+            Tile tile = Parent.GetTile((int)pos.X, (int)pos.Y);
+            if (tile == null)
+                return;
+            TileDesc desc = Resources.Type2Tile[tile.Type];
+            if (desc.Damage > 0 && !HasConditionEffect(ConditionEffectIndex.Invincible))
+                if (!(tile.StaticObject?.Desc.ProtectFromGroundDamage ?? false))
+                    Damage(desc.Id, desc.Damage, new ConditionEffectDesc[0], true);
+        }
+
         public void TryGotoAck(int time)
         {
             if (!ValidTime(time))
