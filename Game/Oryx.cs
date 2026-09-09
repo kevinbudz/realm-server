@@ -561,50 +561,61 @@ namespace RotMG.Game
 
         private void SeedPopulation()
         {
-            // Count tiles per terrain in a single pass, mirroring the
-            // reference Init(). Walkability is enforced at placement time.
-            int terrainKinds = Enum.GetValues(typeof(TerrainType)).Length;
-            int[] tileCounts = new int[terrainKinds];
-            for (int y = 0; y < _world.Height; y++)
-                for (int x = 0; x < _world.Width; x++)
+            // Collect spawnable tiles per terrain in a single pass, mirroring
+            // the reference Init(). Sampling the lists directly guarantees
+            // exact per-terrain targets with no rejection-sampling shortfall.
+            Dictionary<TerrainType, List<IntPoint>> candidates = new Dictionary<TerrainType, List<IntPoint>>();
+            foreach (KeyValuePair<TerrainType, Tuple<int, Tuple<string, double>[]>> kv in RegionMobs)
+                candidates[kv.Key] = new List<IntPoint>();
+            for (int y = 2; y < _world.Height - 2; y++)
+                for (int x = 2; x < _world.Width - 2; x++)
                 {
                     TerrainType terrain = GetTileTerrain(x, y);
-                    if (terrain != TerrainType.None)
-                        tileCounts[(int)terrain]++;
+                    if (terrain == TerrainType.None || !IsSpawnableGround(_world.GetTile(x, y)))
+                        continue;
+                    candidates[terrain].Add(new IntPoint(x, y));
                 }
 
-            int totalTiles = _world.Width * _world.Height;
             int seeded = 0;
             _seedTerrains.Clear();
             foreach (KeyValuePair<TerrainType, Tuple<int, Tuple<string, double>[]>> kv in RegionMobs)
             {
                 TerrainType terrain = kv.Key;
-                int target = tileCounts[(int)terrain] / kv.Value.Item1;
-                if (target <= 0)
-                    continue;
-
-                // Scale attempts by terrain rarity so scarce terrains still
-                // place their mobs without stalling startup on common ones.
-                int attempts = Math.Min(200000, Math.Max(10, target * Math.Max(10, totalTiles / Math.Max(1, tileCounts[(int)terrain]))));
-                int placed = 0;
-                for (int attempt = 0; attempt < attempts && placed < target; attempt++)
+                List<IntPoint> spots = candidates[terrain];
+                int target = spots.Count / kv.Value.Item1;
+                for (int i = 0; i < target && spots.Count > 0; i++)
                 {
-                    int x = _rand.Next(2, Math.Max(3, _world.Width - 2));
-                    int y = _rand.Next(2, Math.Max(3, _world.Height - 2));
-                    if (GetTileTerrain(x, y) != terrain || !IsSpawnableGround(_world.GetTile(x, y)))
-                        continue;
+                    int idx = _rand.Next(spots.Count);
+                    IntPoint spot = spots[idx];
+                    spots[idx] = spots[spots.Count - 1];
+                    spots.RemoveAt(spots.Count - 1);
 
-                    Entity en = SetPieces.SpawnEnemy(_world, PickMob(kv.Value.Item2), x + 0.5f, y + 0.5f);
+                    Entity en = SetPieces.SpawnEnemy(_world, PickMob(kv.Value.Item2), spot.X + 0.5f, spot.Y + 0.5f);
                     if (en is Enemy enemy)
                     {
                         enemy.Terrain = terrain;
                         if (!_seedTerrains.TryGetValue(enemy.Type, out List<TerrainType> terrains))
                             _seedTerrains[enemy.Type] = terrains = new List<TerrainType>();
                         terrains.Add(terrain);
-                        placed++;
                         seeded++;
                     }
                 }
+            }
+
+            // Anchor map-placed mobs (painted packs and their behavior-spawned
+            // children) to the terrain under them so upkeep respawns them
+            // near home instead of anywhere on the map.
+            foreach (Entity en in _world.Entities.Values)
+            {
+                if (!(en is Enemy enemy) || enemy.Terrain != TerrainType.None)
+                    continue;
+                TerrainType terrain = GetTileTerrain((int)enemy.Position.X, (int)enemy.Position.Y);
+                if (terrain == TerrainType.None)
+                    continue;
+                enemy.Terrain = terrain;
+                if (!_seedTerrains.TryGetValue(enemy.Type, out List<TerrainType> terrains))
+                    _seedTerrains[enemy.Type] = terrains = new List<TerrainType>();
+                terrains.Add(terrain);
             }
 #if DEBUG
             Program.Print(PrintType.Debug, $"Oryx seeded <{seeded}> realm minions.");
@@ -658,7 +669,7 @@ namespace RotMG.Game
             // proportionally), keeping populations terrain-anchored instead
             // of diffusing map-wide.
             bool anchored = _seedTerrains.TryGetValue(type, out List<TerrainType> terrains) && terrains.Count > 0;
-            for (int attempt = 0; attempt < 60; attempt++)
+            for (int attempt = 0; attempt < 200; attempt++)
             {
                 int x = _rand.Next(2, Math.Max(3, _world.Width - 2));
                 int y = _rand.Next(2, Math.Max(3, _world.Height - 2));
