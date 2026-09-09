@@ -52,7 +52,7 @@ namespace RotMG.Networking
                     }
                 }
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }
@@ -75,7 +75,7 @@ namespace RotMG.Networking
                 else
                     data = WriteError("Bad input to character unlock");
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }
@@ -120,7 +120,7 @@ namespace RotMG.Networking
                 else
                     data = Write(Database.GetGuildBoard(acc.GuildName));
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }
@@ -148,7 +148,7 @@ namespace RotMG.Networking
                     data = Write(text);
                 }
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }
@@ -185,7 +185,7 @@ namespace RotMG.Networking
                     data = Write(root.ToString());
                 }
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }

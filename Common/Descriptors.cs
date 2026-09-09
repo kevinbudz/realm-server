@@ -531,6 +531,36 @@ namespace RotMG.Common
 
         static ItemType[] ModifiableTypes = WeaponTypes.Concat(ArmorTypes).Concat(RingTypes).Concat(AbilityTypes).ToArray();
 
+        //Translates a network stat id (as used by ActivateOnEquip/Activate
+        //'stat' attributes in the game data) to an internal boost slot
+        //0-7 (MaxHP, MaxMP, Attack, Defense, Speed, Dexterity, Vitality,
+        //Wisdom), mirroring realm-src-master StatsManager.GetStatIndex.
+        //Returns -1 for stats that cannot boost equipment.
+        public static int GetBoostIndex(int statId)
+        {
+            switch (statId)
+            {
+                case (int)StatType.MaxHP: //0 MaximumHP
+                    return 0;
+                case (int)StatType.MaxMP: //3 MaximumMP
+                    return 1;
+                case (int)StatType.Attack: //20
+                    return 2;
+                case (int)StatType.Defense: //21
+                    return 3;
+                case (int)StatType.Speed: //22
+                    return 4;
+                case 28: //Dexterity (StatType.Dexterity is 25 here; 28 is the vanilla id)
+                    return 5;
+                case 26: //Vitality
+                    return 6;
+                case 27: //Wisdom
+                    return 7;
+                default:
+                    return -1;
+            }
+        }
+
         public static float GetStat(int data, ItemData i, float multiplier)
         {
             int rank = GetRank(data);

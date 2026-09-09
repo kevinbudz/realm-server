@@ -625,13 +625,21 @@ namespace RotMG.Game
                 else if (num < desc.Spawn.Min)
                     num = desc.Spawn.Min;
 
+                //Bounded attempts: if no tile matches (e.g. the terrain is
+                //absent from this static map or everything is occupied),
+                //give up instead of spinning the main thread forever.
+                int attempts = 200;
                 do
                 {
                     pt.X = _rand.Next(0, w);
                     pt.Y = _rand.Next(0, h);
-                } while (GetTileTerrain(pt.X, pt.Y) != terrain ||
+                    attempts--;
+                } while ((GetTileTerrain(pt.X, pt.Y) != terrain ||
                          !_world.IsPassable(pt.X, pt.Y) ||
-                         _world.AnyPlayerNearby(pt.X, pt.Y));
+                         _world.AnyPlayerNearby(pt.X, pt.Y)) &&
+                         attempts > 0);
+                if (attempts <= 0)
+                    return ret;
 
                 for (int k = 0; k < num; k++)
                 {
@@ -644,13 +652,18 @@ namespace RotMG.Game
                 return ret;
             }
 
+            int singleAttempts = 200;
             do
             {
                 pt.X = _rand.Next(0, w);
                 pt.Y = _rand.Next(0, h);
-            } while (GetTileTerrain(pt.X, pt.Y) != terrain ||
+                singleAttempts--;
+            } while ((GetTileTerrain(pt.X, pt.Y) != terrain ||
                      !_world.IsPassable(pt.X, pt.Y) ||
-                     _world.AnyPlayerNearby(pt.X, pt.Y));
+                     _world.AnyPlayerNearby(pt.X, pt.Y)) &&
+                     singleAttempts > 0);
+            if (singleAttempts <= 0)
+                return ret;
 
             Enemy single = new Enemy(desc.Type) { Terrain = terrain };
             if (_world.AddEntity(single, new Position(pt.X, pt.Y)) != -1)

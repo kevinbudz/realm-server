@@ -52,16 +52,23 @@ namespace RotMG.Game.Entities
         private const float EnemyHitTrackPrecision = 8;
         private const int EnemyHitHistoryBacktrack = 2;
 
-        //Verify-don't-kill: the sweep below only flags unreported point-blank
-        //contacts for cheat review. It must stay far looser than any real hitbox
-        //(server 0.4, client 0.5) so honest dodges never register.
-        private const float VerifyHalfBox = 1.0f;
+        //Verify-don't-punish-grazes: the sweep below records enemy bullets
+        //that pass all but certainly through the player without the client
+        //ever reporting a hit. The box must stay TIGHTER than any real
+        //hitbox (server 0.4, client 0.5): a wider box flags honest grazes
+        //the client correctly never reports. Each bullet is recorded once
+        //and only counted if it lives out its full lifetime unreported, so
+        //in-flight PlayerHit packets always win the race and one slow
+        //bullet can never pile on many points. Sustained definite misses
+        //mean a suppressing client.
+        private const float VerifyHalfBox = 0.3f;
         private const float TryHitRangeAllowance = 2.0f;
         private const int SuspicionThreshold = 15;
         private const int SuspicionWindowMs = 60000;
 
         private int _suspicion;
         private int _suspicionWindowStart;
+        private readonly HashSet<int> _contactBullets = new HashSet<int>();
 
         public Queue<List<Projectile>> AwaitingProjectiles;
         public Dictionary<int, ProjectileAck> AckedProjectiles;
@@ -112,13 +119,16 @@ namespace RotMG.Game.Entities
             //awaiting check above does; no damage is ever dealt here.
             foreach (KeyValuePair<int, ProjectileAck> p in AckedProjectiles.ToArray())
             {
-                if (Manager.TotalTime - p.Value.Time > p.Value.Projectile.Desc.LifetimeMS + MaxLatencyMS)
+                Projectile projectile = p.Value.Projectile;
+                if (projectile?.Desc == null)
                 {
-#if DEBUG
-                    Program.Print(PrintType.Error, "Acked proj expired without move");
-#endif
                     AckedProjectiles.Remove(p.Key);
+                    _contactBullets.Remove(p.Key);
+                    continue;
                 }
+                int elapsed = Manager.TotalTime - p.Value.Time;
+                if (elapsed > projectile.Desc.LifetimeMS + MaxLatencyMS)
+                    ExpireAckedBullet(p.Key, projectile, elapsed);
             }
         }
 
@@ -247,6 +257,13 @@ namespace RotMG.Game.Entities
                 return;
             }
 
+            //A NaN angle would bake NaN into projectile paths.
+            if (!float.IsFinite(attackAngle))
+            {
+                Client.Random.Drop(numShots);
+                return;
+            }
+
             int startId = NextProjectileId;
             NextProjectileId -= numShots;
 
@@ -356,12 +373,17 @@ namespace RotMG.Game.Entities
             AwaitingAoes.Enqueue(aoe);
         }
 
-        //Verify-don't-kill: flags enemy bullets that pass through a generous
-        //swept box around the player without the client ever reporting a hit.
-        //Never deals damage, never consumes CanHit, so it cannot kill or eat a
-        //legit hit. Sustained point-blank misses mean a suppressing client.
+        //Verify-don't-punish-grazes: records enemy bullets that pass through
+        //a tight swept box around the player without the client ever
+        //reporting a hit. Never deals damage, never consumes CanHit, so it
+        //cannot kill or eat a legit hit. Counting happens only at expiry
+        //(see ExpireAckedBullet); sustained definite misses mean a
+        //suppressing client.
         public void VerifyProjectiles(int time)
         {
+            if (Parent == null)
+                return;
+
             foreach (KeyValuePair<int, Projectile> p in ShotProjectiles.ToArray())
             {
                 int elapsed = time - p.Value.Time;
@@ -383,32 +405,66 @@ namespace RotMG.Game.Entities
             foreach (KeyValuePair<int, ProjectileAck> p in AckedProjectiles.ToArray())
             {
                 Projectile projectile = p.Value.Projectile;
+                if (projectile?.Desc == null)
+                {
+                    AckedProjectiles.Remove(p.Key);
+                    _contactBullets.Remove(p.Key);
+                    continue;
+                }
                 int elapsed = Math.Max(0, time - p.Value.Time);
                 if (elapsed > projectile.Desc.LifetimeMS)
                 {
-#if DEBUG
-                    Program.Print(PrintType.Error, "Proj lifetime expired");
-#endif
-                    AckedProjectiles.Remove(p.Key);
+                    ExpireAckedBullet(p.Key, projectile, elapsed);
                     continue;
                 }
 
                 //Wall/cover-adjacent bullets diverge client vs server by design
-                //(client deletes on walls, server has no wall state here); never
-                //flag those or honest wall-huggers look like cheaters.
+                //(the client deletes on walls); never record those or honest
+                //wall-huggers look like cheaters. Sampling the midpoint as
+                //well catches segments that cross a wall between two open
+                //endpoints.
                 int prevElapsed = Math.Max(0, MoveTime - p.Value.Time);
-                Position prev = projectile.PositionAt(Math.Min(prevElapsed, elapsed));
+                float startElapsed = Math.Min(prevElapsed, elapsed);
+                Position prev = projectile.PositionAt(startElapsed);
                 Position pos = projectile.PositionAt(elapsed);
-                if (ProjectileBlockedAt(projectile, prev) || ProjectileBlockedAt(projectile, pos))
+                Position mid = projectile.PositionAt((startElapsed + elapsed) / 2f);
+                if (ProjectileBlockedAt(projectile, prev) || ProjectileBlockedAt(projectile, mid) || ProjectileBlockedAt(projectile, pos))
+                {
+                    //A bullet the client may have deleted on a wall must not
+                    //linger as a pending contact: withdrawing here favours
+                    //false negatives over false positives.
+                    _contactBullets.Remove(p.Key);
                     continue;
+                }
 
+                //Record, don't punish: the bullet only counts if it lives out
+                //its full lifetime without ever being reported (see
+                //ExpireAckedBullet), so legit in-flight hits never register
+                //and each bullet counts at most once.
                 if (SegmentDistSquared(prev, pos, Position) <= VerifyHalfBox * VerifyHalfBox)
-                    FlagMissedBullet(p.Key, elapsed);
+                    _contactBullets.Add(p.Key);
             }
+        }
+
+        //A bullet's reporting window closes when it expires: a PlayerHit for
+        //it can no longer be in flight, so a recorded point-blank contact
+        //that stayed unreported through the full lifetime is a genuine miss,
+        //not a packet race.
+        private void ExpireAckedBullet(int bulletId, Projectile projectile, int elapsed)
+        {
+#if DEBUG
+            Program.Print(PrintType.Error, "Acked projectile expired");
+#endif
+            AckedProjectiles.Remove(bulletId);
+            if (projectile != null && _contactBullets.Remove(bulletId) && !projectile.Hit.Contains(Id))
+                FlagMissedBullet(bulletId, elapsed);
         }
 
         private bool ProjectileBlockedAt(Projectile projectile, Position pos)
         {
+            //Defensive: never dereference a nulled world or descriptor here.
+            if (Parent == null || projectile?.Desc == null)
+                return true;
             Tile tile = Parent.GetTileF(pos.X, pos.Y);
             return (tile == null || tile.Type == 255) ||
                 (tile.StaticObject != null && !tile.StaticObject.Desc.Enemy &&
@@ -467,6 +523,7 @@ namespace RotMG.Game.Entities
                     {
                         Program.Print(PrintType.Error, $"Rejected out-of-range player hit <{Name}> (bullet {bulletId})");
                         AckedProjectiles.Remove(bulletId);
+                        _contactBullets.Remove(bulletId);
                         return;
                     }
                 }
@@ -475,6 +532,7 @@ namespace RotMG.Game.Entities
                 {
                     HitByProjectile(v.Projectile);
                     AckedProjectiles.Remove(bulletId);
+                    _contactBullets.Remove(bulletId);
                 }
             }
 #if DEBUG
@@ -516,7 +574,10 @@ namespace RotMG.Game.Entities
 
                 if ((tile == null || tile.Type == 255 || TileUpdates[(int)pos.X, (int)pos.Y] != Parent.Tiles[(int)pos.X, (int)pos.Y].UpdateCount) ||
                     (tile.StaticObject != null && (tile.StaticObject.Desc.EnemyOccupySquare || !ac.Projectile.Desc.PassesCover && tile.StaticObject.Desc.OccupySquare)))
+                {
                     AckedProjectiles.Remove(bulletId);
+                    _contactBullets.Remove(bulletId);
+                }
 #if DEBUG
                 else
                 {

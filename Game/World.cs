@@ -364,6 +364,11 @@ namespace RotMG.Game
 
         public Tile GetTileF(float x, float y)
         {
+            //NaN compares false against every bound, so check finiteness
+            //first: otherwise (int)NaN indexes Tiles and AddEntity accepts
+            //positions that later hang movement. Callees treat null as blocked.
+            if (!float.IsFinite(x) || !float.IsFinite(y))
+                return null;
             if (x < 0 || y < 0 || x >= Width || y >= Height)
                 return null;
             return Tiles[(int)x, (int)y];
@@ -393,6 +398,10 @@ namespace RotMG.Game
             if (en == null)
                 throw new Exception("Undefined entity.");
 #endif
+            //Refuse non-finite destinations so a NaN can never poison an
+            //entity's position or chunk (which hung the main thread pump).
+            if (!float.IsFinite(to.X) || !float.IsFinite(to.Y))
+                return;
             if (en.Position != to)
             {
                 en.Position = to;

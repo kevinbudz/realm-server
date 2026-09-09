@@ -226,13 +226,16 @@ namespace RotMG.Networking
                         return;
                     }
 
-                    if ((_socket.Available + GameServer.PrefixLength) >= _receive.PacketLength) //Full packet now arrived. Time to process it.
-                    {
-                        if (_socket.Available != 0)
-                            _socket.Receive(_receive.PacketBytes, GameServer.PrefixLength, _receive.PacketLength - GameServer.PrefixLength, SocketFlags.None);
-                        GameServer.Read(this, _receive.GetPacketId(), _receive.GetPacketBody());
-                        _receive.Reset();
-                    }
+                    //Only loop when a full packet was actually consumed: a
+                    //fragmented packet must wait for the next tick, otherwise
+                    //this recurses with no progress until the stack overflows.
+                    if ((_socket.Available + GameServer.PrefixLength) < _receive.PacketLength)
+                        break;
+
+                    if (_socket.Available != 0)
+                        _socket.Receive(_receive.PacketBytes, GameServer.PrefixLength, _receive.PacketLength - GameServer.PrefixLength, SocketFlags.None);
+                    GameServer.Read(this, _receive.GetPacketId(), _receive.GetPacketBody());
+                    _receive.Reset();
 
                     StartReceive();
                     break;

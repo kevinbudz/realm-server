@@ -322,6 +322,11 @@ namespace RotMG.Game
             if (Parent == null)
                 throw new Exception("World is undefined for this entity");
 #endif
+            //Never let a non-finite target poison this entity's position:
+            //NaN here used to hang ResolveNewLocation's loop forever,
+            //freezing the single main-thread pump (web + packets).
+            if (!float.IsFinite(pos.X) || !float.IsFinite(pos.Y))
+                return;
             pos = ResolveNewLocation(pos);
             Parent.MoveEntity(this, pos);
         }
@@ -330,6 +335,12 @@ namespace RotMG.Game
         {
             if (HasConditionEffect(ConditionEffectIndex.Paralyzed))
                 return pos;
+
+            //If this entity's own position was poisoned earlier, refuse to
+            //iterate on it: stay put instead of looping on NaN forever.
+            if (!float.IsFinite(Position.X) || !float.IsFinite(Position.Y) ||
+                !float.IsFinite(pos.X) || !float.IsFinite(pos.Y))
+                return Position;
 
             float dx = pos.X - Position.X;
             float dy = pos.Y - Position.Y;
@@ -343,11 +354,17 @@ namespace RotMG.Game
             }
 
             float ds = MoveThreshold / Math.Max(Math.Abs(dx), Math.Abs(dy));
+            //Non-finite or non-positive step can never converge: stay put.
+            if (!float.IsFinite(ds) || ds <= 0f)
+                return Position;
             float tds = 0f;
 
             pos = Position;
             bool done = false;
-            while (!done)
+            //Hard iteration cap as a last resort: this loop must never hang
+            //the main thread, no matter what the inputs are.
+            int guard = 0;
+            while (!done && guard++ < 4096)
             {
                 if (tds + ds >= 1)
                 {

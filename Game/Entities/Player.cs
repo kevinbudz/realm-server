@@ -475,6 +475,7 @@ namespace RotMG.Game.Entities
             CalculatedSightCircle.Clear();
             AwaitingProjectiles.Clear();
             AckedProjectiles.Clear();
+            _contactBullets.Clear();
             ShotProjectiles.Clear();
             AwaitingAoes.Clear();
             ShootAEs.Clear();

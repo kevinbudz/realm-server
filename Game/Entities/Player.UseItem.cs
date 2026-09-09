@@ -30,6 +30,14 @@ namespace RotMG.Game.Entities
                 return;
             }
 
+            //Clients send raw floats: drop non-finite targets before they
+            //can reach entity/world position state.
+            if (!float.IsFinite(target.X) || !float.IsFinite(target.Y))
+            {
+                Client.Disconnect();
+                return;
+            }
+
             CancelTradeIfTrading();
 
             if (slot.SlotId == HealthPotionSlotId)

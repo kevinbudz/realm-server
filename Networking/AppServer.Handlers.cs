@@ -36,7 +36,7 @@ namespace RotMG.Networking
                     }
                 }
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return accountInUse ? WriteError("Account in use!") : Write(data.ToString());
         }
@@ -59,7 +59,7 @@ namespace RotMG.Networking
                 else
                     data = WriteSuccess();
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }
@@ -84,7 +84,7 @@ namespace RotMG.Networking
                     data = WriteSuccess();
                 else data = WriteError(status.ToString());
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }
@@ -97,7 +97,7 @@ namespace RotMG.Networking
             {
                 data = Write(Database.GetLegends(query["timespan"]).ToString());
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
             return data;
         }
 
@@ -112,7 +112,7 @@ namespace RotMG.Networking
                 string legend = Database.GetLegend(accId, charId);
                 data = string.IsNullOrWhiteSpace(legend) ? WriteError("Invalid character") : Write(legend);
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
             return data;
         }
 
@@ -135,7 +135,7 @@ namespace RotMG.Networking
                 else
                     data = Database.DeleteCharacter(acc, charId) ? WriteSuccess() : WriteError("Issue deleting character");
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }
@@ -159,7 +159,7 @@ namespace RotMG.Networking
                 else
                     data = Database.BuyCharSlot(acc) ? WriteSuccess() : WriteError("Not enough fame");
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }
@@ -184,7 +184,7 @@ namespace RotMG.Networking
                 else
                     data = Database.BuySkin(acc, skinType) ? WriteSuccess() : WriteError("Could not buy skin");
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }
@@ -209,7 +209,7 @@ namespace RotMG.Networking
                 else
                     data = Database.ChangePassword(acc, newPassword) ? WriteSuccess() : WriteError("Could not change password");
             }, () => _listenEvent.Set());
-            _listenEvent.WaitOne();
+            _listenEvent.WaitOne(30000);
 
             return data;
         }

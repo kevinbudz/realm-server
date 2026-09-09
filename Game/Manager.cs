@@ -306,14 +306,34 @@ namespace RotMG.Game
             {
                 LastTickTime = (int)TickWatch.ElapsedMilliseconds;
 
+                //Only run timers due at tick entry: an action that reschedules
+                //itself for the current tick must wait for the next tick,
+                //otherwise one misbehaving behavior hangs the main thread here.
+                //The action cap is a backstop so a timer flood can only stall
+                //one tick, never the server.
+                int timerTick = TotalTicks;
+                int timerActions = 0;
+                bool timerBudgetExceeded = false;
+                const int MaxTimerActionsPerTick = 10000;
                 while (Timers.Count > 0)
                 {
                     KeyValuePair<int, Queue<Action>> next = Timers.First();
-                    if (next.Key > TotalTicks)
+                    if (next.Key > timerTick)
                         break;
                     Timers.Remove(next.Key);
                     while (next.Value.Count > 0)
+                    {
+                        if (++timerActions > MaxTimerActionsPerTick)
+                        {
+                            Program.Print(PrintType.Error, "Timer action budget exceeded, deferring remainder");
+                            Timers[next.Key] = next.Value;
+                            timerBudgetExceeded = true;
+                            break;
+                        }
                         next.Value.Dequeue()();
+                    }
+                    if (timerBudgetExceeded)
+                        break;
                 }
 
                 WorldSnapshot.Clear();

@@ -295,14 +295,23 @@ namespace RotMG.Common
 
         public void Normalize()
         {
-            float val = 1.0f / (float)Math.Sqrt((X * X) + (Y * Y));
+            //A zero/non-finite vector has no direction: leave it unchanged
+            //instead of producing NaN (0 * Infinity), which would poison
+            //entity positions and hang ResolveNewLocation forever.
+            float lenSq = (X * X) + (Y * Y);
+            if (!float.IsFinite(lenSq) || lenSq < 1e-12f)
+                return;
+            float val = 1.0f / (float)Math.Sqrt(lenSq);
             X *= val;
             Y *= val;
         }
 
         public static Position Normalize(Position value)
         {
-            float val = 1.0f / (float)Math.Sqrt((value.X * value.X) + (value.Y * value.Y));
+            float lenSq = (value.X * value.X) + (value.Y * value.Y);
+            if (!float.IsFinite(lenSq) || lenSq < 1e-12f)
+                return value;
+            float val = 1.0f / (float)Math.Sqrt(lenSq);
             value.X *= val;
             value.Y *= val;
             return value;
@@ -310,7 +319,13 @@ namespace RotMG.Common
 
         public static void Normalize(ref Position value, out Position result)
         {
-            float val = 1.0f / (float)Math.Sqrt((value.X * value.X) + (value.Y * value.Y));
+            float lenSq = (value.X * value.X) + (value.Y * value.Y);
+            if (!float.IsFinite(lenSq) || lenSq < 1e-12f)
+            {
+                result = value;
+                return;
+            }
+            float val = 1.0f / (float)Math.Sqrt(lenSq);
             result.X = value.X * val;
             result.Y = value.Y * val;
         }

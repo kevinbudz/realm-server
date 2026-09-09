@@ -48,6 +48,11 @@ namespace RotMG.Game.Entities
 
         public bool ValidMove(int time, Position pos)
         {
+            //Clients send raw floats: reject non-finite coordinates here so a
+            //NaN can never become an entity position (NaN distances compare
+            //false and would otherwise pass every check below).
+            if (!float.IsFinite(pos.X) || !float.IsFinite(pos.Y))
+                return false;
             int diff = time - MoveTime;
             Tuple<float, float> history = GetHighestSpeedHistory();
             float maxDistance = ((history.Item1 * history.Item2) * diff) * MoveSpeedThreshold;
@@ -115,7 +120,15 @@ namespace RotMG.Game.Entities
                 return;
             }
 
-            Tile tile = Parent.Tiles[(int)pos.X, (int)pos.Y];
+            Tile tile = Parent.GetTile((int)pos.X, (int)pos.Y);
+            if (tile == null)
+            {
+#if DEBUG
+                Program.Print(PrintType.Error, "Move out of bounds");
+#endif
+                Client.Disconnect();
+                return;
+            }
             TileDesc desc = Resources.Type2Tile[tile.Type];
             if (desc.Damage > 0 && !HasConditionEffect(ConditionEffectIndex.Invincible))
             {
@@ -124,8 +137,9 @@ namespace RotMG.Game.Entities
             }
 
             Parent.MoveEntity(this, pos);
-            //Verify-don't-kill: server never deals bullet damage here, it only
-            //flags systematically unreported contacts (see VerifyProjectiles).
+            //Verify-don't-punish-grazes: server never deals bullet damage
+            //here, it only records unreported contacts for counting at
+            //expiry (see VerifyProjectiles). It cannot disconnect mid-loop.
             VerifyProjectiles(time);
 
             if (desc.Push)

@@ -46,8 +46,15 @@ namespace RotMG.Game.Entities
                     continue;
 
                 ItemDesc item = Resources.Type2Item[(ushort)Inventory[i]];
+                //XML 'stat' ids are vanilla network ids (e.g. 26/27/28 for
+                //Vit/Wis/Dex); translate to internal boost slots. Unknown ids
+                //are ignored instead of indexing Boosts out of range.
                 foreach (KeyValuePair<int, int> s in item.StatBoosts)
-                    Boosts[s.Key] += s.Value;
+                {
+                    int boost = ItemDesc.GetBoostIndex(s.Key);
+                    if (boost != -1)
+                        Boosts[boost] += s.Value;
+                }
 
                 int data = ItemDatas[i];
                 if (data == -1)
