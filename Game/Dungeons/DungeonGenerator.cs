@@ -4,9 +4,10 @@ using System.Collections.Generic;
 
 namespace RotMG.Game.Dungeons
 {
-    //Original room-and-corridor dungeon generator written for this project.
-    //(realm-src-master's DungeonGen was not reused: it is third-party AGPL
-    //code, and only covers three dungeons.)
+    //Room-and-corridor dungeon generator written for this project. It backs
+    //the dungeons without a reference template; Abyss of Demons, Mad Lab
+    //and Pirate Cave generate through the realm-src-master DungeonGen shell
+    //in Game/DungeonGen (see DungeonWorld).
     public class DungeonGenerator
     {
         public struct Rect

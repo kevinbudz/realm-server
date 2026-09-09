@@ -1,5 +1,6 @@
 ﻿using RotMG.Common;
 using RotMG.Game.Entities;
+using RotMG;
 using RotMG.Game.Entities.Vendors;
 using RotMG.Game.Logic;
 using RotMG.Utils;
@@ -628,6 +629,14 @@ namespace RotMG.Game
                     //Switch state if needed
                     if (targetState != -1)
                     {
+                        Dictionary<int, State> siblings = i == 0 ? Behavior.States : CurrentStates[i - 1].States;
+                        if (!siblings.ContainsKey(targetState))
+                        {
+#if DEBUG
+                            Program.Print(PrintType.Error, $"Unresolved state target <{targetState}> for <{Desc?.DisplayId}>, staying in <{state.StringId}>.");
+#endif
+                            continue;
+                        }
 
                         //Exit old behaviors/transitions
                         for (int k = i; k < CurrentStates.Count; k++) 

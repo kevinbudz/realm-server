@@ -1,6 +1,7 @@
 ﻿using Microsoft.VisualBasic.CompilerServices;
 using RotMG.Game;
 using RotMG.Utils;
+using RotMG;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -130,10 +131,12 @@ namespace RotMG.Common
         ClearConditionEffectSelf,
         ClearConditionsEffectSelf,
         RemoveNegativeConditionsSelf,
+        ShurikenAbility,
         Shuriken,
         DazeBlast,
         Backpack,
-        PermaPet
+        PermaPet,
+        Unknown
     }
 
     public enum ShowEffectIndex
@@ -172,6 +175,10 @@ namespace RotMG.Common
         public readonly bool ConnectedWall;
         public readonly bool Portal;
         public readonly bool BlocksSight;
+        public readonly bool Locked;
+        public readonly bool NexusPortal;
+        public readonly bool IntergamePortal;
+        public readonly int Timeout;
 
         public readonly bool OccupySquare;
         public readonly bool FullOccupy;
@@ -220,6 +227,10 @@ namespace RotMG.Common
             string objClass = e.ParseString("Class");
             Portal = objClass == "Portal" || objClass == "GuildHallPortal";
             BlocksSight = e.ParseBool("BlocksSight");
+            Locked = e.ParseBool("LockedPortal");
+            NexusPortal = e.ParseBool("NexusPortal");
+            IntergamePortal = e.ParseBool("IntergamePortal");
+            Timeout = e.ParseInt("Timeout", 30);
 
             OccupySquare = e.ParseBool("OccupySquare");
             FullOccupy = e.ParseBool("FullOccupy");
@@ -251,15 +262,15 @@ namespace RotMG.Common
 
             PerRealmMax = e.ParseInt("PerRealmMax");
 
+            //Keyed by XML document order (ordinal), mirroring
+            //realm-src-master's ProjectileDesc[] array semantics: behavior
+            //Shoot indices are positional, while the wire bullet id stays on
+            //ProjectileDesc.BulletType (used by the EnemyShoot packet).
             Projectiles = new Dictionary<int, ProjectileDesc>();
             foreach (XElement k in e.Elements("Projectile"))
             {
                 ProjectileDesc desc = new ProjectileDesc(k, Type);
-#if DEBUG
-                if (Projectiles.ContainsKey(desc.BulletType))
-                    throw new Exception("Duplicate bullet type");
-#endif
-                Projectiles[desc.BulletType] = desc;
+                Projectiles[Projectiles.Count] = desc;
             }
         }
     }
@@ -402,10 +413,19 @@ namespace RotMG.Common
         public readonly int MaxTargets;
         public readonly string LockedName;
         public readonly string DungeonName;
+        public readonly string Id;
+        public readonly string ObjectId;
 
         public ActivateEffectDesc(XElement e)
         {
-            Index = (ActivateEffectIndex)Enum.Parse(typeof(ActivateEffectIndex), e.Value.Replace(" ", ""));
+            //Never abort boot on one unknown effect name (stale/custom data):
+            //log it and treat the effect as Unknown (ignored at use time).
+            if (!Enum.TryParse(e.Value.Replace(" ", ""), out ActivateEffectIndex index))
+            {
+                Program.Print(PrintType.Error, $"Unknown activate effect <{e.Value}>, ignoring.");
+                index = ActivateEffectIndex.Unknown;
+            }
+            Index = index;
             Effect = e.ParseConditionEffect("@effect");
             DurationMS = (int)(e.ParseFloat("@duration", 0) * 1000);
             Range = e.ParseFloat("@range");
@@ -423,6 +443,8 @@ namespace RotMG.Common
                 Color = e.ParseUInt("@color");
             LockedName = e.ParseString("@lockedName");
             DungeonName = e.ParseString("@dungeonName");
+            Id = e.ParseString("@id");
+            ObjectId = e.ParseString("@objectId");
         }
     }
     

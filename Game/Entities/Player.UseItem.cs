@@ -144,7 +144,8 @@ namespace RotMG.Game.Entities
             {
                 switch (eff.Index)
                 {
-                    case ActivateEffectIndex.Shuriken: //Could be optimized too, it's not great..
+                    case ActivateEffectIndex.ShurikenAbility:
+                    case ActivateEffectIndex.Shuriken: //Legacy alias, same ability.
                         {
                             byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffeba134, new Position(2.5f, 0));
 
@@ -494,8 +495,11 @@ namespace RotMG.Game.Entities
                             }
                         }
                         break;
+                    case ActivateEffectIndex.Create:
+                        CreatePortal(eff);
+                        break;
                     case ActivateEffectIndex.UnlockPortal:
-                        UnlockDungeon(eff, target);
+                        UnlockDungeon(eff);
                         break;
                     case ActivateEffectIndex.Backpack:
                         if (HasBackpack)
@@ -542,10 +546,108 @@ namespace RotMG.Game.Entities
             callback?.Invoke();
         }
 
-        //Consumes a dungeon key near a locked portal: creates the dungeon and
-        //replaces the lock with its open portal, mirroring AEUnlockPortal
-        //upstream.
-        private void UnlockDungeon(ActivateEffectDesc eff, Position target)
+        //Dungeon key portal creation, mirroring realm-src-master
+        //wServer/realm/entities/player/Player.UseItem.cs AECreate: drops
+        //the eff.Id portal at the player's feet with its Timeout removal
+        //and world-wide announcement. The dungeon itself is created lazily
+        //on first UsePortal (see ResolvePortalWorld), as in the reference.
+        //Unlike the reference, the portal must also claim its tile link:
+        //statics only reach the client through Tile.StaticObject here.
+        private void CreatePortal(ActivateEffectDesc eff)
+        {
+            if (string.IsNullOrWhiteSpace(eff.Id))
+                return;
+
+            ObjectDesc portalDesc;
+            if (!Resources.Id2Object.TryGetValue(eff.Id, out portalDesc) || !portalDesc.Portal)
+                return;
+
+            World host = Parent;
+            if (!TryClaimPortalTile(host, (int)Position.X, (int)Position.Y, out int px, out int py))
+                return;
+
+            Position at = new Position(px + 0.5f, py + 0.5f);
+            Portal portal = new Portal(portalDesc.Type);
+            if (host.AddEntity(portal, at) == -1)
+                return;
+            Tile tile = host.GetTile(px, py);
+            if (tile != null)
+            {
+                tile.StaticObject = portal;
+                tile.UpdateCount++;
+                host.UpdateCount++;
+            }
+            SchedulePortalTimeout(host, portal, at, portalDesc);
+
+            string dungeon = string.IsNullOrWhiteSpace(portalDesc.DungeonName)
+                ? portalDesc.DisplayId
+                : portalDesc.DungeonName;
+            byte[] notification = GameServer.Notification(Id, dungeon + " opened by " + Name + "!", 0xFF00FF00);
+            string info = dungeon + " opened by " + Name + "!";
+            foreach (Player player in host.Players.Values)
+            {
+                player.Client.Send(notification);
+                player.SendInfo(info);
+            }
+        }
+
+        //Finds a free tile for a key-created portal, starting at the
+        //player's tile and spiraling outward so an occupied tile never
+        //orphans the static already linked there.
+        private static bool TryClaimPortalTile(World host, int x, int y, out int px, out int py)
+        {
+            for (int r = 0; r <= 3; r++)
+                for (int dx = -r; dx <= r; dx++)
+                    for (int dy = -r; dy <= r; dy++)
+                    {
+                        if (r > 0 && dx != -r && dx != r && dy != -r && dy != r)
+                            continue;
+                        Tile tile = host.GetTile(x + dx, y + dy);
+                        if (tile != null && tile.StaticObject == null)
+                        {
+                            px = x + dx;
+                            py = y + dy;
+                            return true;
+                        }
+                    }
+            px = 0;
+            py = 0;
+            return false;
+        }
+
+        //Reference-timeout removal shared by key-created and key-unlocked
+        //portals (NexusPortal results never expire).
+        private static void SchedulePortalTimeout(World host, Portal portal, Position at, ObjectDesc portalDesc)
+        {
+            if (portalDesc.NexusPortal)
+                return;
+            int timeoutSec = portalDesc.Timeout > 0 ? portalDesc.Timeout : 30;
+            Portal portalRef = portal;
+            Position atRef = at;
+            Manager.AddTimedAction(timeoutSec * 1000, () =>
+            {
+                if (portalRef.Parent != host)
+                    return;
+                Tile t = host.GetTile((int)atRef.X, (int)atRef.Y);
+                if (t != null && t.StaticObject == portalRef)
+                {
+                    t.StaticObject = null;
+                    t.BlocksSight = false;
+                    t.UpdateCount++;
+                    host.UpdateCount++;
+                }
+                host.RemoveEntity(portalRef);
+                Manager.PortalDungeons.Remove(portalRef.Id);
+            });
+        }
+
+        //Dungeon key unlock, mirroring realm-src-master
+        //wServer/realm/entities/player/Player.UseItem.cs AEUnlockPortal:
+        //nearest LockedName portal within 3 of the player is swapped for
+        //the dungeon's open portal, which expires after its Timeout and is
+        //announced world-wide. Dungeons resolve through DungeonDefs (the
+        //local equivalent of the reference ProtoWorld/portals lookup).
+        private void UnlockDungeon(ActivateEffectDesc eff)
         {
             if (string.IsNullOrWhiteSpace(eff.LockedName) || string.IsNullOrWhiteSpace(eff.DungeonName))
                 return;
@@ -556,7 +658,7 @@ namespace RotMG.Game.Entities
             {
                 if (!(en is Portal portal) || portal.Desc.Id != eff.LockedName)
                     continue;
-                float dist = target.Distance(portal);
+                float dist = Position.Distance(portal);
                 if (dist <= 3 && dist < best)
                 {
                     locked = portal;
@@ -578,19 +680,31 @@ namespace RotMG.Game.Entities
                 return;
 
             Position at = locked.Position;
-            Parent.RemoveStatic((int)at.X, (int)at.Y);
+            World host = Parent;
+            host.RemoveStatic((int)at.X, (int)at.Y);
 
             Portal open = new Portal(portalDesc.Type);
-            if (Parent.AddEntity(open, at) == -1)
+            open.TrySetSV(StatType.Name, portalDesc.DisplayId);
+            if (host.AddEntity(open, at) == -1)
                 return;
-            Tile tile = Parent.GetTile((int)at.X, (int)at.Y);
+            Tile tile = host.GetTile((int)at.X, (int)at.Y);
             if (tile != null)
             {
                 tile.StaticObject = open;
                 tile.UpdateCount++;
-                Parent.UpdateCount++;
+                host.UpdateCount++;
             }
-            Manager.GetDungeonWorld(open, def);
+            World world = Manager.GetDungeonWorld(open, def);
+
+            SchedulePortalTimeout(host, open, at, portalDesc);
+
+            byte[] notification = GameServer.Notification(Id, "Unlocked by " + Name, 0xFF00FF00);
+            string info = world.GetDisplayName() + " unlocked by " + Name + "!";
+            foreach (Player player in host.Players.Values)
+            {
+                player.Client.Send(notification);
+                player.SendInfo(info);
+            }
         }
     }
 }

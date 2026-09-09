@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using RotMG;
 
 namespace RotMG.Game.Logic
 {
@@ -62,6 +63,10 @@ namespace RotMG.Game.Logic
             transition.TargetStates = targets.ToArray();
             if (transition.TargetStates.Length > 0 && transition.TargetState == 0)
                 transition.TargetState = transition.TargetStates[transition.SelectedState];
+#if DEBUG
+            else if (transition.TargetStates.Length == 0)
+                Program.Print(PrintType.Error, $"Unresolved transition target <{string.Join(",", transition.StringTargetStates)}>.");
+#endif
         }
     }
 }

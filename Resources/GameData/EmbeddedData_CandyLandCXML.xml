@@ -522,7 +522,7 @@
         
 	</Object>
     
-    <Object type="0x5e36" id="Spilled Icecream">
+    <Object type="0x5e36" id="Spilled IceCream">
 		<Group>Candy Creature</Group>
 		<Enemy/>
 		<Class>Character</Class>

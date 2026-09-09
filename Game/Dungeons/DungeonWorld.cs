@@ -1,4 +1,4 @@
-﻿using RotMG.Common;
+using RotMG.Common;
 using RotMG.Game.Entities;
 using System;
 using System.Collections.Generic;
@@ -6,10 +6,13 @@ using System.Linq;
 
 namespace RotMG.Game.Dungeons
 {
-    //Instanced dungeon built from a DungeonDef by DungeonGenerator, then
-    //populated with that dungeon's behavior roster. Entry points: dungeon
-    //portals in the realm (see Oryx portal upkeep) and locked-portal keys
-    //(see Player AEUnlockPortal).
+    //Instanced dungeon built from a DungeonDef. Dungeons with a reference
+    //generator template (see Game/DungeonGen) are generated and rasterized
+    //by that engine, which also stamps enemies, walls and the entrance
+    //portal; the rest use the local room-and-corridor generator and are
+    //populated with the dungeon's behavior roster below. Entry points:
+    //dungeon portals in the realm (see Oryx portal upkeep) and
+    //locked-portal keys (see Player AEUnlockPortal).
     public class DungeonWorld : World
     {
         public DungeonDef Def;
@@ -19,10 +22,49 @@ namespace RotMG.Game.Dungeons
             : base(BuildMap(def, seed, out List<DungeonGenerator.Rect> rooms, out IntPoint entrance), def.Name, def.Name, 0)
         {
             Def = def;
-            Populate(rooms, entrance, seed);
+            if (rooms != null)
+                Populate(rooms, entrance, seed);
+            else
+                LocateBoss();
         }
 
         private static JSMap BuildMap(DungeonDef def, int seed, out List<DungeonGenerator.Rect> rooms, out IntPoint entrance)
+        {
+            if (!string.IsNullOrWhiteSpace(def.MapFile))
+            {
+                rooms = null;
+                entrance = default(IntPoint);
+                return new JSMap(System.IO.File.ReadAllText(Resources.CombineResourcePath("Worlds/" + def.MapFile)));
+            }
+            DungeonGen.Templates.DungeonTemplate template = DungeonGen.DungeonTemplates.GetTemplate(def.Name);
+            if (template != null)
+            {
+                rooms = null;
+                entrance = default(IntPoint);
+                DungeonGen.Generator gen = new DungeonGen.Generator(seed, template);
+                gen.Generate();
+                DungeonGen.Rasterizer ras = new DungeonGen.Rasterizer(seed, gen.ExportGraph());
+                ras.Rasterize();
+                return DungeonGen.DungeonMapBuilder.BuildMap(ras.ExportMap());
+            }
+            return BuildFallbackMap(def, seed, out rooms, out entrance);
+        }
+
+        //Template-spawned boss lookup for the clear announcement: the boss
+        //comes from the generated map itself, matched by GameData id.
+        private void LocateBoss()
+        {
+            if (string.IsNullOrWhiteSpace(Def.Boss))
+                return;
+            foreach (Entity entity in Entities.Values)
+                if (entity.Desc != null && entity.Desc.Id == Def.Boss)
+                {
+                    Boss = entity;
+                    break;
+                }
+        }
+
+        private static JSMap BuildFallbackMap(DungeonDef def, int seed, out List<DungeonGenerator.Rect> rooms, out IntPoint entrance)
         {
             DungeonGenerator gen = new DungeonGenerator(seed);
             gen.Generate(def.Width, def.Height, def.Rooms);

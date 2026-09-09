@@ -31,12 +31,9 @@ namespace RotMG.Game.Setpieces
 
         public void RenderSetPiece(World world, IntPoint pos)
         {
-            //Master renders the SP_Hermit sub-map here; without that resource
-            //the Hermit God is summoned directly onto cleared ground.
-            for (int x = 0; x < Size; x++)
-                for (int y = 0; y < Size; y++)
-                    SetPieces.ClearTile(world, x + pos.X, y + pos.Y);
-            SetPieces.SpawnEnemy(world, "Hermit God", pos.X + Size / 2f, pos.Y + Size / 2f);
+            //Master renders the SP_Hermit sub-map here (see
+            //Resources/Worlds/Setpieces).
+            SetPieces.RenderSubMap(world, pos, "SP_Hermit.jm");
         }
     }
 
@@ -46,12 +43,9 @@ namespace RotMG.Game.Setpieces
 
         public void RenderSetPiece(World world, IntPoint pos)
         {
-            //Master renders the SP_GhostShip sub-map here; without that
-            //resource the Ghost Ship is summoned directly.
-            for (int x = 0; x < Size; x++)
-                for (int y = 0; y < Size; y++)
-                    SetPieces.ClearTile(world, x + pos.X, y + pos.Y);
-            SetPieces.SpawnEnemy(world, "Ghost Ship", pos.X + Size / 2f, pos.Y + Size / 2f);
+            //Master renders the SP_GhostShip sub-map here (see
+            //Resources/Worlds/Setpieces).
+            SetPieces.RenderSubMap(world, pos, "SP_GhostShip.jm");
         }
     }
 

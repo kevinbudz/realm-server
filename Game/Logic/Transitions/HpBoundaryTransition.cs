@@ -48,6 +48,8 @@ namespace RotMG.Game.Logic.Transitions
             if (hpp > state.CurrentThreshold)
                 return false;
 
+            if (TargetStates.Length == 0)
+                return false;
             SelectedState = state.SelectedState;
             TargetState = TargetStates[SelectedState];
             if (state.Thresholds.Count <= 1)

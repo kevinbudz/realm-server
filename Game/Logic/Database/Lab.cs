@@ -218,48 +218,48 @@ namespace RotMG.Game.Logic.Database
             );
             db.Init("Dr Terrible Rampage Cyborg",
                 new State("idle",
-                    new PlayerWithinTransition(10, "normal"),
-                    new State("normal",
-                        new Wander(0.5f),
-                        new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
-                        new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 0, predictive: 1,
-                            cooldown: 800, cooldownOffset: 0),
-                        new HpLessTransition(0.2f, "blink"),
-                        new TimedTransition(10000, "rage blink")
-                    ),
-                    new State("rage blink",
-                        new Wander(0.5f),
-                        new Flash(0xf0e68c, flashRepeats: 5, flashPeriod: 0.1f),
-                        new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
-                        new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 1, predictive: 1,
-                            cooldown: 800, cooldownOffset: 0),
-                        new HpLessTransition(0.2f, "blink"),
-                        new TimedTransition(3000, "rage")
-                    ),
-                    new State("rage",
-                        new Wander(0.5f),
-                        new Flash(0xf0e68c, flashRepeats: 5, flashPeriod: 0.1f),
-                        new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
-                        new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 1, predictive: 1,
-                            cooldown: 800, cooldownOffset: 0),
-                        new HpLessTransition(0.2f, "blink")
-                    ),
-                    new State("blink",
-                        new Wander(0.5f),
-                        new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
-                        new Flash(0xfFF0000, flashRepeats: 10000, flashPeriod: 0.1f),
-                        new TimedTransition(2000, "explode")
-                    ),
-                    new State("explode",
-                        new Flash(0xfFF0000, 1, 9000001),
-                        new Shoot(10, count: 8, index: 2, fixedAngle: 22.5f),
-                        new Suicide()
-                    )
+                    new PlayerWithinTransition(10, "normal")
+                ),
+                new State("normal",
+                    new Wander(0.5f),
+                    new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
+                    new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 0, predictive: 1,
+                        cooldown: 800, cooldownOffset: 0),
+                    new HpLessTransition(0.2f, "blink"),
+                    new TimedTransition(10000, "rage blink")
+                ),
+                new State("rage blink",
+                    new Wander(0.5f),
+                    new Flash(0xf0e68c, flashRepeats: 5, flashPeriod: 0.1f),
+                    new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
+                    new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 1, predictive: 1,
+                        cooldown: 800, cooldownOffset: 0),
+                    new HpLessTransition(0.2f, "blink"),
+                    new TimedTransition(3000, "rage")
+                ),
+                new State("rage",
+                    new Wander(0.5f),
+                    new Flash(0xf0e68c, flashRepeats: 5, flashPeriod: 0.1f),
+                    new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
+                    new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 1, predictive: 1,
+                        cooldown: 800, cooldownOffset: 0),
+                    new HpLessTransition(0.2f, "blink")
+                ),
+                new State("blink",
+                    new Wander(0.5f),
+                    new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
+                    new Flash(0xfFF0000, flashRepeats: 10000, flashPeriod: 0.1f),
+                    new TimedTransition(2000, "explode")
+                ),
+                new State("explode",
+                    new Flash(0xfFF0000, 1, 9000001),
+                    new Shoot(10, count: 8, index: 2, fixedAngle: 22.5f),
+                    new Suicide()
                 )
             );
             db.Init("Dr Terrible Escaped Experiment",
                 new Wander(0.5f),
-                new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 1, predictive: 1,
+                new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 0, predictive: 1,
                     cooldown: 800, cooldownOffset: 0)
             );
             db.Init("Mini Bot",
@@ -268,43 +268,43 @@ namespace RotMG.Game.Logic.Database
             );
             db.Init("Rampage Cyborg",
                 new State("idle",
-                    new PlayerWithinTransition(10, "normal"),
-                    new State("normal",
-                        new Wander(0.5f),
-                        new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
-                        new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 0, predictive: 1,
-                            cooldown: 800, cooldownOffset: 0),
-                        new HpLessTransition(0.2f, "blink"),
-                        new TimedTransition(10000, "rage blink")
-                    ),
-                    new State("rage blink",
-                        new Wander(0.5f),
-                        new Flash(0xf0e68c, flashRepeats: 5, flashPeriod: 0.1f),
-                        new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
-                        new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 1, predictive: 1,
-                            cooldown: 800, cooldownOffset: 0),
-                        new HpLessTransition(0.2f, "blink"),
-                        new TimedTransition(3000, "rage")
-                    ),
-                    new State("rage",
-                        new Wander(0.5f),
-                        new Flash(0xf0e68c, flashRepeats: 5, flashPeriod: 0.1f),
-                        new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
-                        new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 1, predictive: 1,
-                            cooldown: 800, cooldownOffset: 0),
-                        new HpLessTransition(0.2f, "blink")
-                    ),
-                    new State("blink",
-                        new Wander(0.5f),
-                        new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
-                        new Flash(0xfFF0000, flashRepeats: 10000, flashPeriod: 0.1f),
-                        new TimedTransition(2000, "explode")
-                    ),
-                    new State("explode",
-                        new Flash(0xfFF0000, 1, 9000001),
-                        new Shoot(10, count: 8, index: 2, fixedAngle: 22.5f),
-                        new Suicide()
-                    )
+                    new PlayerWithinTransition(10, "normal")
+                ),
+                new State("normal",
+                    new Wander(0.5f),
+                    new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
+                    new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 0, predictive: 1,
+                        cooldown: 800, cooldownOffset: 0),
+                    new HpLessTransition(0.2f, "blink"),
+                    new TimedTransition(10000, "rage blink")
+                ),
+                new State("rage blink",
+                    new Wander(0.5f),
+                    new Flash(0xf0e68c, flashRepeats: 5, flashPeriod: 0.1f),
+                    new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
+                    new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 1, predictive: 1,
+                        cooldown: 800, cooldownOffset: 0),
+                    new HpLessTransition(0.2f, "blink"),
+                    new TimedTransition(3000, "rage")
+                ),
+                new State("rage",
+                    new Wander(0.5f),
+                    new Flash(0xf0e68c, flashRepeats: 5, flashPeriod: 0.1f),
+                    new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
+                    new Shoot(10, 1, 0, defaultAngle: 0, angleOffset: 0, index: 1, predictive: 1,
+                        cooldown: 800, cooldownOffset: 0),
+                    new HpLessTransition(0.2f, "blink")
+                ),
+                new State("blink",
+                    new Wander(0.5f),
+                    new Follow(0.6f, range: 1, duration: 5000, cooldown: 0),
+                    new Flash(0xfFF0000, flashRepeats: 10000, flashPeriod: 0.1f),
+                    new TimedTransition(2000, "explode")
+                ),
+                new State("explode",
+                    new Flash(0xfFF0000, 1, 9000001),
+                    new Shoot(10, count: 8, index: 2, fixedAngle: 22.5f),
+                    new Suicide()
                 )
             );
             db.Init("Escaped Experiment",

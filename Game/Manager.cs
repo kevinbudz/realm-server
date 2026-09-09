@@ -60,9 +60,11 @@ namespace RotMG.Game
             AddWorld(Resources.Worlds["Realm"], RealmId);
             AddWorld(Resources.Worlds["Vault"], VaultId);
 
-            Portal realmPortal = PlacePortal(Worlds[NexusId], "Realm Portal", Worlds[RealmId]);
-            PlacePortal(Worlds[NexusId], "Vault Portal", Worlds[VaultId]);
-            ((NexusWorld)Worlds[NexusId]).Monitor.AddPortal(RealmId, realmPortal);
+            //Realm portals live on the map's Realm_Portals region (one per
+            //tracked realm, so extra realms each get their own portal). The
+            //map-baked Vault and Guild Hall portals resolve dynamically, so
+            //no spawn-adjacent placeholder portals are placed here.
+            ((NexusWorld)Worlds[NexusId]).Monitor.AddPortal(RealmId);
         }
 
         public static World CreateWorld(WorldDesc desc, int mapIndex = -1)

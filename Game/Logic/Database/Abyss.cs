@@ -161,6 +161,56 @@ namespace RotMG.Game.Logic.Database
                     new ItemLoot(item: "Demon Blade", chance: 0.01f)
                 )
             );
+            //Template-stamped Abyss trash (one projectile, id 0, each).
+            //No defs existed, so they spawned inert; AI mirrors the closest
+            //realm relatives in RedDemon.cs.
+            db.Init("Imp of the Abyss",
+                new Prioritize(
+                    new StayCloseToSpawn(1.4f, 15),
+                    new Wander(0.8f)
+                ),
+                new Shoot(10, predictive: 0.5f, cooldown: 200)
+            );
+            db.Init("Demon of the Abyss",
+                new Prioritize(
+                    new StayCloseToSpawn(1.4f, 15),
+                    new Follow(1.4f, range: 7),
+                    new Wander(0.4f)
+                ),
+                new Shoot(10, count: 2, shootAngle: 7, predictive: 0.5f)
+            );
+            db.Init("Demon Warrior of the Abyss",
+                new Prioritize(
+                    new StayCloseToSpawn(1.4f, 15),
+                    new Follow(1, range: 2.8f),
+                    new Wander(0.4f)
+                ),
+                new Shoot(10, count: 3, shootAngle: 7, predictive: 0.5f)
+            );
+            db.Init("Demon Mage of the Abyss",
+                new Prioritize(
+                    new StayCloseToSpawn(1.4f, 15),
+                    new Follow(1, range: 7),
+                    new Wander(0.4f)
+                ),
+                new Shoot(12, count: 2, shootAngle: 10, predictive: 0.5f, cooldown: 800)
+            );
+            db.Init("Brute of the Abyss",
+                new Prioritize(
+                    new StayCloseToSpawn(1.4f, 15),
+                    new Follow(1.2f, range: 2),
+                    new Wander(0.4f)
+                ),
+                new Shoot(8, count: 4, shootAngle: 20, predictive: 0.3f, cooldown: 1000)
+            );
+            db.Init("Brute Warrior of the Abyss",
+                new Prioritize(
+                    new StayCloseToSpawn(1.4f, 15),
+                    new Follow(1.2f, range: 2),
+                    new Wander(0.4f)
+                ),
+                new Shoot(8, count: 5, shootAngle: 15, predictive: 0.3f, cooldown: 1200)
+            );
             db.Init("Malphas Flamer",
                 new State("Attacking",
                     new State("Charge",

@@ -1,6 +1,8 @@
 ﻿using RotMG.Common;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 
 namespace RotMG.Game.Setpieces
@@ -132,6 +134,103 @@ namespace RotMG.Game.Setpieces
         public static Entity PutEntity(World world, string objName, float x, float y)
         {
             return SpawnEnemy(world, objName, x, y);
+        }
+
+        private static readonly Dictionary<string, JSMap> SubMaps = new Dictionary<string, JSMap>();
+
+        //Setpiece sub-maps from realm-src-master common/resources/worlds
+        //(SP_Hermit/SP_GhostShip/SP_KageKami.jm), loaded once and cached.
+        public static JSMap GetSubMap(string file)
+        {
+            lock (SubMaps)
+            {
+                JSMap map;
+                if (!SubMaps.TryGetValue(file, out map))
+                {
+                    string path = Resources.CombineResourcePath($"Worlds/Setpieces/{file}");
+                    map = new JSMap(File.ReadAllText(path));
+                    SubMaps[file] = map;
+                }
+                return map;
+            }
+        }
+
+        //Projects a .jm sub-map onto the live world at pos, mirroring
+        //realm-src-master Wmap.ProjectOntoWorld (as called by
+        //SetPieces.RenderFromProto): empty (ground-none) tiles are skipped,
+        //everything else paints ground, regions and objects, with objects
+        //entering the world exactly like map objects at world load.
+        public static void RenderSubMap(World world, IntPoint pos, string file)
+        {
+            JSMap map = GetSubMap(file);
+            for (int x = 0; x < map.Width; x++)
+                for (int y = 0; y < map.Height; y++)
+                {
+                    int wx = pos.X + x;
+                    int wy = pos.Y + y;
+                    Tile tile = world.GetTile(wx, wy);
+                    if (tile == null)
+                        continue;
+                    JSTile src = map.Tiles[x, y];
+                    if (src.GroundType == 255)
+                        continue;
+                    world.RemoveStatic(wx, wy);
+                    tile.Type = src.GroundType;
+                    tile.UpdateCount++;
+                    world.UpdateCount++;
+                    if (src.Region != Region.None)
+                    {
+                        tile.Region = src.Region;
+                        List<IntPoint> list;
+                        if (!world.Map.Regions.TryGetValue(src.Region, out list))
+                            world.Map.Regions[src.Region] = list = new List<IntPoint>();
+                        list.Add(new IntPoint(wx, wy));
+                        tile.UpdateCount++;
+                        world.UpdateCount++;
+                    }
+                    if (src.ObjectType == 0xff)
+                        continue;
+                    ObjectDesc desc;
+                    if (!Resources.Type2Object.TryGetValue(src.ObjectType, out desc))
+                        continue;
+                    ParseOffsets(src.Key, out float ox, out float oy);
+                    Entity entity = Entity.Resolve(src.ObjectType);
+                    Wmap.ApplyObjCfg(entity, src.Key);
+                    if (world.AddEntity(entity, new Position(wx + 0.5f + ox, wy + 0.5f + oy)) == -1)
+                        continue;
+                    if (entity is Entities.StaticObject staticObject)
+                    {
+                        tile.StaticObject = staticObject;
+                        if (entity.Desc.BlocksSight)
+                            tile.BlocksSight = true;
+                        tile.UpdateCount++;
+                        world.UpdateCount++;
+                    }
+                }
+        }
+
+        //Spawn-position tweaks from the map object config (see the Hermit
+        //God's xOffset). Size/hp/eff come from Wmap.ApplyObjCfg; display
+        //names have no local member and merchant/conn fields do not occur
+        //in the shipped sub-maps, so both are ignored.
+        private static void ParseOffsets(string cfg, out float ox, out float oy)
+        {
+            ox = 0;
+            oy = 0;
+            if (string.IsNullOrEmpty(cfg))
+                return;
+            foreach (string part in cfg.Split(';'))
+            {
+                if (string.IsNullOrEmpty(part))
+                    continue;
+                string[] kv = part.Split(':');
+                if (kv.Length < 2)
+                    continue;
+                if (kv[0] == "xOffset")
+                    float.TryParse(kv[1], NumberStyles.Float, CultureInfo.InvariantCulture, out ox);
+                else if (kv[0] == "yOffset")
+                    float.TryParse(kv[1], NumberStyles.Float, CultureInfo.InvariantCulture, out oy);
+            }
         }
 
         public static int[,] ReflectVert(int[,] mat)

@@ -94,7 +94,24 @@ namespace RotMG.Game
                     AddEntity(chest, at);
                 }
                 else
-                    AddEntity(new Entities.Vendors.ClosedVaultChest(vendorDesc.Type), at);
+                {
+                    //Static vendors only reach the client through their tile
+                    //link (see Player.SendUpdate), so claim the tile exactly
+                    //like portal placement does. Without this the vendor is
+                    //invisible and Buy's RemoveStatic cannot find it.
+                    Entities.Vendors.ClosedVaultChest vendor =
+                        new Entities.Vendors.ClosedVaultChest(vendorDesc.Type);
+                    if (AddEntity(vendor, at) != -1)
+                    {
+                        Tile tile = GetTile(spot.X, spot.Y);
+                        if (tile != null)
+                        {
+                            tile.StaticObject = vendor;
+                            tile.UpdateCount++;
+                            UpdateCount++;
+                        }
+                    }
+                }
             }
         }
     }

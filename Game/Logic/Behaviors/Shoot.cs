@@ -1,4 +1,5 @@
-﻿using RotMG.Common;
+﻿using RotMG;
+using RotMG.Common;
 using RotMG.Game.Entities;
 using RotMG.Networking;
 using RotMG.Utils;
@@ -75,7 +76,14 @@ namespace RotMG.Game.Logic.Behaviors
                 Entity target = host.GetNearestPlayer(Range);
                 if (target != null || DefaultAngle != null || FixedAngle != null)
                 {
-                    ProjectileDesc desc = host.Desc.Projectiles[Index];
+                    if (!host.Desc.Projectiles.TryGetValue(Index, out ProjectileDesc desc))
+                    {
+#if DEBUG
+                        Program.Print(PrintType.Error, $"Missing projectile index <{Index}> for <{host.Desc.DisplayId}>, skipping shot.");
+#endif
+                        host.StateCooldown[Id] = Cooldown;
+                        return true;
+                    }
                     float angle = 0;
 
                     if (FixedAngle != null)

@@ -27,6 +27,8 @@ namespace RotMG.Game.Logic.Transitions
                 return false;
 
             host.StateCooldown[Id] = Time;
+            if (TargetStates.Length == 0)
+                return false;
             SelectedState = MathUtils.Next(TargetStates.Length);
             TargetState = TargetStates[SelectedState];
             return true;

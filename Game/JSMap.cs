@@ -45,7 +45,8 @@ namespace RotMG.Game
         Store_4,
         Store_5,
         Store_6,
-        Vault
+        Vault,
+        Enemy
     }
 
     public struct JSTile
@@ -133,15 +134,18 @@ namespace RotMG.Game
         //instantiate time, so maps may reference ids with no GameData entry
         //(e.g. OryxCastle.jm's md placer markers). Warn and drop them instead
         //of crashing the world load.
-        private static ushort ResolveGround(string id)
+        internal static ushort ResolveGround(string id)
         {
+            //The map format's empty marker, used by every shipped .jm.
+            if (string.IsNullOrEmpty(id) || id == "None")
+                return 255;
             if (Resources.Id2Tile.TryGetValue(id, out TileDesc desc))
                 return desc.Type;
             Program.Print(PrintType.Warn, $"Unknown map ground <{id}>, treating as <none>.");
             return 255;
         }
 
-        private static ushort ResolveObject(string id)
+        internal static ushort ResolveObject(string id)
         {
             if (Resources.Id2Object.TryGetValue(id, out ObjectDesc desc))
                 return desc.Type;
@@ -149,8 +153,10 @@ namespace RotMG.Game
             return 255;
         }
 
-        private static Region ParseRegion(string id)
+        internal static Region ParseRegion(string id)
         {
+            if (string.IsNullOrEmpty(id))
+                return Region.None;
             if (Enum.TryParse(id.Replace(' ', '_'), out Region region))
                 return region;
             Program.Print(PrintType.Warn, $"Unknown map region <{id}>, treating as <None>.");

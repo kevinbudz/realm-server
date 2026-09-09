@@ -354,7 +354,7 @@
 	</Object>
     
     
-    <Object type="0x600c" id="Werewolf Cub">
+    <Object type="0x600c" id="Mini Werewolf">
         <Group>Hallowrena</Group>
         <Enemy/>
         <Class>Character</Class>
