@@ -40,6 +40,7 @@
 			<Damage>40</Damage>
 			<Size>100</Size>
 			<LifetimeMS>760</LifetimeMS>
+			<MultiHit/>
 		</Projectile>		
 
 			
@@ -83,6 +84,7 @@
 			<Size>60</Size>
 			<LifetimeMS>1500</LifetimeMS>
 			<ArmorPiercing/>
+			<MultiHit/>
 		</Projectile>				
 		<Projectile id="2">
 			<ObjectId>Silver Shield</ObjectId>
@@ -90,6 +92,7 @@
 			<Damage>65</Damage>
 			<Size>65</Size>
 			<LifetimeMS>3000</LifetimeMS>
+			<MultiHit/>
 			<ConditionEffect duration="4">Weak</ConditionEffect>
 		</Projectile>
 		<Projectile id="3">
@@ -98,6 +101,7 @@
 			<Damage>150</Damage>
 			<Size>150</Size>
 			<LifetimeMS>4000</LifetimeMS>
+			<MultiHit/>		
 		</Projectile>
 		<Projectile id="4">
 			<ObjectId>Silver Shield</ObjectId>
@@ -105,6 +109,7 @@
 			<Damage>110</Damage>
 			<Size>120</Size>
 			<LifetimeMS>3000</LifetimeMS>
+			<MultiHit/>
 			<ConditionEffect duration="4">Weak</ConditionEffect>
 		</Projectile>
 		
@@ -133,6 +138,7 @@
 			<Damage>20</Damage>
 			<Size>100</Size>
 			<LifetimeMS>500</LifetimeMS>
+			<MultiHit/>
 			<Amplitude>0.3</Amplitude>
 			<Frequency>0.5</Frequency>	
 		</Projectile>		

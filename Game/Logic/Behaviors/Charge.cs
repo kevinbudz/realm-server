@@ -20,7 +20,7 @@ namespace RotMG.Game.Logic.Behaviors
         {
             Speed = (float)speed;
             Range = range;
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 2000);
             CooldownVariance = cooldownVariance;
         }
 

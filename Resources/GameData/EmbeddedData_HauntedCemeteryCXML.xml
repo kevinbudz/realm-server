@@ -245,6 +245,7 @@
 			<Speed>85</Speed>
             <Size>100</Size>
 			<LifetimeMS>2000</LifetimeMS>
+			<MultiHit/>
 			<ConditionEffect duration="2.2">Paralyzed</ConditionEffect>
 		</Projectile>
         
@@ -254,6 +255,7 @@
 			<Speed>40</Speed>
             <Size>200</Size>
 			<LifetimeMS>5000</LifetimeMS>
+			<MultiHit/>
 			<Boomerang/>
             <PassesCover/>
 			<ConditionEffect duration="1">Paralyzed</ConditionEffect>
@@ -404,6 +406,7 @@
             <Damage>45</Damage>
             <Size>110</Size>
             <LifetimeMS>400</LifetimeMS>
+            <MultiHit/>
             <PassesCover/>
 			<ConditionEffect duration="2.4">Armor Broken</ConditionEffect>
         </Projectile>
@@ -413,6 +416,7 @@
             <Damage>70</Damage>
             <Size>100</Size>
             <LifetimeMS>1200</LifetimeMS>
+            <MultiHit/>
             <PassesCover/>
         </Projectile>
 		

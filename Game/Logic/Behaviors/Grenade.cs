@@ -37,7 +37,7 @@ namespace RotMG.Game.Logic.Behaviors
             Damage = damage;
             Radius = radius;
             FixedAngle = fixedAngle * MathUtils.ToRadians;
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 1000);
             CooldownOffset = cooldownOffset;
             CooldownVariance = cooldownVariance;
             Effects = new ConditionEffectDesc[1]

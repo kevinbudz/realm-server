@@ -34,7 +34,7 @@ namespace RotMG.Game.Logic.Behaviors
             Child = child;
             Range = (float)range;
             Angle = angle == null ? null : (float?)(angle.Value * MathUtils.ToRadians);
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 1000);
             CooldownVariance = cooldownVariance;
             CooldownOffset = cooldownOffset;
             Probability = probability;

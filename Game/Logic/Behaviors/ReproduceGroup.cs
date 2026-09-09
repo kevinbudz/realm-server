@@ -22,7 +22,7 @@ namespace RotMG.Game.Logic.Behaviors
             DensityRadius = (float)densityRadius;
             DensityMax = densityMax;
             Group = group;
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 60000);
             CooldownVariance = cooldownVariance;
             Region = region;
             RegionRange = (float)regionRange;

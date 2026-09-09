@@ -54,6 +54,12 @@ namespace RotMG.Utils
             return r;
         }
 
+        //Mirrors realm-src Cooldown.Normalize: a zero cooldown means "use the default".
+        public static int NormalizeCooldown(int cooldown, int def)
+        {
+            return cooldown == 0 ? def : cooldown;
+        }
+
         public static float NextFloat(float min = 0, float max = 1)
         {
             return (float)(_rnd.NextDouble() * (max - min) + min);

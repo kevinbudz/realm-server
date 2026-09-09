@@ -25,13 +25,16 @@
 			<Size>25</Size>
 			<LifetimeMS>1500</LifetimeMS>
 			<ArmorPiercing/>
+			<MultiHit/>
 		</Projectile>		
 		<Projectile id="1">
 			<ObjectId>Brown Magic</ObjectId>
 			<Speed>90</Speed>
-			<Damage>45</Damage>
+			<MinDamage>40</MinDamage>
+			<MaxDamage>45</MaxDamage>
 			<Size>40</Size>
 			<LifetimeMS>2600</LifetimeMS>
+			<MultiHit/>
 			<Boomerang/>
 			<Amplitude>2</Amplitude>
 			<Frequency>2.5</Frequency>
@@ -43,6 +46,7 @@
 			<Damage>65</Damage>
 			<Size>80</Size>
 			<LifetimeMS>3000</LifetimeMS>
+			<MultiHit/>
 			<ConditionEffect duration="1.5">Confused</ConditionEffect>
 		</Projectile>
 		<Projectile id="4">
@@ -51,6 +55,7 @@
 			<Damage>160</Damage>
 			<Size>80</Size>
 			<LifetimeMS>4000</LifetimeMS>
+			<MultiHit/>		
 		</Projectile>		
 		<Projectile id="5">
 			<ObjectId>White Bullet</ObjectId>
@@ -58,6 +63,7 @@
 			<Damage>60</Damage>
 			<Size>60</Size>
 			<LifetimeMS>2000</LifetimeMS>
+			<MultiHit/>		
 		</Projectile>		
 		
 			

@@ -784,6 +784,7 @@
 			<Speed>60</Speed>
 			<Size>100</Size>
 			<LifetimeMS>1200</LifetimeMS>
+			<MultiHit/>
 			<ConditionEffect duration="4">Sick</ConditionEffect>
 		</Projectile>
 		

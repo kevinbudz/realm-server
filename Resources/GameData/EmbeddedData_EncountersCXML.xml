@@ -46,6 +46,7 @@
             <Damage>250</Damage>
             <Size>300</Size>
             <LifetimeMS>5000</LifetimeMS>
+            <MultiHit/>
             <PassesCover/>
             <Amplitude>0.1</Amplitude>
             <Frequency>50</Frequency>
@@ -198,6 +199,7 @@
 			<Size>110</Size>
 			<LifetimeMS>1350</LifetimeMS>
 			<ConditionEffect duration="7">Weak</ConditionEffect>
+			<MultiHit/>
 			<PassesCover/>			
 		</Projectile>						
 		<Projectile id="1">
@@ -207,6 +209,7 @@
 			<Size>130</Size>
 			<LifetimeMS>1900</LifetimeMS>
 			<ConditionEffect duration="4">Blind</ConditionEffect>
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="2">
@@ -215,6 +218,7 @@
 			<Damage>115</Damage>
 			<Size>125</Size>
 			<LifetimeMS>1600</LifetimeMS>
+			<MultiHit/>
 			<PassesCover/>			
 		</Projectile>		
 	
@@ -247,6 +251,7 @@
 			<Damage>80</Damage>
 			<Size>110</Size>
 			<LifetimeMS>1550</LifetimeMS>
+			<MultiHit/>
 		</Projectile>						
 		<Projectile id="1">
 			<ObjectId>Fire Missile</ObjectId>
@@ -254,6 +259,7 @@
 			<Damage>65</Damage>
 			<Size>80</Size>
 			<LifetimeMS>1400</LifetimeMS>
+			<MultiHit/>
 		</Projectile>		
 
 			
@@ -436,6 +442,7 @@
 			<Speed>150</Speed>
 			<Damage>50</Damage>
 			<LifetimeMS>500</LifetimeMS>
+			<MultiHit/>
 		</Projectile>
 		
 	</Object>
@@ -580,6 +587,7 @@
 		       <Damage>100</Damage>
 		       <Size>210</Size>
 		       <LifetimeMS>3200</LifetimeMS>
+		       <MultiHit/>
 		</Projectile>
 		<Projectile id="3">
 			<ObjectId>Deep Sea Blast Yellow</ObjectId>
@@ -587,6 +595,7 @@
 		       <Damage>100</Damage>
 		       <Size>210</Size>
 		       <LifetimeMS>3200</LifetimeMS>
+		       <MultiHit/>
 		</Projectile>
 		       
 		

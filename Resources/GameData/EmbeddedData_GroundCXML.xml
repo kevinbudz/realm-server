@@ -396,7 +396,7 @@
 	<Ground type="0x64" id="Scorch">
 		<Texture><File>lofiEnvironment</File><Index>0x64</Index></Texture>
 	</Ground>
-	<Ground type="0x65" id="Grey Circle 2">
+	<Ground type="0x65" id="Grey Circle">
 		<Texture><File>lofiEnvironment</File><Index>0x65</Index></Texture>
 	</Ground>
 	<Ground type="0x66" id="Checker Board">
@@ -424,7 +424,8 @@
 
 	<Ground type="0x70" id="Lava">
 		<Texture><File>lofiEnvironment</File><Index>0x70</Index></Texture>
-		<Damage>10</Damage>
+		<MinDamage>30</MinDamage>
+		<MaxDamage>60</MaxDamage>
 		<Animate dx=".33" dy=".33">Flow</Animate>
 		<Sink/>
 		<Speed>.666</Speed>
@@ -665,7 +666,8 @@
 	
 	<Ground type="0xf4" id="Lava Blend">
 		<Texture><File>lofiEnvironment</File><Index>0x70</Index></Texture>
-		<Damage>10</Damage>
+		<MinDamage>30</MinDamage>
+		<MaxDamage>60</MaxDamage>
 		<Animate dx=".33" dy=".33">Flow</Animate>
 		<Sink/>
 		<Speed>.666</Speed>
@@ -986,7 +988,8 @@
 
     <Ground type="0xa8" id="Liquid Evil">
         <Texture><File>lofiEnvironment</File><Index>0x71</Index></Texture>
-		<Damage>5</Damage>
+        <MinDamage>25</MinDamage>
+        <MaxDamage>40</MaxDamage>
         <Animate dx=".33" dy=".33">Flow</Animate>
         <Sink/>
         <Speed>.666</Speed>

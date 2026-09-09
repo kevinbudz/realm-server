@@ -1,4 +1,5 @@
 ﻿using RotMG.Common;
+using RotMG.Utils;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -8,15 +9,17 @@ namespace RotMG.Game.Logic.Transitions
     public class TimedTransition : Transition
     {
         public readonly int Time;
+        public readonly bool Randomized;
 
-        public TimedTransition(string targetState, int time = 1000) : base(targetState)
+        public TimedTransition(int time, string targetState, bool randomized = false) : base(targetState)
         {
             Time = time;
+            Randomized = randomized;
         }
 
         public override void Enter(Entity host)
         {
-            host.StateCooldown.Add(Id, Time);
+            host.StateCooldown.Add(Id, Randomized && Time > 0 ? MathUtils.Next(Time) : Time);
         }
 
         public override bool Tick(Entity host)
@@ -31,7 +34,7 @@ namespace RotMG.Game.Logic.Transitions
         }
 
         public override void Exit(Entity host)
-        { 
+        {
             host.StateCooldown.Remove(Id);
         }
     }

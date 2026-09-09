@@ -253,10 +253,12 @@
 		
 		<Projectile id="0">
 			<ObjectId>Invisible</ObjectId>
-			<Damage>80</Damage>
+			<MinDamage>50</MinDamage>
+			<MaxDamage>100</MaxDamage>
 			<Speed>0</Speed>
 			<Size>100</Size>
 			<LifetimeMS>5000</LifetimeMS>
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -303,6 +305,8 @@
 			<Speed>60</Speed>
 			<Size>80</Size>
 			<LifetimeMS>4000</LifetimeMS>
+			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">
 			<ObjectId>Giant Cannonball</ObjectId>
@@ -310,6 +314,8 @@
 			<Speed>40</Speed>
 			<Size>180</Size>
 			<LifetimeMS>4000</LifetimeMS>
+			
+			<MultiHit/>
 		</Projectile>
         
         

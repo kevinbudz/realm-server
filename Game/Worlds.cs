@@ -10,7 +10,7 @@ namespace RotMG.Game
     {
         public PortalMonitor Monitor;
 
-        public NexusWorld(JSMap map, WorldDesc desc) : base(map, desc)
+        public NexusWorld(IGameMap map, WorldDesc desc) : base(map, desc)
         {
             Monitor = new PortalMonitor(this);
         }
@@ -27,7 +27,7 @@ namespace RotMG.Game
         public bool Closed;
         public bool Closing;
 
-        public RealmWorld(JSMap map, WorldDesc desc) : base(map, desc)
+        public RealmWorld(IGameMap map, WorldDesc desc) : base(map, desc)
         {
             SBName = Oryx.GetRandomRealmName();
             Setpieces.SetPieces.ApplySetPieces(this);
@@ -53,7 +53,7 @@ namespace RotMG.Game
         public int AccountId = -1;
         public bool VaultPopulated;
 
-        public VaultWorld(JSMap map, WorldDesc desc) : base(map, desc) { }
+        public VaultWorld(IGameMap map, WorldDesc desc) : base(map, desc) { }
 
         //Spawns the account's persistent chests on Vault-region tiles (sorted
         //by distance to spawn) and ClosedVaultChest vendors on the leftovers,
@@ -104,6 +104,6 @@ namespace RotMG.Game
         public string GuildName;
         public int Level;
 
-        public GuildHallWorld(JSMap map, WorldDesc desc) : base(map, desc) { }
+        public GuildHallWorld(IGameMap map, WorldDesc desc) : base(map, desc) { }
     }
 }

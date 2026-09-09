@@ -30,7 +30,7 @@
 			<Damage>160</Damage>
 			<Size>120</Size>
 			<LifetimeMS>700</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">		
 			<ObjectId>White Flame</ObjectId>		
@@ -38,7 +38,7 @@
 			<Damage>280</Damage>
 			<Size>250</Size>
 			<LifetimeMS>800</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="2">					 
 			<ObjectId>White Bolt</ObjectId>
@@ -46,7 +46,7 @@
 			<Damage>90</Damage>
 			<LifetimeMS>1600</LifetimeMS>
 			<ArmorPiercing/>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="3">					
 			<ObjectId>Fire Bolt</ObjectId>
@@ -68,7 +68,7 @@
 			<Size>90</Size>
 			<LifetimeMS>4000</LifetimeMS>
 			<ConditionEffect duration="3">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>	
 		<Projectile id="6">					
 			<ObjectId>White Ball</ObjectId>
@@ -76,7 +76,7 @@
 			<Damage>120</Damage>
 			<Size>100</Size>
 			<LifetimeMS>800</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>	
 		<Projectile id="7">					
 			<ObjectId>Silver Shield</ObjectId>
@@ -84,7 +84,7 @@
 			<Damage>290</Damage>
 			<Size>130</Size>
 			<LifetimeMS>500</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>		
 		<Projectile id="8">					
 			<ObjectId>White Bullet</ObjectId>
@@ -93,7 +93,7 @@
 			<Size>90</Size>
 			<LifetimeMS>2500</LifetimeMS>
 			<ConditionEffect duration="2">Blind</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="9">					
 			<ObjectId>White Bullet</ObjectId>
@@ -101,7 +101,7 @@
 			<Damage>400</Damage>
 			<Size>200</Size>
 			<LifetimeMS>2100</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>		
 		<Projectile id="12">					
 			<ObjectId>White Bullet</ObjectId>
@@ -117,7 +117,7 @@
 			<Damage>1</Damage>
 			<LifetimeMS>1800</LifetimeMS>
 			<ConditionEffect duration="8">Quiet</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="14">					
 			<ObjectId>Gray Spinner</ObjectId>
@@ -126,7 +126,7 @@
 			<Damage>1</Damage>
 			<LifetimeMS>1800</LifetimeMS>
 			<ConditionEffect duration="8">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="15">					
 			
@@ -138,7 +138,7 @@
 			<Parametric/>
 			<Magnitude>1</Magnitude>
 			<ConditionEffect duration="8">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="16">					
 			<ObjectId>White Superblast</ObjectId>
@@ -146,7 +146,7 @@
 			<Size>240</Size>
 			<Damage>210</Damage>
 			<LifetimeMS>3000</LifetimeMS>
-			
+			<MultiHit/>
 			<ConditionEffect duration="4">Weak</ConditionEffect>
 		</Projectile>
 		<Projectile id="17">					
@@ -163,7 +163,7 @@
 			<Damage>100</Damage>
 			<LifetimeMS>3000</LifetimeMS>
 			<ConditionEffect duration="4">Dazed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="19">					
 			<ObjectId>White Ball Blast</ObjectId>
@@ -172,7 +172,7 @@
 			<Damage>100</Damage>
 			<LifetimeMS>3000</LifetimeMS>
 			<ConditionEffect duration="3">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 
@@ -265,7 +265,7 @@
 			<Damage>70</Damage>
 			<Size>80</Size>
 			<LifetimeMS>300</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">
 			<ObjectId>White Orb</ObjectId>
@@ -315,7 +315,7 @@
 			<Damage>70</Damage>
 			<Size>100</Size>
 			<LifetimeMS>400</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">
 			<ObjectId>White Orb</ObjectId>
@@ -348,7 +348,7 @@
 			<Size>120</Size>
 			<LifetimeMS>480</LifetimeMS>
 			<ConditionEffect duration="8">Quiet</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="9"> 				
 			<ObjectId>Black Eye</ObjectId>
@@ -357,7 +357,7 @@
 			<Size>100</Size>
 			<LifetimeMS>480</LifetimeMS>
 			<ConditionEffect duration="8">Quiet</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>	
 
 		<Projectile id="1">
@@ -376,7 +376,7 @@
 			<Size>120</Size>
 			<LifetimeMS>340</LifetimeMS>
 			<ConditionEffect duration="8">Quiet</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>	
 		
 			
@@ -494,7 +494,7 @@
 			<Size>100</Size>
 			<LifetimeMS>480</LifetimeMS>
 			<ConditionEffect duration="8">Quiet</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="9"> 				
 			<ObjectId>White Bullet</ObjectId>
@@ -503,7 +503,7 @@
 			<Size>100</Size>
 			<LifetimeMS>480</LifetimeMS>
 			<ConditionEffect duration="8">Quiet</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>		
 		
 			
@@ -545,7 +545,7 @@
 			<Size>100</Size>
 			<LifetimeMS>1600</LifetimeMS>
 			<ConditionEffect duration="6">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>		
 		
 			
@@ -578,7 +578,7 @@
 			<Damage>60</Damage>
 			<Size>65</Size>
 			<LifetimeMS>2000</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">				
 			<ObjectId>White Bullet</ObjectId>	
@@ -586,7 +586,7 @@
 			<Damage>60</Damage>
 			<Size>60</Size>
 			<LifetimeMS>940</LifetimeMS>
-			
+			<MultiHit/>
 			<Amplitude>0.3</Amplitude>
 			<Frequency>0.5</Frequency>	
 		</Projectile>		
@@ -618,7 +618,7 @@
 			<Damage>60</Damage>
 			<Size>65</Size>
 			<LifetimeMS>2000</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">				
 			<ObjectId>White Bullet</ObjectId>	
@@ -626,7 +626,7 @@
 			<Damage>60</Damage>
 			<Size>60</Size>
 			<LifetimeMS>940</LifetimeMS>
-			
+			<MultiHit/>
 			<Amplitude>0.3</Amplitude>
 			<Frequency>0.5</Frequency>	
 		</Projectile>			
@@ -658,7 +658,7 @@
 			<Damage>60</Damage>
 			<Size>65</Size>
 			<LifetimeMS>2000</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">				
 			<ObjectId>White Bullet</ObjectId>	
@@ -666,7 +666,7 @@
 			<Damage>60</Damage>
 			<Size>60</Size>
 			<LifetimeMS>940</LifetimeMS>
-			
+			<MultiHit/>
 			<Amplitude>0.3</Amplitude>
 			<Frequency>0.5</Frequency>	
 		</Projectile>			
@@ -698,7 +698,7 @@
 			<Damage>60</Damage>
 			<Size>65</Size>
 			<LifetimeMS>2000</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">				
 			<ObjectId>White Bullet</ObjectId>	
@@ -706,7 +706,7 @@
 			<Damage>60</Damage>
 			<Size>60</Size>
 			<LifetimeMS>940</LifetimeMS>
-			
+			<MultiHit/>
 			<Amplitude>0.3</Amplitude>
 			<Frequency>0.5</Frequency>	
 		</Projectile>			
@@ -738,7 +738,7 @@
 			<Size>60</Size>
 			<Speed>80</Speed>
 			<LifetimeMS>620</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		
 			

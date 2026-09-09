@@ -21,7 +21,7 @@ namespace RotMG.Game.Logic.Behaviors
         {
             IndexMin = minValue;
             IndexMax = maxValue;
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 0);
             CooldownVariance = cooldownVariance;
             Loop = loop;
         }

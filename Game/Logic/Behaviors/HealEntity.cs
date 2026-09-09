@@ -19,7 +19,7 @@ namespace RotMG.Game.Logic.Behaviors
             Range = (float)range;
             Name = name;
             Amount = healAmount;
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 1000);
             CooldownVariance = cooldownVariance;
         }
 

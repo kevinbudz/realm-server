@@ -153,7 +153,8 @@
 			
 		<Projectile id="2">
 			<ObjectId>Fireball 2</ObjectId>
-			<Damage>65</Damage>
+			<MinDamage>45</MinDamage>
+			<MaxDamage>65</MaxDamage>
 			<Speed>60</Speed>
 			<Size>80</Size>
 			<LifetimeMS>1200</LifetimeMS>
@@ -366,7 +367,8 @@
 		
 		<Projectile id="0">
 			<ObjectId>Basilisk Acid</ObjectId>
-			<Damage>30</Damage>
+			<MinDamage>15</MinDamage>
+			<MaxDamage>30</MaxDamage>
 			<Speed>65</Speed>
 			<Size>100</Size>
 			<LifetimeMS>1000</LifetimeMS>
@@ -392,7 +394,8 @@
 		
 		<Projectile id="0">
 			<ObjectId>Basilisk Acid</ObjectId>
-			<Damage>30</Damage>
+			<MinDamage>15</MinDamage>
+			<MaxDamage>30</MaxDamage>
 			<Speed>65</Speed>
 			<Size>100</Size>
 			<LifetimeMS>1000</LifetimeMS>
@@ -402,7 +405,8 @@
 		
 		<Projectile id="1">
 			<ObjectId>Basilisk Beam</ObjectId>
-			<Damage>30</Damage>
+			<MinDamage>15</MinDamage>
+			<MaxDamage>30</MaxDamage>
 			<Speed>38</Speed>
 			<Size>80</Size>
 			<LifetimeMS>800</LifetimeMS>
@@ -411,7 +415,8 @@
 		
 		<Projectile id="2">
 			<ObjectId>Basilisk Beam</ObjectId>
-			<Damage>35</Damage>
+			<MinDamage>25</MinDamage>
+			<MaxDamage>35</MaxDamage>
 			<Speed>45</Speed>
 			<Size>130</Size>
 			<LifetimeMS>800</LifetimeMS>
@@ -420,7 +425,8 @@
 		
 		<Projectile id="3">
 			<ObjectId>Basilisk Beam</ObjectId>
-			<Damage>45</Damage>
+			<MinDamage>30</MinDamage>
+			<MaxDamage>45</MaxDamage>
 			<Speed>55</Speed>
 			<Size>180</Size>
 			<LifetimeMS>800</LifetimeMS>
@@ -535,15 +541,18 @@
 		
 		<Projectile id="0">
 			<ObjectId>Invisible</ObjectId>
-			<Damage>20</Damage>
+			<MinDamage>10</MinDamage>
+			<MaxDamage>20</MaxDamage>
 			<Speed>0</Speed>
 			<Size>120</Size>
 			<LifetimeMS>5000</LifetimeMS>
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="1">
 			<ObjectId>Fireball 2</ObjectId>
-			<Damage>30</Damage>
+			<MinDamage>20</MinDamage>
+			<MaxDamage>30</MaxDamage>
 			<Speed>60</Speed>
 			<Size>80</Size>
 			<LifetimeMS>1200</LifetimeMS>

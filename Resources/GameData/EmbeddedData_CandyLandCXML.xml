@@ -156,6 +156,7 @@
 			<Size>80</Size>
             <ConditionEffect duration="3">Hexed</ConditionEffect>
             <ConditionEffect duration="3">Stunned</ConditionEffect>
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="2">
 			<ObjectId>Pink Slash</ObjectId>
@@ -208,6 +209,7 @@
 			<Size>140</Size>
 			<Amplitude>0.4</Amplitude>
 			<Frequency>0.2</Frequency>
+			<MultiHit/>
             <ConditionEffect duration="2">Confused</ConditionEffect>
 		</Projectile>
 		<Projectile id="1">
@@ -218,6 +220,7 @@
 			<Size>140</Size>
 			<Amplitude>0.4</Amplitude>
 			<Frequency>0.2</Frequency>
+			<MultiHit/>
 			<Boomerang/>
             <ConditionEffect duration="2">Confused</ConditionEffect>
 		</Projectile>
@@ -255,6 +258,7 @@
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>160</Size>
 			<ArmorPiercing/>
+			<MultiHit/>
 		</Projectile>
         
 		<Projectile id="1">
@@ -264,6 +268,7 @@
 			<LifetimeMS>1000</LifetimeMS>
 			<Size>160</Size>
 			<ArmorPiercing/>
+			<MultiHit/>
 		</Projectile>
         
         
@@ -339,6 +344,7 @@
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>60</Size>
 			<ArmorPiercing/>
+			<MultiHit/>
 		</Projectile>
         
         
@@ -374,6 +380,7 @@
 			<Speed>65</Speed>
 			<LifetimeMS>1000</LifetimeMS>
 			<Size>100</Size>
+			<MultiHit/>
 		</Projectile>
         
         
@@ -404,6 +411,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>80</Size>
+			<MultiHit/>
 		</Projectile>
         
         
@@ -434,6 +442,7 @@
 			<Size>100</Size>
 			<Amplitude>0.4</Amplitude>
 			<Frequency>0.6</Frequency>
+			<MultiHit/>
             <ConditionEffect duration="2">Confused</ConditionEffect>
 		</Projectile>
         
@@ -470,6 +479,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>1000</LifetimeMS>
 			<Size>80</Size>
+			<MultiHit/>
             <ConditionEffect duration="0.6">Confused</ConditionEffect>
 		</Projectile>
         
@@ -500,6 +510,7 @@
 			<Size>90</Size>
             <ConditionEffect duration="3">Hallucinating</ConditionEffect>
             <ConditionEffect duration="3">Hexed</ConditionEffect>
+			<MultiHit/>
 		</Projectile>
         
         
@@ -529,6 +540,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1000</LifetimeMS>
 			<Size>60</Size>
+			<MultiHit/>
 		</Projectile>
         
         

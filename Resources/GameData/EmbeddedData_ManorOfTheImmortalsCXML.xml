@@ -44,6 +44,7 @@
 			<Speed>65</Speed>
 			<Size>100</Size>
 			<LifetimeMS>3400</LifetimeMS>
+			<MultiHit/>
 		</Projectile>
 		
 			

@@ -67,7 +67,7 @@ namespace RotMG.Game
 
         public static World CreateWorld(WorldDesc desc, int mapIndex = -1)
         {
-            JSMap map = mapIndex < 0
+            IGameMap map = mapIndex < 0
                 ? desc.Maps[MathUtils.Next(desc.Maps.Length)]
                 : desc.Maps[mapIndex % desc.Maps.Length];
             switch (desc.Id)

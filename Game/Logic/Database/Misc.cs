@@ -1,4 +1,4 @@
-using RotMG.Common;
+﻿using RotMG.Common;
 using RotMG.Game.Logic.Behaviors;
 using RotMG.Game.Logic.Conditionals;
 using RotMG.Game.Logic.Loots;
@@ -14,16 +14,21 @@ namespace RotMG.Game.Logic.Database
         public void Init(BehaviorDb db)
         {
             db.Init("White Fountain",
-                new HealPlayer(5, cooldown: 1000, healAmount: 100));
+                new HealPlayer(5, 1000, 100)
+            );
             db.Init("Sheep",
+                new PlayerWithinTransition(15, "player_nearby"),
                 new State("player_nearby",
-                        new Prioritize(
-                            new StayCloseToSpawn(0.1, 2),
-                            new Wander(0.1f)
-                            ),
-                        new Taunt(0.001, 1000, "baa", "baa baa"), new PlayerWithinTransition(15, "player_nearby")));
+                    new Prioritize(
+                        new StayCloseToSpawn(0.1f, 2),
+                        new Wander(0.1f)
+                    ),
+                    new Taunt(0.001f, 1000, "baa", "baa baa")
+                )
+            );
             db.Init(new string[] { "Black Cat", "Snowman" },
-                new PetFollow());
+                new PetFollow()
+            );
         }
     }
 }

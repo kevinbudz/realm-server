@@ -14,7 +14,7 @@ namespace RotMG.Game.Logic.Behaviors
         public HealPlayerMP(double range, int cooldown = 1000, int cooldownVariance = 0, int healAmount = 100)
         {
             Range = (float)range;
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 1000);
             CooldownVariance = cooldownVariance;
             Amount = healAmount;
         }

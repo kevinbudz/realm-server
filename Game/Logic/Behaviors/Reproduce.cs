@@ -21,7 +21,7 @@ namespace RotMG.Game.Logic.Behaviors
             Children = children;
             DensityRadius = (float)densityRadius;
             DensityMax = densityMax;
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 60000);
             CooldownVariance = cooldownVariance;
             Region = region;
             RegionRange = (float)regionRange;

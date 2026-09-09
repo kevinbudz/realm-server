@@ -821,7 +821,7 @@ namespace RotMG.Common
         public readonly bool ShowDisplays;
         public readonly bool AllowTeleport;
         public readonly int BlockSight;
-        public readonly JSMap[] Maps;
+        public readonly IGameMap[] Maps;
 
         public WorldDesc(XElement e)
         {
@@ -833,9 +833,15 @@ namespace RotMG.Common
             BlockSight = e.ParseInt("BlockSight");
 
             string[] maps = e.ParseStringArray("Maps", ";", new string[0]);
-            Maps = new JSMap[maps.Length];
+            Maps = new IGameMap[maps.Length];
             for (int i = 0; i < maps.Length; i++)
-                Maps[i] = new JSMap(File.ReadAllText(Resources.CombineResourcePath($"Worlds/{maps[i]}")));
+            {
+                string path = Resources.CombineResourcePath($"Worlds/{maps[i]}");
+                if (maps[i].EndsWith(".wmap", StringComparison.OrdinalIgnoreCase))
+                    Maps[i] = new Wmap(File.ReadAllBytes(path));
+                else
+                    Maps[i] = new JSMap(File.ReadAllText(path));
+            }
         }
     }
 }

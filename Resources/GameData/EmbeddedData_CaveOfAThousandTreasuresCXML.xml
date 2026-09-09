@@ -131,6 +131,7 @@
             <Damage>50</Damage>
             <LifetimeMS>100</LifetimeMS>
             <Size>0</Size>
+            <MultiHit/>
         </Projectile>
 
 
@@ -207,6 +208,7 @@
             <Speed>0</Speed>
             <LifetimeMS>100</LifetimeMS>
             <Size>100</Size>
+            <MultiHit/>
         </Projectile>
 
 
@@ -248,6 +250,7 @@
             <Speed>0</Speed>
             <LifetimeMS>100</LifetimeMS>
             <Size>100</Size>
+            <MultiHit/>
         </Projectile>
 
 
@@ -429,7 +432,7 @@
         <Description>A map that reveals the way to hidden treasure.</Description>
         <Sound>use_key</Sound>
         <Consumable/>
-        
+        <Soulbound/>
         <Activate id="Treasure Cave Portal">Create</Activate>
     </Object>
 
@@ -523,6 +526,7 @@
             <Speed>100</Speed>
             <LifetimeMS>100</LifetimeMS>
             <Size>75</Size>
+            <MultiHit/>
         </Projectile>
 
 

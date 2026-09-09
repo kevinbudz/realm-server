@@ -24,13 +24,13 @@ namespace RotMG.Game.Logic.Behaviors
         public readonly int Duration;
         public readonly int Cooldown;
 
-        public Follow(double speed, double acquireRange = 10, double range = 6, int duration = 0, int cooldown = 1000)
+        public Follow(double speed, double acquireRange = 10, double range = 6, int duration = 0, int cooldown = 0)
         {
             Speed = (float)speed;
             AcquireRange = (float)acquireRange;
             Range = (float)range;
             Duration = duration;
-            Cooldown = duration == 0 ? 0 : cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, duration == 0 ? 0 : 1000);
         }
 
         public override void Enter(Entity host)

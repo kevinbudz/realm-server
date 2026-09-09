@@ -569,10 +569,17 @@ namespace RotMG.Game
 
         public void TickStates()
         {
-            if (Behavior != null)
+            if (Behavior != null && Parent != null)
             {
                 //Don't tick behaviors if stasised.
                 if (HasConditionEffect(ConditionEffectIndex.Stasis))
+                    return;
+
+                //Mirror realm-src Entity.Tick: idle entities with no players nearby
+                //and no condition effects don't tick behaviors, so offscreen enemies
+                //neither wander off nor burn down their attack cooldowns.
+                if (!(this is Player) && ConditionEffects == 0 &&
+                    !Parent.AnyPlayerNearby(Position.X, Position.Y, Player.SightRadius))
                     return;
 
                 //Tick root behaviors

@@ -297,6 +297,7 @@
 	        <Damage>12</Damage>
 	        <Size>60</Size>
 	        <LifetimeMS>600</LifetimeMS>
+	        <MultiHit/>
 		</Projectile>
 		<Projectile id="1">
 			<ObjectId>Deep Sea Blast</ObjectId>
@@ -304,6 +305,7 @@
 	        <Damage>21</Damage>
 	        <Size>88</Size>
 	        <LifetimeMS>600</LifetimeMS>
+	        <MultiHit/>
 		</Projectile>
 		<Projectile id="2">
 			<ObjectId>Deep Sea Blast</ObjectId>
@@ -311,6 +313,7 @@
 	        <Damage>37</Damage>
 	        <Size>154</Size>
 	        <LifetimeMS>600</LifetimeMS>
+	        <MultiHit/>
 		</Projectile>
 		<Projectile id="3">
 			<ObjectId>Deep Sea Blast</ObjectId>
@@ -318,6 +321,7 @@
 	        <Damage>64</Damage>
 	        <Size>270</Size>
 	        <LifetimeMS>600</LifetimeMS>
+	        <MultiHit/>
 		</Projectile>
 	    
 	        
@@ -455,6 +459,7 @@
             <Damage>50</Damage>
             <Size>100</Size>
             <LifetimeMS>1200</LifetimeMS>
+            <MultiHit/>
 			<ConditionEffect duration="3">Blind</ConditionEffect>
         </Projectile>
         
@@ -484,6 +489,7 @@
             <Damage>85</Damage>
             <Size>80</Size>
             <LifetimeMS>3000</LifetimeMS>
+            <MultiHit/>
         </Projectile>
         <Projectile id="1">
             <ObjectId>Squid Shot</ObjectId>

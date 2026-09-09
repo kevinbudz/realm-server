@@ -128,6 +128,7 @@
 			<Damage>100</Damage>
 			<Size>100</Size>
 			<LifetimeMS>1500</LifetimeMS>
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">					
 			<ObjectId>White Bullet</ObjectId>
@@ -136,6 +137,7 @@
 			<Size>60</Size>
 			<LifetimeMS>2000</LifetimeMS>
 			<ConditionEffect duration="1.4">Blind</ConditionEffect>
+			<MultiHit/>
 		</Projectile>
 		
 
@@ -164,6 +166,7 @@
 			<Size>100</Size>
 			<LifetimeMS>900</LifetimeMS>
 			<ConditionEffect duration="2">Slowed</ConditionEffect>
+			<MultiHit/>
 		</Projectile>
 		
 	
@@ -190,6 +193,7 @@
 			<Damage>40</Damage>
 			<Size>70</Size>
 			<LifetimeMS>1000</LifetimeMS>
+			<MultiHit/>
 		</Projectile>
 			
 

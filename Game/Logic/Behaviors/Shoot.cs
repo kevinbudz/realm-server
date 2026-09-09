@@ -31,7 +31,7 @@ namespace RotMG.Game.Logic.Behaviors
             float? shootAngle = null, 
             int index = 0, 
             float? fixedAngle = null, 
-            float? rotateAngke = null, 
+            float? rotateAngle = null, 
             float angleOffset = 0, 
             float? defaultAngle = null,
             float predictive = 0,
@@ -44,13 +44,13 @@ namespace RotMG.Game.Logic.Behaviors
             ShootAngle = count == 1 ? 0 : (shootAngle ?? 360f / count) * MathUtils.ToRadians;
             Index = index;
             FixedAngle = fixedAngle * MathUtils.ToRadians;
-            RotateAngle = rotateAngke * MathUtils.ToRadians;
+            RotateAngle = rotateAngle * MathUtils.ToRadians;
             AngleOffset = angleOffset * MathUtils.ToRadians;
             DefaultAngle = defaultAngle * MathUtils.ToRadians;
             Predictive = predictive;
             CooldownOffset = cooldownOffset;
             CooldownVariance = cooldownVariance;
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 1000);
         }
 
         public override void Enter(Entity host)

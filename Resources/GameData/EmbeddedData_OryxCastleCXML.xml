@@ -554,6 +554,7 @@
             <Damage>65</Damage>
             <Size>200</Size>
             <LifetimeMS>400</LifetimeMS>
+            <MultiHit/>
             <PassesCover/>
 			<ConditionEffect duration="4">Armor Broken</ConditionEffect>
         </Projectile>
@@ -614,6 +615,7 @@
             <Damage>100</Damage>
             <Size>160</Size>
             <LifetimeMS>400</LifetimeMS>
+            <MultiHit/>
             <PassesCover/>
         </Projectile>
         <Projectile id="2">
@@ -664,6 +666,7 @@
             <Damage>60</Damage>
             <Size>80</Size>
             <LifetimeMS>400</LifetimeMS>
+            <MultiHit/>
             <PassesCover/>
         </Projectile>
         
@@ -697,10 +700,12 @@
 		<Projectile id="0">
 			<ObjectId>Mute Spell</ObjectId>
 			<Speed>50</Speed>
-			<Damage>20</Damage>
+			<MinDamage>10</MinDamage>
+			<MaxDamage>20</MaxDamage>
 			<Size>80</Size>
 			<LifetimeMS>1000</LifetimeMS>
 			<ConditionEffect duration="5">Quiet</ConditionEffect>
+			<MultiHit/>
 		</Projectile>
 	
 		
@@ -733,10 +738,12 @@
 		<Projectile id="0">
 			<ObjectId>Mute Spell</ObjectId>
 			<Speed>50</Speed>
-			<Damage>20</Damage>
+			<MinDamage>10</MinDamage>
+			<MaxDamage>20</MaxDamage>
 			<Size>80</Size>
 			<LifetimeMS>1000</LifetimeMS>
 			<ConditionEffect duration="5">Quiet</ConditionEffect>
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -762,10 +769,12 @@
 		<Projectile id="0">
 			<ObjectId>Mute Spell</ObjectId>
 			<Speed>50</Speed>
-			<Damage>20</Damage>
+			<MinDamage>10</MinDamage>
+			<MaxDamage>20</MaxDamage>
 			<Size>80</Size>
 			<LifetimeMS>1000</LifetimeMS>
 			<ConditionEffect duration="5">Quiet</ConditionEffect>
+			<MultiHit/>
 		</Projectile>
 	
 	

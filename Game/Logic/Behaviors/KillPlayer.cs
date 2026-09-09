@@ -15,7 +15,7 @@ namespace RotMG.Game.Logic.Behaviors
         public KillPlayer(string killMessage, int cooldown = 1000, int cooldownVariance = 0, bool killAll = false)
         {
             KillMessage = killMessage;
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 1000);
             CooldownVariance = cooldownVariance;
             KillAll = killAll;
         }

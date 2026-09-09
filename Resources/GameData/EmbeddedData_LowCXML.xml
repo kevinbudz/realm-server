@@ -383,6 +383,7 @@
             <Speed>100</Speed>
             <Damage>25</Damage>
             <Size>150</Size>
+            <MultiHit/>
             <PassesCover/>
             <LifetimeMS>1000</LifetimeMS>
         </Projectile>

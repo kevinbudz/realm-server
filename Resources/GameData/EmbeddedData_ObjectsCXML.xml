@@ -180,7 +180,8 @@
     <Object type="0x0500" id="Loot Bag">
         <Class>Container</Class>
         <Container/>
-		<Loot/>
+        <CanPutNormalObjects/>
+        <Loot/>
         <Texture><File>lofiObj</File><Index>0x08</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
@@ -188,6 +189,7 @@
     <Object type="0x0501" id="Treasure Chest">
         <Class>Container</Class>
         <Container/>
+        <CanPutNormalObjects/>
         <Texture><File>lofiObj</File><Index>0x02</Index></Texture>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
     </Object>
@@ -195,13 +197,15 @@
         <Class>Container</Class>
         <Container/>
         <ShowName/>
+        <CanPutNormalObjects/>
         <Texture><File>lofiObj</File><Index>0x13</Index></Texture>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
     </Object>
     <Object type="0x0503" id="Soulbound Loot Bag">
         <Class>Container</Class>
         <Container/>
-		<Loot/>
+        <CanPutSoulboundObjects/>
+        <Loot/>
         <Texture><File>lofiObj2</File><Index>0x76</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
@@ -209,6 +213,8 @@
     <Object type="0x0504" id="Vault Chest">
         <Class>Container</Class>
         <Container/>
+        <CanPutNormalObjects/>
+        <CanPutSoulboundObjects/>
         <Texture><File>lofiObj2</File><Index>0x0e</Index></Texture>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
     </Object>
@@ -220,7 +226,9 @@
         <DisplayId>Loot Bag</DisplayId>
         <Class>Container</Class>
         <Container/>
-		<Loot/>
+        <CanPutNormalObjects/>
+        <CanPutSoulboundObjects/>
+        <Loot/>
         <Texture><File>lofiObj4</File><Index>0x91</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
@@ -229,7 +237,9 @@
         <DisplayId>Loot Bag</DisplayId>
         <Class>Container</Class>
         <Container/>
-		<Loot/>
+        <CanPutNormalObjects/>
+        <CanPutSoulboundObjects/>
+        <Loot/>
         <Texture><File>lofiObj4</File><Index>0x92</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
@@ -238,7 +248,9 @@
         <DisplayId>Loot Bag</DisplayId>
         <Class>Container</Class>
         <Container/>
-		<Loot/>
+        <CanPutNormalObjects/>
+        <CanPutSoulboundObjects/>
+        <Loot/>
         <Texture><File>lofiObj4</File><Index>0x93</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
@@ -247,7 +259,9 @@
         <DisplayId>Loot Bag</DisplayId>
         <Class>Container</Class>
         <Container/>
-		<Loot/>
+        <CanPutNormalObjects/>
+        <CanPutSoulboundObjects/>
+        <Loot/>
         <Texture><File>lofiObj4</File><Index>0x94</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
@@ -256,7 +270,9 @@
         <DisplayId>Loot Bag</DisplayId>
         <Class>Container</Class>
         <Container/>
-		<Loot/>
+        <CanPutNormalObjects/>
+        <CanPutSoulboundObjects/>
+        <Loot/>
         <Texture><File>lofiObj4</File><Index>0x95</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>

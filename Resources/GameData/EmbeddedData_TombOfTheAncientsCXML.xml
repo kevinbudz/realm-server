@@ -29,7 +29,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>400</LifetimeMS>	
 			<ArmorPiercing/>
-			
+			<MultiHit/>
 			<Size>140</Size>
 		</Projectile>		
 		
@@ -63,7 +63,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>2000</LifetimeMS>	
 			<ArmorPiercing/>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="2">
@@ -79,7 +79,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>2000</LifetimeMS>	
 			<ArmorPiercing/>
-			
+			<MultiHit/>
 		</Projectile>
 		
 				
@@ -144,7 +144,7 @@
 			<Speed>40</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<ConditionEffect duration="2">Confused</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="2">
@@ -162,7 +162,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<ConditionEffect duration="2">Confused</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -191,7 +191,7 @@
 			<Speed>40</Speed>
 			<LifetimeMS>700</LifetimeMS>
 			<ConditionEffect duration="1.2">Weak</ConditionEffect>
-			
+			<MultiHit/>
 			<Size>140</Size>
 		</Projectile>
 		
@@ -226,7 +226,7 @@
 			<Speed>40</Speed>
 			<LifetimeMS>3000</LifetimeMS>
 			<ConditionEffect duration="1.2">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>	
 				
 		<Projectile id="2">
@@ -243,7 +243,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>3000</LifetimeMS>
 			<ConditionEffect duration="1.2">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -732,7 +732,7 @@
 			<Speed>100</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>120</Size>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="1">
@@ -742,7 +742,7 @@
 			<LifetimeMS>4000</LifetimeMS>
 			<ConditionEffect duration="1">Quiet</ConditionEffect>
 			<Boomerang/>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="2">
@@ -752,7 +752,7 @@
 			<LifetimeMS>4000</LifetimeMS>
 			<ConditionEffect duration="5">Weak</ConditionEffect>
 			<Boomerang/>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="3">
@@ -762,7 +762,7 @@
 			<LifetimeMS>4000</LifetimeMS>
 			<ConditionEffect duration="5">Slowed</ConditionEffect>
 			<Boomerang/>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="4">
@@ -772,7 +772,7 @@
 			<LifetimeMS>4000</LifetimeMS>
 			<ConditionEffect duration="5">Blind</ConditionEffect>
 			<Boomerang/>
-			
+			<MultiHit/>
 		</Projectile>
 
 		<Projectile id="5">
@@ -790,7 +790,7 @@
 			<Speed>40</Speed>
 			<LifetimeMS>4000</LifetimeMS>
 			<ConditionEffect duration="1.4">Paralyzed</ConditionEffect>
-			
+			<MultiHit/>
 			<Size>200</Size>
 		</Projectile>
 
@@ -800,7 +800,7 @@
 			<Speed>120</Speed>
 			<LifetimeMS>5000</LifetimeMS>
 			<ConditionEffect duration="10">Weak</ConditionEffect>
-			
+			<MultiHit/>
 			<Size>200</Size>
 		</Projectile>	
 
@@ -852,7 +852,7 @@
 			<Speed>80</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>140</Size>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="1">
@@ -862,7 +862,7 @@
 			<LifetimeMS>3600</LifetimeMS>
 			<ConditionEffect duration="5">Slowed</ConditionEffect>
 			<Boomerang/>
-			
+			<MultiHit/>
 		</Projectile>
 
 		<Projectile id="2">
@@ -880,7 +880,7 @@
 			<Speed>120</Speed>
 			<LifetimeMS>5000</LifetimeMS>
 			<ConditionEffect duration="10">Weak</ConditionEffect>
-			
+			<MultiHit/>
 			<Size>200</Size>
 		</Projectile>	
 
@@ -899,7 +899,7 @@
 			<Speed>50</Speed>
 			<LifetimeMS>4000</LifetimeMS>
 			<Size>140</Size>
-			
+			<MultiHit/>
 		</Projectile>
 		
 
@@ -940,7 +940,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>180</Size>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="1">
@@ -950,7 +950,7 @@
 			<LifetimeMS>5000</LifetimeMS>
 			<ConditionEffect duration="5">Armor Broken</ConditionEffect>
 			<Boomerang/>
-			
+			<MultiHit/>
 		</Projectile>
 
 		<Projectile id="2">
@@ -968,7 +968,7 @@
 			<Speed>120</Speed>
 			<LifetimeMS>5000</LifetimeMS>
 			<ConditionEffect duration="10">Weak</ConditionEffect>
-			
+			<MultiHit/>
 			<Size>200</Size>
 		</Projectile>
 
@@ -1023,7 +1023,7 @@
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>200</Size>
 			<ConditionEffect duration="3">Stunned</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 
@@ -1056,7 +1056,7 @@
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>80</Size>
 			<ConditionEffect duration="5">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="1">
@@ -1104,7 +1104,7 @@
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>80</Size>
 			<ConditionEffect duration="7">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		<Projectile id="1">
@@ -1238,7 +1238,8 @@
 		<Projectile>
 			<ObjectId>Hellfire</ObjectId>
 			<Speed>100</Speed>
-			<Damage>50</Damage>
+			<MinDamage>30</MinDamage>
+			<MaxDamage>70</MaxDamage>
 			<LifetimeMS>500</LifetimeMS>
 			<ConditionEffect duration="2">Armor Broken</ConditionEffect>
 		</Projectile>
@@ -1257,10 +1258,11 @@
 		<Projectile>
 			<ObjectId>Thunderbolt</ObjectId>
 			<Speed>40</Speed>
-			<Damage>70</Damage>
+			<MinDamage>10</MinDamage>
+			<MaxDamage>100</MaxDamage>
 			<LifetimeMS>3000</LifetimeMS>
 			<ConditionEffect duration="1.4">Paralyzed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 
 
@@ -1300,7 +1302,8 @@
 		<Projectile>
 			<ObjectId>Hellfire</ObjectId>
 			<Speed>80</Speed>
-			<Damage>50</Damage>
+			<MinDamage>20</MinDamage>
+			<MaxDamage>60</MaxDamage>
 			<LifetimeMS>800</LifetimeMS>
 			<ConditionEffect duration="2">Armor Broken</ConditionEffect>
 		</Projectile>
@@ -1321,10 +1324,11 @@
 		<Projectile>
 			<ObjectId>Thunderbolt</ObjectId>
 			<Speed>200</Speed>
-			<Damage>60</Damage>
+			<MinDamage>10</MinDamage>
+			<MaxDamage>80</MaxDamage>
 			<LifetimeMS>1000</LifetimeMS>
 			<ConditionEffect duration="1.4">Paralyzed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 
 
@@ -1513,7 +1517,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1200</LifetimeMS>
 			<Size>100</Size>
-			
+			<MultiHit/>
 		</Projectile>		
 
 		<Projectile id="1">
@@ -1522,7 +1526,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1200</LifetimeMS>
 			<Size>120</Size>
-			
+			<MultiHit/>
 		</Projectile>	
 
 		<Projectile id="2">
@@ -1531,7 +1535,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>140</Size>
-			
+			<MultiHit/>
 			<ConditionEffect duration="4">Slowed</ConditionEffect>
 		</Projectile>
 
@@ -1541,6 +1545,7 @@
 			<Speed>50</Speed>
 			<LifetimeMS>3000</LifetimeMS>
 			<Size>140</Size>
+			<MultiHit/>
 			<ConditionEffect duration="1.2">Paralyzed</ConditionEffect>
 		</Projectile>	
 		

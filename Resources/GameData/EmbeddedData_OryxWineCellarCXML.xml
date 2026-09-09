@@ -214,10 +214,12 @@
 		<XpMult>0</XpMult>
 		<Projectile id="0">
 			<ObjectId>Invisible</ObjectId>
-			<Damage>60</Damage>
+			<MinDamage>40</MinDamage>
+			<MaxDamage>70</MaxDamage>
 			<Speed>0</Speed>
 			<Size>85</Size>
 			<LifetimeMS>6000</LifetimeMS>
+			<MultiHit/>
 			<ConditionEffect duration="5">Sick</ConditionEffect>
 			<ConditionEffect duration="3.4">Slowed</ConditionEffect>
 		</Projectile>

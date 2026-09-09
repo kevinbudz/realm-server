@@ -72,11 +72,9 @@ namespace RotMG.Game.Setpieces
             }
         }
 
-        // Terrain anchor for placement. The reference reads a painted
-        // Wmap.Terrain channel; this map has none, so tiles are classified
-        // exactly like Oryx.GetTileTerrain (ground id + distance from the
-        // realm spawn). Oryx.cs is NOT modified: this is a local copy.
-        private static TerrainType GetTerrainAt(World world, IntPoint spawn, int x, int y)
+        // Terrain anchor for placement, going through the same
+        // painted-first classifier as Oryx (see TerrainClassifier).
+        private static TerrainType GetTerrainAt(World world, List<IntPoint> spawns, int x, int y)
         {
             Tile tile = world.GetTile(x, y);
             if (tile == null)
@@ -84,9 +82,7 @@ namespace RotMG.Game.Setpieces
             TileDesc ground;
             if (!Resources.Type2Tile.TryGetValue(tile.Type, out ground))
                 return TerrainType.None;
-            float dx = x - spawn.X;
-            float dy = y - spawn.Y;
-            return TerrainClassifier.GetTerrain(ground.Id, (float)Math.Sqrt(dx * dx + dy * dy));
+            return TerrainClassifier.GetTileTerrain(world.Map, ground.Id, x, y, spawns);
         }
 
         // Reference placement algorithm from realm-src-master
@@ -94,12 +90,12 @@ namespace RotMG.Game.Setpieces
         // (World.Width/Height, classified terrain, local helpers).
         public static void ApplySetPieces(World world)
         {
-            IntPoint spawn;
+            List<IntPoint> spawnList;
             List<IntPoint> spawns;
             if (world.Map.Regions.TryGetValue(Region.Spawn, out spawns) && spawns.Count > 0)
-                spawn = spawns[0];
+                spawnList = spawns;
             else
-                spawn = new IntPoint(world.Width / 2, world.Height / 2);
+                spawnList = new List<IntPoint>() { new IntPoint(world.Width / 2, world.Height / 2) };
 
             Random rand = new Random();
             HashSet<Rect> rects = new HashSet<Rect>();
@@ -119,7 +115,7 @@ namespace RotMG.Game.Setpieces
                         pt.Y = rand.Next(0, world.Height);
                         rect = new Rect() { X = pt.X, Y = pt.Y, W = size, H = size };
                         max--;
-                    } while ((Array.IndexOf(dat.Item4, GetTerrainAt(world, spawn, pt.X, pt.Y)) == -1 ||
+                    } while ((Array.IndexOf(dat.Item4, GetTerrainAt(world, spawnList, pt.X, pt.Y)) == -1 ||
                              rects.Any(_ => Rect.Intersects(rect, _))) &&
                              max > 0);
                     if (max <= 0) continue;

@@ -130,6 +130,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>2400</LifetimeMS>
 			<ConditionEffect duration="10">Quiet</ConditionEffect>
+			<MultiHit/>
 			<ParticleTrail/>
 		</Projectile>
 
@@ -159,6 +160,7 @@
 			<Damage>70</Damage>
 			<Size>110</Size>
 			<LifetimeMS>2300</LifetimeMS>
+			<MultiHit/>
 		</Projectile>
 
 
@@ -182,6 +184,7 @@
 			<Size>90</Size>
 			<Speed>90</Speed>
 			<LifetimeMS>1940</LifetimeMS>
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		
@@ -207,6 +210,7 @@
 			<Size>90</Size>
 			<Speed>90</Speed>
 			<LifetimeMS>1940</LifetimeMS>
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		
@@ -232,6 +236,7 @@
 			<Size>90</Size>
 			<Speed>90</Speed>
 			<LifetimeMS>1940</LifetimeMS>
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		
@@ -257,6 +262,7 @@
 			<Size>90</Size>
 			<Speed>90</Speed>
 			<LifetimeMS>1940</LifetimeMS>
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		

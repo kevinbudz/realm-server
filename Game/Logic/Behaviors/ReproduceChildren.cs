@@ -25,7 +25,7 @@ namespace RotMG.Game.Logic.Behaviors
         {
             MaxChildren = maxChildren;
             InitialSpawn = (int)(maxChildren * initialSpawn);
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 0);
             CooldownVariance = cooldownVariance;
             Children = children;
         }

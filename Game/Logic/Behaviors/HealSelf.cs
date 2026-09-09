@@ -13,7 +13,7 @@ namespace RotMG.Game.Logic.Behaviors
 
         public HealSelf(int cooldown = 1000, int cooldownVariance = 0, int? amount = null)
         {
-            Cooldown = cooldown;
+            Cooldown = MathUtils.NormalizeCooldown(cooldown, 1000);
             CooldownVariance = cooldownVariance;
             Amount = amount;
         }

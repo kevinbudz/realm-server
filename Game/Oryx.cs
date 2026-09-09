@@ -366,7 +366,7 @@ namespace RotMG.Game
         private readonly Random _rand = new Random();
         private readonly int[] _enemyMaxCounts = new int[12];
         private readonly int[] _enemyCounts = new int[12];
-        private IntPoint _spawn;
+        private readonly List<IntPoint> _spawns;
         private int _bornAt;
         private int _nextTaunt;
         private int _nextPopulation;
@@ -515,9 +515,9 @@ namespace RotMG.Game
         {
             _world = world;
             _bornAt = Manager.TotalTime;
-            _spawn = _world.Map.Regions.TryGetValue(Region.Spawn, out List<IntPoint> spawns) && spawns.Count > 0
-                ? spawns[0]
-                : new IntPoint(_world.Width / 2, _world.Height / 2);
+            _spawns = _world.Map.Regions.TryGetValue(Region.Spawn, out List<IntPoint> spawns) && spawns.Count > 0
+                ? new List<IntPoint>(spawns)
+                : new List<IntPoint>() { new IntPoint(_world.Width / 2, _world.Height / 2) };
             SeedPopulation();
             _nextTaunt = _bornAt + TauntIntervalMS;
             _nextPopulation = _bornAt + PopulationIntervalMS;
@@ -665,9 +665,7 @@ namespace RotMG.Game
                 return TerrainType.None;
             if (!Resources.Type2Tile.TryGetValue(tile.Type, out TileDesc ground))
                 return TerrainType.None;
-            float dx = x - _spawn.X;
-            float dy = y - _spawn.Y;
-            return TerrainClassifier.GetTerrain(ground.Id, (float)Math.Sqrt(dx * dx + dy * dy));
+            return TerrainClassifier.GetTileTerrain(_world.Map, ground.Id, x, y, _spawns);
         }
 
         private void SeedPopulation()

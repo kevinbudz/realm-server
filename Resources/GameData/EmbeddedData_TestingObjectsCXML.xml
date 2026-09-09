@@ -83,7 +83,7 @@
 			<Damage>1</Damage>
 			<LifetimeMS>1800</LifetimeMS>
 			<ConditionEffect duration="20">Quiet</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="14">					
@@ -93,7 +93,7 @@
 			<Damage>1</Damage>
 			<LifetimeMS>1800</LifetimeMS>
 			<ConditionEffect duration="60">Weak</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>		
 
@@ -315,7 +315,7 @@
 			<Speed>80</Speed>
 			<LifetimeMS>3000</LifetimeMS>
 			<Size>140</Size>
-			
+			<MultiHit/>
 		</Projectile>
 
 			
@@ -351,7 +351,7 @@
 			<Speed>80</Speed>
 			<LifetimeMS>3000</LifetimeMS>
 			<Size>140</Size>
-			
+			<MultiHit/>
 		</Projectile>
 
 			
@@ -386,7 +386,7 @@
 			<Speed>80</Speed>
 			<LifetimeMS>2200</LifetimeMS>
 			<Size>60</Size>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">
 			<ObjectId>Blue Magic</ObjectId>
@@ -394,7 +394,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>110</Size>
-			
+			<MultiHit/>
 		</Projectile>		
 
 
@@ -435,7 +435,7 @@
 			<Speed>80</Speed>
 			<LifetimeMS>2200</LifetimeMS>
 			<Size>60</Size>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">
 			<ObjectId>Blue Magic</ObjectId>
@@ -443,7 +443,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>110</Size>
-			
+			<MultiHit/>
 		</Projectile>	
 
 
@@ -791,7 +791,7 @@
 			<Speed>80</Speed>
 			<LifetimeMS>3000</LifetimeMS>
 			<Size>120</Size>
-			
+			<MultiHit/>
 		</Projectile>
 	</Object>
 
@@ -847,7 +847,7 @@
 			<Speed>56</Speed>
 			<Damage>40</Damage>
 			<LifetimeMS>2600</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		<Projectile id="1">
 			<ObjectId>Green Blob</ObjectId>
@@ -855,7 +855,7 @@
 			<Damage>75</Damage>
 			<Size>185</Size>
 			<LifetimeMS>3000</LifetimeMS>
-			
+			<MultiHit/>
 			<ConditionEffect duration="5">Weak</ConditionEffect>
 		</Projectile>		
 
@@ -882,7 +882,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="3">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -907,7 +907,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="3">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -932,7 +932,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="3">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -957,7 +957,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="3">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -982,7 +982,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="3">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -1007,7 +1007,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="3">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -1032,7 +1032,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>880</LifetimeMS>
 			<ConditionEffect duration="3">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -1057,7 +1057,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>880</LifetimeMS>
 			<ConditionEffect duration="3">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -1082,7 +1082,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>880</LifetimeMS>
 			<ConditionEffect duration="3">Slowed</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -1271,7 +1271,7 @@
 			<Size>65</Size>
 			<LifetimeMS>1500</LifetimeMS>
 			<ConditionEffect duration="6">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>						
 		<Projectile id="2">
 			<ObjectId>Purple Star</ObjectId>
@@ -1279,7 +1279,7 @@
 			<Damage>110</Damage>
 			<Size>90</Size>
 			<LifetimeMS>1700</LifetimeMS>
-			
+			<MultiHit/>
 			<ConditionEffect duration="1.0">Confused</ConditionEffect>
 		</Projectile>
 		<Projectile id="3">
@@ -1288,7 +1288,7 @@
 			<Damage>120</Damage>
 			<Size>100</Size>
 			<LifetimeMS>1700</LifetimeMS>
-			
+			<MultiHit/>
 			<ConditionEffect duration="8">Slowed</ConditionEffect>
 		</Projectile>		
 		<Projectile id="5">
@@ -1297,7 +1297,7 @@
 			<Damage>140</Damage>
 			<Size>130</Size>
 			<LifetimeMS>2400</LifetimeMS>
-					
+			<MultiHit/>		
 		</Projectile>		
 		
 		
@@ -1334,7 +1334,7 @@
 			<Damage>85</Damage>
 			<Size>65</Size>
 			<LifetimeMS>1500</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>							
 
 					
@@ -1366,7 +1366,7 @@
 			<Size>90</Size>
 			<LifetimeMS>2000</LifetimeMS>
 			<ConditionEffect duration="2">Weak</ConditionEffect>
-			
+			<MultiHit/>
 		</Projectile>
 
 	</Object>

@@ -16,6 +16,8 @@ namespace RotMG.Game
         public int UpdateCount;
         public ushort Type;
         public Region Region;
+        public TerrainType Terrain;
+        public byte Elevation;
         public StaticObject StaticObject;
         public bool BlocksSight;
     }
@@ -39,7 +41,7 @@ namespace RotMG.Game
         public List<string> ChatMessages;
 
         public Tile[,] Tiles;
-        public JSMap Map;
+        public IGameMap Map;
 
         public int Width;
         public int Height;
@@ -57,7 +59,7 @@ namespace RotMG.Game
         private readonly HashSet<Chunk> _activeChunks;
         private readonly HashSet<Entity> _activeEntities;
 
-        public World(JSMap map, WorldDesc desc)
+        public World(IGameMap map, WorldDesc desc)
             : this(map, desc.Id, desc.DisplayName, desc.Background)
         {
             ShowDisplays = desc.ShowDisplays;
@@ -66,7 +68,7 @@ namespace RotMG.Game
         }
 
         //Generated dungeons bypass WorldDesc (see Game/Dungeons).
-        protected World(JSMap map, string name, string displayName, int background)
+        protected World(IGameMap map, string name, string displayName, int background)
         {
             Map = map;
             Width = map.Width;
@@ -99,17 +101,20 @@ namespace RotMG.Game
             for (int x = 0; x < Width; x++)
                 for (int y = 0; y < Height; y++)
                 {
-                    JSTile js = map.Tiles[x, y];
                     Tile tile = Tiles[x, y] = new Tile()
                     {
-                        Type = js.GroundType,
-                        Region = js.Region,
+                        Type = map.GetGroundType(x, y),
+                        Region = map.GetRegion(x, y),
+                        Terrain = map.GetTerrain(x, y),
+                        Elevation = map.GetElevation(x, y),
                         UpdateCount = int.MaxValue / 2
                     };
 
-                    if (js.ObjectType != 0xff)
+                    ushort objType = map.GetObjectType(x, y);
+                    if (objType != 0xff)
                     {
-                        Entity entity = Entity.Resolve(js.ObjectType);
+                        Entity entity = Entity.Resolve(objType);
+                        Wmap.ApplyObjCfg(entity, map.GetObjCfg(x, y));
                         if (entity is StaticObject staticObject)
                         {
                             if (entity.Desc.BlocksSight)

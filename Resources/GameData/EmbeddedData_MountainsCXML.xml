@@ -23,6 +23,7 @@
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>60</Size>
 			<ArmorPiercing/>
+			<MultiHit/>
 		</Projectile>
 
 	</Object>
@@ -52,6 +53,7 @@
 			<Speed>60</Speed>
 			<LifetimeMS>2400</LifetimeMS>
 			<ConditionEffect duration="10">Quiet</ConditionEffect>
+			<MultiHit/>
 			<ParticleTrail/>
 		</Projectile>
 
@@ -114,6 +116,7 @@
 			<Damage>70</Damage>
 			<Speed>80</Speed>
 			<LifetimeMS>2000</LifetimeMS>
+			<MultiHit/>
 		</Projectile>
 
 	</Object>
@@ -247,6 +250,7 @@
 			<Damage>80</Damage>
 			<Size>80</Size>
 			<LifetimeMS>2000</LifetimeMS>
+			<MultiHit/>
 		</Projectile>		
 
 			
@@ -283,6 +287,7 @@
 			<Damage>50</Damage>
 			<Size>50</Size>
 			<LifetimeMS>4000</LifetimeMS>
+			<MultiHit/>
 		</Projectile>		
 
 			
@@ -319,6 +324,7 @@
 			<Damage>50</Damage>
 			<Size>50</Size>
 			<LifetimeMS>4000</LifetimeMS>
+			<MultiHit/>
 		</Projectile>		
 
 			
@@ -359,6 +365,7 @@
 			<Speed>60</Speed>
 			<Size>60</Size>
 			<LifetimeMS>1500</LifetimeMS>
+			<MultiHit/>
 		</Projectile>
 		
 					

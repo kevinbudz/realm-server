@@ -56,12 +56,12 @@ namespace RotMG.Game
         public string Key;
     }
 
-    public class JSMap
+    public class JSMap : IGameMap
     {
         public JSTile[,] Tiles;
-        public int Width;
-        public int Height;
-        public Dictionary<Region, List<IntPoint>> Regions;
+        public int Width { get; private set; }
+        public int Height { get; private set; }
+        public Dictionary<Region, List<IntPoint>> Regions { get; private set; }
 
         //Blank map for generated dungeons (see Game/Dungeons).
         public JSMap(int width, int height)
@@ -169,6 +169,15 @@ namespace RotMG.Game
                     Regions[tile.Region].Add(new IntPoint(x, y));
                 }
         }
+
+        //IGameMap: the .jm format has no painted terrain/elevation channel.
+        public ushort GetGroundType(int x, int y) => Tiles[x, y].GroundType;
+        public ushort GetObjectType(int x, int y) => Tiles[x, y].ObjectType;
+        public Region GetRegion(int x, int y) => Tiles[x, y].Region;
+        public string GetObjCfg(int x, int y) => null;
+        public TerrainType GetTerrain(int x, int y) => TerrainType.None;
+        public byte GetElevation(int x, int y) => 0;
+        public bool HasPaintedTerrain => false;
 
         private struct json_dat
         {

@@ -21,7 +21,7 @@
 			<Damage>52</Damage>
 			<Speed>70</Speed>
 			<LifetimeMS>1200</LifetimeMS>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="1">
@@ -30,7 +30,7 @@
 			<Speed>90</Speed>
 			<Size>100</Size>
 			<LifetimeMS>430</LifetimeMS>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="2">
@@ -39,7 +39,7 @@
 			<Speed>90</Speed>
 			<Size>100</Size>
 			<LifetimeMS>430</LifetimeMS>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>			
 		
@@ -134,7 +134,7 @@
 			<Damage>29</Damage>
 			<Size>105</Size>
 			<LifetimeMS>500</LifetimeMS>
-			
+			<MultiHit/>
 			<Amplitude>0.6</Amplitude>
 			<Frequency>0.5</Frequency>	
 		</Projectile>		
@@ -171,7 +171,7 @@
 			<Damage>29</Damage>
 			<Size>100</Size>
 			<LifetimeMS>500</LifetimeMS>
-			
+			<MultiHit/>
 			<Amplitude>0.3</Amplitude>
 			<Frequency>0.5</Frequency>	
 		</Projectile>		
@@ -247,7 +247,7 @@
 			<Damage>29</Damage>
 			<Speed>50</Speed>
 			<LifetimeMS>2400</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 
 
@@ -346,7 +346,7 @@
 			<Damage>40</Damage>
 			<Size>30</Size>
 			<LifetimeMS>3000</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>		
 
 			
@@ -384,7 +384,7 @@
 			<Damage>40</Damage>
 			<Size>30</Size>
 			<LifetimeMS>700</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>		
 
 			
@@ -419,7 +419,7 @@
 			<Damage>40</Damage>
 			<Size>30</Size>
 			<LifetimeMS>700</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>		
 
 			
@@ -461,7 +461,7 @@
 			<Damage>48</Damage>
 			<Size>80</Size>
 			<LifetimeMS>1500</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 		
 		
@@ -490,7 +490,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="6">Weak</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="2">
@@ -500,7 +500,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="2">Blind</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="3">
@@ -510,7 +510,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="2.4">Armor Broken</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>		
 		
@@ -537,7 +537,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="6">Weak</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="2">
@@ -547,7 +547,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="2">Blind</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="3">
@@ -557,7 +557,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>1450</LifetimeMS>
 			<ConditionEffect duration="2.4">Armor Broken</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>		
 		
@@ -584,7 +584,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>370</LifetimeMS>
 			<ConditionEffect duration="6">Weak</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="2">
@@ -594,7 +594,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>370</LifetimeMS>
 			<ConditionEffect duration="2">Blind</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="3">
@@ -604,7 +604,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>370</LifetimeMS>
 			<ConditionEffect duration="2.4">Armor Broken</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>		
 		
@@ -631,7 +631,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>370</LifetimeMS>
 			<ConditionEffect duration="6">Weak</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="2">
@@ -641,7 +641,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>370</LifetimeMS>
 			<ConditionEffect duration="2">Blind</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>
 		<Projectile id="3">
@@ -651,7 +651,7 @@
 			<Speed>70</Speed>
 			<LifetimeMS>370</LifetimeMS>
 			<ConditionEffect duration="2.4">Armor Broken</ConditionEffect>
-			
+			<MultiHit/>
 			<PassesCover/>
 		</Projectile>		
 		
@@ -805,7 +805,7 @@
 			<Damage>40</Damage>
 			<Speed>60</Speed>
 			<LifetimeMS>2000</LifetimeMS>
-			
+			<MultiHit/>
 		</Projectile>
 	</Object>
 	<Object type="0x64d" id="Night Elf Veteran">
@@ -825,7 +825,7 @@
 			<Speed>80</Speed>
 			<LifetimeMS>2000</LifetimeMS>
 			<Size>120</Size>
-			
+			<MultiHit/>
 		</Projectile>
 	</Object>
 	<Object type="0x64f" id="Night Elf King">
