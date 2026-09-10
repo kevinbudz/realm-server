@@ -88,6 +88,7 @@ namespace RotMG.Networking
         public const int PrefixLength = 5;
         public const int PrefixLengthWithId = PrefixLength - 1;
         public const int AddBackMinDelay = 10000;
+        public const byte MaxClientsPerIp = 4;
 
         private static bool _terminating;
         private static Socket _listener;
@@ -173,7 +174,7 @@ namespace RotMG.Networking
                         _connected[ip] = 1;
                     else
                     {
-                        if (_connected[ip] >= Settings.MaxClientsPerIp)
+                        if (_connected[ip] == MaxClientsPerIp)
                         {
 #if DEBUG
                             Program.Print(PrintType.Warn, $"Too many clients connected, disconnecting <{skt.RemoteEndPoint}>");

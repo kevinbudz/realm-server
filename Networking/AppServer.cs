@@ -64,9 +64,6 @@ namespace RotMG.Networking
                         case "/account/register":
                             buffer = Register(context, query);
                             break;
-                        case "/perf":
-                            buffer = Perf();
-                            break;
                         case "/fame/list":
                             buffer = FameList(context, query);
                             break;

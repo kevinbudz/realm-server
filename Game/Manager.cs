@@ -491,7 +491,6 @@ namespace RotMG.Game
                 TickDelta = (int)(TickWatch.ElapsedMilliseconds - LastTickTime);
                 TotalTime += Settings.MillisecondsPerTick;
                 TotalTicks++;
-                ServerPerf.EndTick(TickDelta);
             }
         }
     }

@@ -38,11 +38,8 @@ namespace RotMG.Common
         private const int MaxInvalidLoginAttempts = 5;
         private static Dictionary<string, byte> InvalidLoginAttempts;
 
-        //Reverted to the original shared-run value (1) after local bot
-        //seeding finished. int (not byte) so the comparison is meaningful
-        //for any future lift.
         private const int MaxRegisteredAccounts = 1;
-        private static Dictionary<string, int> RegisteredAccounts;
+        private static Dictionary<string, byte> RegisteredAccounts;
 
         private const int ResetCooldown = 60000 * 5; //5 minutes
         private static int ResetTime;
@@ -67,7 +64,7 @@ namespace RotMG.Common
         public static void Init()
         {
             InvalidLoginAttempts = new Dictionary<string, byte>();
-            RegisteredAccounts = new Dictionary<string, int>();
+            RegisteredAccounts = new Dictionary<string, byte>();
             if (!string.IsNullOrWhiteSpace(Settings.DatabaseDirectory) && !Directory.Exists(Settings.DatabaseDirectory))
                 Directory.CreateDirectory(Settings.DatabaseDirectory);
 
@@ -590,7 +587,7 @@ namespace RotMG.Common
 
         public static bool CanRegisterAccount(string ip)
         {
-            if (RegisteredAccounts.TryGetValue(ip, out int attempts) && attempts >= MaxRegisteredAccounts)
+            if (RegisteredAccounts.TryGetValue(ip, out byte attempts) && attempts >= MaxRegisteredAccounts)
                 return false;
             return true;
         }

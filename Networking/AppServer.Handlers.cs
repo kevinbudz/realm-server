@@ -1,7 +1,5 @@
 ﻿using RotMG.Common;
-using RotMG.Game;
 using RotMG.Utils;
-using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Net;
 using System.Xml.Linq;
@@ -89,22 +87,6 @@ namespace RotMG.Networking
             _listenEvent.WaitOne(30000);
 
             return data;
-        }
-
-        //Diagnostics for the localhost stress harness (and any monitor):
-        //same snapshot as the in-game /perf chat command, served over HTTP.
-        //Runs on the main thread via PushWork because it walks live worlds.
-        private static byte[] Perf()
-        {
-            List<string> lines = null;
-            _listenEvent.Reset();
-            Program.PushWork(() =>
-            {
-                lines = ServerPerf.Summary();
-            }, () => _listenEvent.Set());
-            _listenEvent.WaitOne(30000);
-
-            return lines == null ? WriteError("Internal server error") : Write(string.Join("\n", lines));
         }
 
         private static byte[] FameList(HttpListenerContext context, NameValueCollection query)
