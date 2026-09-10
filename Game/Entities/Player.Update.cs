@@ -76,7 +76,7 @@ namespace RotMG.Game.Entities
         //Presence tier for far players (minimap/teleport): tracked world-wide
         //like realm-src, refreshed at a reduced rate. 5 tps / 4 ~= 1.25 Hz
         //dot movement, enough for the minimap while bounding NewTick fan-out.
-        private const int FarPlayerTickDivisor = 4;
+        private const int FarPlayerTickDivisor = 2;
         private int _newTickCount;
         //Ids of tracked players inside sight on the last SendUpdate. Rebuilt
         //there (pre-move) and read by SendNewTick (post-move); sub-tick
