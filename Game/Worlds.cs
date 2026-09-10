@@ -1,6 +1,7 @@
 ﻿using RotMG.Common;
 using RotMG.Networking;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace RotMG.Game
 {
@@ -122,5 +123,32 @@ namespace RotMG.Game
         public int Level;
 
         public GuildHallWorld(IGameMap map, WorldDesc desc) : base(map, desc) { }
+    }
+
+    //Oryx's Castle siege instance, mirroring realm-src-master
+    //wServer/realm/worlds/logic/Castle.cs. The reference ships two
+    //same-signature constructors (one defaulting playersEntering to 100,
+    //one forcing 0); this is a single constructor with an optional count
+    //instead. Small raids share one spawn tile, large raids fan out.
+    public class CastleWorld : World
+    {
+        public int PlayersEntering;
+
+        public CastleWorld(IGameMap map, WorldDesc desc, int playersEntering = 0) : base(map, desc)
+        {
+            PlayersEntering = playersEntering;
+        }
+
+        public override List<IntPoint> GetSpawnPoints()
+        {
+            List<IntPoint> all = base.GetSpawnPoints();
+            if (PlayersEntering < 20)
+                return all.Take(1).ToList();
+            else if (PlayersEntering < 40)
+                return all.Take(2).ToList();
+            else if (PlayersEntering < 60)
+                return all.Take(3).ToList();
+            return all;
+        }
     }
 }

@@ -540,9 +540,21 @@ namespace RotMG.Networking
                 client.Character = character;
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
-                client.Send(CreateSuccess(world.AddEntity(client.Player, world.GetRegion(Region.Spawn).ToPosition()), client.Character.Id));
+                client.Send(CreateSuccess(world.AddEntity(client.Player, PickSpawnPosition(world)), client.Character.Id));
                 (world as RealmWorld)?.Overseer?.OnPlayerEntered(client.Player);
             }
+        }
+
+        //Join position from the world's spawn list, mirroring
+        //realm-src-master Player.Init (random entry of GetSpawnPoints).
+        //CastleWorld narrows that list by raid size so small raids share
+        //one tile and large raids fan out.
+        private static Position PickSpawnPosition(World world)
+        {
+            List<IntPoint> spawns = world.GetSpawnPoints();
+            if (spawns.Count > 0)
+                return spawns[MathUtils.Next(spawns.Count)].ToPosition();
+            return world.GetRegion(Region.Spawn).ToPosition();
         }
 
         public static void Load(Client client, PacketReader rdr)
@@ -569,7 +581,7 @@ namespace RotMG.Networking
                 client.Character = character;
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
-                client.Send(CreateSuccess(world.AddEntity(client.Player, world.GetRegion(Region.Spawn).ToPosition()), client.Character.Id));
+                client.Send(CreateSuccess(world.AddEntity(client.Player, PickSpawnPosition(world)), client.Character.Id));
                 (world as RealmWorld)?.Overseer?.OnPlayerEntered(client.Player);
             }
         }

@@ -17,6 +17,13 @@
 		<ShowDisplays>false</ShowDisplays>
 		<BlockSight>0</BlockSight>
 	</World>
+	<World id="Tutorial" display="Tutorial">
+		<Maps>Tutorial/Tutorial.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
 	<World id="Realm" display="Realm">
 		<Maps>Realm/0.wmap;Realm/1.wmap;Realm/2.wmap</Maps>
 		<Background>0</Background>

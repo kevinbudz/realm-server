@@ -720,6 +720,15 @@
     <None Update="Resources\Worlds\Vault\0.jm">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="Resources\Worlds\Tutorial\Kitchen.jm">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Resources\Worlds\Tutorial\Nexus.jm">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Resources\Worlds\Tutorial\Tutorial.jm">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="Resources\Worlds\Realm\0.wmap">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

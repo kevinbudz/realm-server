@@ -199,6 +199,16 @@ namespace RotMG.Game
             return Map.Regions[region][MathUtils.Next(Map.Regions[region].Count)];
         }
 
+        //Spawn tiles for joining players, mirroring realm-src-master
+        //wServer/realm/worlds/World.cs GetSpawnPoints (all Spawn tiles;
+        //CastleWorld narrows it by raid size).
+        public virtual List<IntPoint> GetSpawnPoints()
+        {
+            if (Map.Regions.TryGetValue(Region.Spawn, out List<IntPoint> spawns))
+                return new List<IntPoint>(spawns);
+            return new List<IntPoint>();
+        }
+
         public virtual bool AllowedAccess(Client client)
         {
             return true;

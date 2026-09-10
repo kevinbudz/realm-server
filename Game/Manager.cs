@@ -22,6 +22,7 @@ namespace RotMG.Game
         public const int GuildId = -3;
         public const int EditorId = -4;
         public const int VaultId = -5;
+        public const int TutorialId = -6;
 
         public static int NextWorldId;
         public static int NextClientId;
@@ -78,6 +79,10 @@ namespace RotMG.Game
             for (int i = 1; i < Settings.RealmInstances; i++)
                 RealmIds.Add(AddWorld(CreateWorld(Resources.Worlds["Realm"])));
             AddWorld(Resources.Worlds["Vault"], VaultId);
+            //Safe solo instance for /tutorial: Nexus tiles served under the
+            //"Tutorial" name so the client starts its scripted overlay.
+            //(Id -6 is the first free negative id; -1..-5 are taken.)
+            AddWorld(Resources.Worlds["Tutorial"], TutorialId);
 
             //Realm portals live on the map's Realm_Portals region (one per
             //tracked realm, so extra realms each get their own portal). The
@@ -99,6 +104,7 @@ namespace RotMG.Game
                 case "Realm": return new RealmWorld(map, desc);
                 case "Vault": return new VaultWorld(map, desc);
                 case "GuildHall": return new GuildHallWorld(map, desc);
+                case "Castle": return new CastleWorld(map, desc);
                 default: return new World(map, desc);
             }
         }
@@ -186,10 +192,19 @@ namespace RotMG.Game
         //entry; callers check Dungeons.DungeonWorld.IsSupported first.
         public static World GetDungeonWorld(Portal portal, WorldDesc desc)
         {
-            World world = new Dungeons.DungeonWorld(desc, Guid.NewGuid().GetHashCode());
-            AddWorld(world);
+            World world = CreateDungeonWorld(desc);
             portal.WorldInstance = world;
             PortalDungeons[portal.Id] = desc.Id;
+            return world;
+        }
+
+        //Portal-less dungeon instance for callers that move players into a
+        //dungeon without a portal (see /quake). Swept like any other dungeon
+        //once empty.
+        public static World CreateDungeonWorld(WorldDesc desc)
+        {
+            World world = new Dungeons.DungeonWorld(desc, Guid.NewGuid().GetHashCode());
+            AddWorld(world);
             return world;
         }
 
@@ -221,13 +236,13 @@ namespace RotMG.Game
 
         //Castle siege world for a quaking realm, mirroring the castle
         //spawn in realm-src-master wServer/realm/Oryx.cs SendToCastle.
-        //Castle.PlayersEntering fans out spawn points there; this
-        //codebase has no spawn fan-out, so playersEntering is kept for
-        //caller compatibility and unused. The "Castle" map file and
-        //Worlds.xml entry are added by hand.
+        //CastleWorld.PlayersEntering fans out spawn points there. The
+        //"Castle" map file and Worlds.xml entry are added by hand.
         public static World CreateCastleWorld(int playersEntering)
         {
             World world = CreateWorld(Resources.Worlds["Castle"]);
+            if (world is CastleWorld castle)
+                castle.PlayersEntering = playersEntering;
             AddWorld(world);
             return world;
         }
@@ -252,11 +267,14 @@ namespace RotMG.Game
             if (!_castleBuildsInFlight.Add(realm.Id))
                 return;
             realm.Closed = true;
+            int entering = realm.Players.Count;
             Task.Run(() =>
             {
                 try
                 {
                     World castle = CreateWorld(Resources.Worlds["Castle"]);
+                    if (castle is CastleWorld asyncCastle)
+                        asyncCastle.PlayersEntering = entering;
                     RunOnMainThread(() =>
                     {
                         _castleBuildsInFlight.Remove(realm.Id);
