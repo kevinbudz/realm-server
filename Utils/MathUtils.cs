@@ -13,6 +13,11 @@ namespace RotMG.Utils
         public const float ToDegrees = 180f / MathF.PI;
 
         private static Random _rnd = new Random();
+        //System.Random is not thread-safe, and world construction now
+        //runs on a worker thread (see AsyncWorldCreation) while behaviors
+        //draw on the main thread. One lock for all draws: uncontended in
+        //the common single-threaded case, correct in every case.
+        private static readonly object _rndLock = new object();
         private static RandomNumberGenerator _gen = RNGCryptoServiceProvider.Create();
         public static string GenerateSalt()
         {
@@ -39,7 +44,8 @@ namespace RotMG.Utils
 
         public static int Next(int length)
         {
-            return _rnd.Next(length);
+            lock (_rndLock)
+                return _rnd.Next(length);
         }
 
         public static int NextInt(int min = 0, int max = 1)
@@ -62,12 +68,14 @@ namespace RotMG.Utils
 
         public static float NextFloat(float min = 0, float max = 1)
         {
-            return (float)(_rnd.NextDouble() * (max - min) + min);
+            lock (_rndLock)
+                return (float)(_rnd.NextDouble() * (max - min) + min);
         }
 
         public static bool NextBool()
         {
-            return _rnd.Next(2) == 0;
+            lock (_rndLock)
+                return _rnd.Next(2) == 0;
         }
 
         public static float NextAngle()
@@ -77,7 +85,8 @@ namespace RotMG.Utils
 
         public static bool Chance(float chance)
         {
-            return _rnd.NextDouble() <= chance;
+            lock (_rndLock)
+                return _rnd.NextDouble() <= chance;
         }
 
         public static Position Position(float x, float y)
@@ -87,7 +96,8 @@ namespace RotMG.Utils
 
         public static int PlusMinus()
         {
-            return _rnd.Next(2) == 0 ? -1 : 1;
+            lock (_rndLock)
+                return _rnd.Next(2) == 0 ? -1 : 1;
         }
 
         public static float GetSpeed(this Entity entity, float spd)

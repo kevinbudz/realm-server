@@ -33,8 +33,8 @@ namespace RotMG.Game
                 for (int attempt = 0; attempt < spots.Count; attempt++)
                 {
                     IntPoint spot = spots[MathUtils.Next(spots.Count)];
-                    Tile tile = _nexus.GetTile(spot.X, spot.Y);
-                    if (tile == null || tile.StaticObject != null)
+                    Tile? tile = _nexus.GetTile(spot.X, spot.Y);
+                    if (tile == null || tile.Value.StaticObject != null)
                         continue;
                     x = spot.X;
                     y = spot.Y;
@@ -47,12 +47,12 @@ namespace RotMG.Game
         {
             if (TryGetPortalSpot(out int x, out int y))
             {
-                Tile tile = _nexus.GetTile(x, y);
+                //Indexed directly for the link: Tile is a struct (see World).
                 Portal portal = new Portal(Resources.Id2Object["Realm Portal"].Type) { WorldInstance = world };
-                if (tile != null && _nexus.AddEntity(portal, new Position(x + 0.5f, y + 0.5f)) != -1)
+                if (_nexus.GetTile(x, y) != null && _nexus.AddEntity(portal, new Position(x + 0.5f, y + 0.5f)) != -1)
                 {
-                    tile.StaticObject = portal;
-                    tile.UpdateCount++;
+                    _nexus.Tiles[x, y].StaticObject = portal;
+                    _nexus.Tiles[x, y].UpdateCount++;
                     _nexus.UpdateCount++;
                     return portal;
                 }
@@ -107,13 +107,19 @@ namespace RotMG.Game
 
         private void DestroyPortal(Portal portal)
         {
-            Tile tile = _nexus.GetTile((int)portal.Position.X, (int)portal.Position.Y);
+            //Read the link before RemoveEntity clears it; write through the
+            //indexer after (Tile is a struct, see World). Non-null GetTile
+            //proves (x, y) in-bounds for the writes below.
+            int x = (int)portal.Position.X;
+            int y = (int)portal.Position.Y;
+            Tile? tile = _nexus.GetTile(x, y);
+            bool linked = tile != null && tile.Value.StaticObject == portal;
             _nexus.RemoveEntity(portal);
-            if (tile != null && tile.StaticObject == portal)
+            if (linked)
             {
-                tile.StaticObject = null;
-                tile.BlocksSight = false;
-                tile.UpdateCount++;
+                _nexus.Tiles[x, y].StaticObject = null;
+                _nexus.Tiles[x, y].BlocksSight = false;
+                _nexus.Tiles[x, y].UpdateCount++;
                 _nexus.UpdateCount++;
             }
         }

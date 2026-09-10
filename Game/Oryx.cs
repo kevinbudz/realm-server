@@ -673,10 +673,10 @@ namespace RotMG.Game
 
         private TerrainType GetTileTerrain(int x, int y)
         {
-            Tile tile = _world.GetTile(x, y);
+            Tile? tile = _world.GetTile(x, y);
             if (tile == null)
                 return TerrainType.None;
-            if (!Resources.Type2Tile.TryGetValue(tile.Type, out TileDesc ground))
+            if (!Resources.Type2Tile.TryGetValue(tile.Value.Type, out TileDesc ground))
                 return TerrainType.None;
             return TerrainClassifier.GetTileTerrain(_world.Map, ground.Id, x, y, _spawns);
         }

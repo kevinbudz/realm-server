@@ -8,10 +8,16 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace RotMG.Game
 {
-    public class Tile
+    //Value type by design: a 2048x2048 world holds 4.2M of these, so a
+    //class costs millions of long-lived heap objects per world (plus a
+    //pointer chase on every tile touch). All mutations go through the
+    //Tiles array indexer below or the Update*/RemoveStatic helpers;
+    //never hold a copy in a local and write through it.
+    public struct Tile
     {
         public int UpdateCount;
         public ushort Type;
@@ -56,6 +62,9 @@ namespace RotMG.Game
         public string SBName;
 
         private const int SightChunkRadius = (Player.SightRadius + ChunkController.Size - 1) / ChunkController.Size;
+        //Player counts below this broadcast sequentially: waking the pool
+        //costs more than it saves for solo/small worlds. Tunable.
+        private const int ParallelBroadcastThreshold = 4;
         private readonly HashSet<Chunk> _activeChunks;
         private readonly HashSet<Entity> _activeEntities;
 
@@ -101,7 +110,10 @@ namespace RotMG.Game
             for (int x = 0; x < Width; x++)
                 for (int y = 0; y < Height; y++)
                 {
-                    Tile tile = Tiles[x, y] = new Tile()
+                    //Stored to the array first: Tile is a struct, so the
+                    //link below must write through the indexer, and
+                    //AddEntity's tile link must observe the array.
+                    Tiles[x, y] = new Tile()
                     {
                         Type = map.GetGroundType(x, y),
                         Region = map.GetRegion(x, y),
@@ -118,8 +130,8 @@ namespace RotMG.Game
                         if (entity is StaticObject staticObject)
                         {
                             if (entity.Desc.BlocksSight)
-                                tile.BlocksSight = true;
-                            tile.StaticObject = staticObject;
+                                Tiles[x, y].BlocksSight = true;
+                            Tiles[x, y].StaticObject = staticObject;
                         }
 
                         AddEntity(entity, new Position(x + 0.5f, y + 0.5f));
@@ -206,26 +218,56 @@ namespace RotMG.Game
         //blocks only when spawning).
         public bool IsPassable(int x, int y, bool spawning = false)
         {
-            Tile tile = GetTile(x, y);
+            Tile? tile = GetTile(x, y);
             if (tile == null)
                 return false;
-            if (Resources.Type2Tile.TryGetValue(tile.Type, out TileDesc ground) && ground.NoWalk)
+            if (Resources.Type2Tile.TryGetValue(tile.Value.Type, out TileDesc ground) && ground.NoWalk)
                 return false;
-            ObjectDesc blocking = tile.StaticObject?.Desc;
+            ObjectDesc blocking = tile.Value.StaticObject?.Desc;
             if (blocking != null && (blocking.FullOccupy || blocking.EnemyOccupySquare || (spawning && blocking.OccupySquare)))
                 return false;
             return true;
         }
 
+        //Chunk-routed proximity check: scans only the chunk neighborhood
+        //instead of all players, turning the per-entity idle gate from
+        //O(P) into O(local players). Decoy entries in PlayerChunks are
+        //skipped so semantics match the old Players.Values scan.
         public bool AnyPlayerNearby(double x, double y, double radius = 10)
         {
-            foreach (Player player in Players.Values)
+            Chunk[,] chunks = PlayerChunks?.Chunks;
+            if (chunks == null)
             {
-                double dx = player.Position.X - x;
-                double dy = player.Position.Y - y;
-                if (dx * dx + dy * dy < radius * radius)
-                    return true;
+                foreach (Player player in Players.Values)
+                {
+                    double ldx = player.Position.X - x;
+                    double ldy = player.Position.Y - y;
+                    if (ldx * ldx + ldy * ldy < radius * radius)
+                        return true;
+                }
+                return false;
             }
+
+            int size = ChunkController.Convert((float)radius);
+            int cx = ChunkController.Convert((float)x);
+            int cy = ChunkController.Convert((float)y);
+            int startX = Math.Max(0, cx - size);
+            int startY = Math.Max(0, cy - size);
+            int endX = Math.Min(chunks.GetLength(0) - 1, cx + size);
+            int endY = Math.Min(chunks.GetLength(1) - 1, cy + size);
+            double r2 = radius * radius;
+
+            for (int ix = startX; ix <= endX; ix++)
+                for (int iy = startY; iy <= endY; iy++)
+                    foreach (Entity en in chunks[ix, iy].Entities)
+                    {
+                        if (!(en is Player))
+                            continue;
+                        double dx = en.Position.X - x;
+                        double dy = en.Position.Y - y;
+                        if (dx * dx + dy * dy < r2)
+                            return true;
+                    }
             return false;
         }
 
@@ -263,14 +305,14 @@ namespace RotMG.Game
 
         public void UpdateTile(int x, int y, ushort type)
         {
-            Tile tile = GetTile(x, y);
-            if (tile != null)
-            {
-                tile.Type = type;
-                tile.UpdateCount++;
+            if (x < 0 || y < 0 || x >= Width || y >= Height)
+                return;
+            //Through the indexer: Tile is a struct, so a GetTile local
+            //would be a copy and writes to it would be lost.
+            Tiles[x, y].Type = type;
+            Tiles[x, y].UpdateCount++;
 
-                UpdateCount++;
-            }
+            UpdateCount++;
         }
 
         //public IntPoint CastLine(int x, int y, int x2, int y2)
@@ -322,47 +364,47 @@ namespace RotMG.Game
 
         public void UpdateStatic(int x, int y, ushort type)
         {
-            Tile tile = GetTile(x, y);
-            if (tile != null)
+            if (x < 0 || y < 0 || x >= Width || y >= Height)
+                return;
+            StaticObject prev = Tiles[x, y].StaticObject;
+            if (prev != null)
             {
-                if (tile.StaticObject != null)
-                {
-                    RemoveEntity(tile.StaticObject);
-                    tile.StaticObject = null;
-                }
-                tile.StaticObject = new StaticObject(type);
-                tile.BlocksSight = tile.StaticObject.Desc.BlocksSight;
-                tile.UpdateCount++;
-                AddEntity(tile.StaticObject, new Position(x + 0.5f, y + 0.5f));
+                RemoveEntity(prev);
+                Tiles[x, y].StaticObject = null;
+            }
+            StaticObject next = new StaticObject(type);
+            Tiles[x, y].StaticObject = next;
+            Tiles[x, y].BlocksSight = next.Desc.BlocksSight;
+            Tiles[x, y].UpdateCount++;
+            AddEntity(next, new Position(x + 0.5f, y + 0.5f));
+
+            UpdateCount++;
+        }
+
+        public void RemoveStatic(int x, int y)
+        {
+            if (x < 0 || y < 0 || x >= Width || y >= Height)
+                return;
+            StaticObject prev = Tiles[x, y].StaticObject;
+            if (prev != null)
+            {
+                RemoveEntity(prev);
+                Tiles[x, y].StaticObject = null;
+                Tiles[x, y].BlocksSight = false;
+                Tiles[x, y].UpdateCount++;
 
                 UpdateCount++;
             }
         }
 
-        public void RemoveStatic(int x, int y)
-        {
-            Tile tile = GetTile(x, y);
-            if (tile != null)
-            {
-                if (tile.StaticObject != null)
-                {
-                    RemoveEntity(tile.StaticObject);
-                    tile.StaticObject = null;
-                    tile.BlocksSight = false;
-                    tile.UpdateCount++;
-
-                    UpdateCount++;
-                }
-            }
-        }
-
         public bool BlocksSight(int x, int y)
         {
-            Tile tile = GetTile(x, y);
-            return tile == null || tile.BlocksSight;
+            if (x < 0 || y < 0 || x >= Width || y >= Height)
+                return true;
+            return Tiles[x, y].BlocksSight;
         }
 
-        public Tile GetTileF(float x, float y)
+        public Tile? GetTileF(float x, float y)
         {
             //NaN compares false against every bound, so check finiteness
             //first: otherwise (int)NaN indexes Tiles and AddEntity accepts
@@ -374,7 +416,7 @@ namespace RotMG.Game
             return Tiles[(int)x, (int)y];
         }
 
-        public Tile GetTile(int x, int y)
+        public Tile? GetTile(int x, int y)
         {
             if (x < 0 || y < 0 || x >= Width || y >= Height)
                 return null;
@@ -425,8 +467,7 @@ namespace RotMG.Game
                 throw new Exception("Entity has already been added.");
 #endif
 
-            Tile targetTile = GetTileF(at.X, at.Y);
-            if (targetTile == null)
+            if (GetTileF(at.X, at.Y) == null)
                 return -1;
 
             en.Id = ++NextObjectId;
@@ -440,10 +481,13 @@ namespace RotMG.Game
                 //Clients discover statics through their tile (see Player
                 //updates); without this link runtime-spawned portals and
                 //other statics stay invisible (mirrors PlacePortal).
-                if (targetTile.StaticObject == null)
+                //Indexed directly: Tile is a struct, so a GetTile local
+                //would be a copy and writes to it would be lost.
+                //GetTileF above already bounds-checked at.X/at.Y.
+                if (Tiles[(int)at.X, (int)at.Y].StaticObject == null)
                 {
-                    targetTile.StaticObject = staticObj;
-                    targetTile.UpdateCount++;
+                    Tiles[(int)at.X, (int)at.Y].StaticObject = staticObj;
+                    Tiles[(int)at.X, (int)at.Y].UpdateCount++;
                     UpdateCount++;
                 }
                 return en.Id;
@@ -490,11 +534,14 @@ namespace RotMG.Game
                 Statics.Remove(en.Id);
                 //Clear the tile link so removed statics (e.g. expired
                 //portals) disappear instead of lingering as ghosts.
-                Tile tile = GetTileF(en.Position.X, en.Position.Y);
-                if (tile != null && tile.StaticObject == staticObj)
+                //Indexed directly: Tile is a struct, so a GetTile local
+                //would be a copy and writes to it would be lost.
+                //GetTileF already bounds-checked this position.
+                Tile? tile = GetTileF(en.Position.X, en.Position.Y);
+                if (tile != null && tile.Value.StaticObject == staticObj)
                 {
-                    tile.StaticObject = null;
-                    tile.UpdateCount++;
+                    Tiles[(int)en.Position.X, (int)en.Position.Y].StaticObject = null;
+                    Tiles[(int)en.Position.X, (int)en.Position.Y].UpdateCount++;
                     UpdateCount++;
                 }
                 en.Dispose();
@@ -561,18 +608,28 @@ namespace RotMG.Game
             foreach (Chunk chunk in _activeChunks)
                 _activeEntities.UnionWith(chunk.Entities);
 
-            //Send Updates to players
-            foreach (Player player in Players.Values)
-                player.SendUpdate();
+            //Player broadcast parallelizes cleanly: each worker touches only
+            //its own player's mutable state while world state is read-only
+            //here (entity ticks run sequentially below). PacketWriter.Rent
+            //is per-thread, Client.Send is ConcurrentQueue-backed, and
+            //overflow disconnects are deferred to the main thread's Tick.
+            if (Players.Count >= ParallelBroadcastThreshold)
+                Parallel.ForEach(Players.Values, player => player.SendUpdate());
+            else
+                foreach (Player player in Players.Values)
+                    player.SendUpdate();
 
             //Tick logic first
             foreach (Entity en in _activeEntities) 
                 if (en.TickEntity())
                     en.Tick();
 
-            //Send NewTick to players
-            foreach (Player player in Players.Values)
-                player.SendNewTick();
+            //Send NewTick to players (same independence as SendUpdate above)
+            if (Players.Count >= ParallelBroadcastThreshold)
+                Parallel.ForEach(Players.Values, player => player.SendNewTick());
+            else
+                foreach (Player player in Players.Values)
+                    player.SendNewTick();
 
             //Clear new stats
             foreach (Entity en in _activeEntities)

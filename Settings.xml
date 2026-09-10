@@ -5,4 +5,6 @@
 	<Ports>7777:2050</Ports>
 	<TicksPerSecond>10</TicksPerSecond> 
 <!--Client & Server designed to run at 10TPS, changing that might result in laggy animations/movement-->
+<!--Soak-test flag (default false): build large worlds off the tick thread-->
+	<AsyncWorldCreation>false</AsyncWorldCreation>
 </Settings>

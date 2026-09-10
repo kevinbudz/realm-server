@@ -3,6 +3,7 @@ using RotMG.Game;
 using RotMG.Game.Entities;
 using RotMG.Utils;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -43,13 +44,22 @@ namespace RotMG.Networking
         private const int MaxPendingPackets = 256;
         private const int MaxPendingDisconnect = 1024;
         private Socket _socket;
-        private Queue<byte[]> _pending;
+        //Concurrent: parallel world broadcast enqueues from worker threads
+        //while StartSend dequeues on the main thread.
+        private ConcurrentQueue<byte[]> _pending;
+        //Packet that fit-checked but couldn't flush; only the main thread
+        //touches this (concurrent queues have no push-front).
+        private byte[] _held;
+        //Set by Send from any thread when the client stops draining; acted
+        //on in Tick. Disconnect itself stays main-thread-only: it touches
+        //Manager dicts, the DB and the socket.
+        private volatile bool _sendOverflow;
         private SendState _send;
         private ReceiveState _receive;
 
         public Client(SendState send, ReceiveState receive)
         {
-            _pending = new Queue<byte[]>();
+            _pending = new ConcurrentQueue<byte[]>();
             _send = send;
             _receive = receive;
         }
@@ -164,6 +174,13 @@ namespace RotMG.Networking
         {
             try
             {
+                if (_sendOverflow)
+                {
+                    _sendOverflow = false;
+                    Disconnect();
+                    return;
+                }
+
                 if (!_socket.Connected)
                 {
                     Disconnect();
@@ -194,7 +211,7 @@ namespace RotMG.Networking
             {
                 if (_pending.Count >= MaxPendingDisconnect)
                 {
-                    Disconnect(); //Client is not draining; drop it instead of growing without bound.
+                    _sendOverflow = true; //Client is not draining; Tick drops it instead of growing without bound.
                     return;
                 }
                 _pending.TryDequeue(out _); //Drop the stalest packet to make room for fresh state.
@@ -253,30 +270,41 @@ namespace RotMG.Networking
             //to a later tick instead of stalling the tick thread.
             if (_send.State == SocketEventState.Awaiting)
             {
-                if (_pending.Count == 0)
+                if (_held == null && _pending.IsEmpty)
                     return;
 
                 _send.EnsureBuffer();
                 byte[] buf = _send.Data;
                 int total = 0;
-                int queued = _pending.Count;
+                int queued = _pending.Count + (_held == null ? 0 : 1);
                 while (queued-- > 0)
                 {
-                    byte[] packet = _pending.Peek();
-                    int framed = packet.Length + GameServer.PrefixLengthWithId;
-                    if (total + framed > buf.Length)
+                    byte[] packet;
+                    if (_held != null)
+                    {
+                        packet = _held;
+                        _held = null;
+                    }
+                    else if (!_pending.TryDequeue(out packet))
+                        break;
+                    //Measured after the dequeue, so a concurrent overflow-drop
+                    //by a worker thread can never desync the framing.
+                    int length = packet.Length + GameServer.PrefixLengthWithId;
+                    if (total + length > buf.Length)
                     {
                         if (total == 0)
                         {
                             //Single packet larger than the pooled buffer: rent an
                             //exact-size buffer for this flush (returned on Reset).
-                            _send.Grow(framed);
+                            _send.Grow(length);
                             buf = _send.Data;
                         }
-                        else break;
+                        else
+                        {
+                            _held = packet;
+                            break;
+                        }
                     }
-                    _pending.Dequeue();
-                    int length = packet.Length + GameServer.PrefixLengthWithId;
                     buf[total] = (byte)(length >> 24);
                     buf[total + 1] = (byte)(length >> 16);
                     buf[total + 2] = (byte)(length >> 8);

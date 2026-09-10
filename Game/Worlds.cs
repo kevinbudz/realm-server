@@ -103,11 +103,11 @@ namespace RotMG.Game
                         new Entities.Vendors.ClosedVaultChest(vendorDesc.Type);
                     if (AddEntity(vendor, at) != -1)
                     {
-                        Tile tile = GetTile(spot.X, spot.Y);
-                        if (tile != null)
+                        //Indexed directly: Tile is a struct (see World).
+                        if (GetTile(spot.X, spot.Y) != null)
                         {
-                            tile.StaticObject = vendor;
-                            tile.UpdateCount++;
+                            Tiles[spot.X, spot.Y].StaticObject = vendor;
+                            Tiles[spot.X, spot.Y].UpdateCount++;
                             UpdateCount++;
                         }
                     }

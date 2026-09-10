@@ -257,7 +257,7 @@ namespace RotMG.Game.Entities
         {
             base.Init();
 
-            TileUpdates = new int[Parent.Width, Parent.Height];
+            TileUpdates = new Dictionary<long, int>(1024);
             EntityUpdates = new Dictionary<int, int>();
             Entities = new HashSet<Entity>();
             CalculatedSightCircle = new HashSet<IntPoint>();

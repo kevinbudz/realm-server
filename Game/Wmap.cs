@@ -7,7 +7,12 @@ using System.IO;
 
 namespace RotMG.Game
 {
-    public class WmapTile
+    //Value type by design: every .wmap map retains one of these per tile
+    //(4.2M in a 2048x2048 Realm, ~12.6M across the three template maps),
+    //so a class costs that many long-lived heap objects. Instances are
+    //fully assigned during load and read-only afterwards (see the getters
+    //below), which is exactly the safe shape for a struct.
+    public struct WmapTile
     {
         public ushort TileType;
         public ushort ObjType;

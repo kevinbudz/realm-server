@@ -18,6 +18,10 @@ namespace RotMG.Common
         public static int TicksPerSecond;
         public static int MillisecondsPerTick;
         public static float SecondsPerTick;
+        //Soak-test flag (default off): build large worlds (realm reset,
+        //castle siege) on a worker thread and publish on the main thread
+        //instead of stalling every tick for the full construction.
+        public static bool AsyncWorldCreation;
 
         public static void Init()
         {
@@ -47,6 +51,7 @@ namespace RotMG.Common
                 TicksPerSecond = data.ParseInt("TicksPerSecond", 5);
                 MillisecondsPerTick = 1000 / TicksPerSecond;
                 SecondsPerTick = 1f / TicksPerSecond;
+                AsyncWorldCreation = data.ParseBool("AsyncWorldCreation", false);
             }
         }
     }

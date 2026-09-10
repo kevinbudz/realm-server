@@ -78,11 +78,11 @@ namespace RotMG.Game.Setpieces
         // painted-first classifier as Oryx (see TerrainClassifier).
         private static TerrainType GetTerrainAt(World world, List<IntPoint> spawns, int x, int y)
         {
-            Tile tile = world.GetTile(x, y);
+            Tile? tile = world.GetTile(x, y);
             if (tile == null)
                 return TerrainType.None;
             TileDesc ground;
-            if (!Resources.Type2Tile.TryGetValue(tile.Type, out ground))
+            if (!Resources.Type2Tile.TryGetValue(tile.Value.Type, out ground))
                 return TerrainType.None;
             return TerrainClassifier.GetTileTerrain(world.Map, ground.Id, x, y, spawns);
         }
@@ -168,24 +168,26 @@ namespace RotMG.Game.Setpieces
                 {
                     int wx = pos.X + x;
                     int wy = pos.Y + y;
-                    Tile tile = world.GetTile(wx, wy);
-                    if (tile == null)
+                    //Indexed directly throughout: Tile is a struct, so a
+                    //GetTile local would be a copy and writes to it would
+                    //be lost. The null check above proves (wx, wy) in-bounds.
+                    if (world.GetTile(wx, wy) == null)
                         continue;
                     JSTile src = map.Tiles[x, y];
                     if (src.GroundType == 255)
                         continue;
                     world.RemoveStatic(wx, wy);
-                    tile.Type = src.GroundType;
-                    tile.UpdateCount++;
+                    world.Tiles[wx, wy].Type = src.GroundType;
+                    world.Tiles[wx, wy].UpdateCount++;
                     world.UpdateCount++;
                     if (src.Region != Region.None)
                     {
-                        tile.Region = src.Region;
+                        world.Tiles[wx, wy].Region = src.Region;
                         List<IntPoint> list;
                         if (!world.Map.Regions.TryGetValue(src.Region, out list))
                             world.Map.Regions[src.Region] = list = new List<IntPoint>();
                         list.Add(new IntPoint(wx, wy));
-                        tile.UpdateCount++;
+                        world.Tiles[wx, wy].UpdateCount++;
                         world.UpdateCount++;
                     }
                     if (src.ObjectType == 0xff)
@@ -200,10 +202,10 @@ namespace RotMG.Game.Setpieces
                         continue;
                     if (entity is Entities.StaticObject staticObject)
                     {
-                        tile.StaticObject = staticObject;
+                        world.Tiles[wx, wy].StaticObject = staticObject;
                         if (entity.Desc.BlocksSight)
-                            tile.BlocksSight = true;
-                        tile.UpdateCount++;
+                            world.Tiles[wx, wy].BlocksSight = true;
+                        world.Tiles[wx, wy].UpdateCount++;
                         world.UpdateCount++;
                     }
                 }
@@ -273,13 +275,13 @@ namespace RotMG.Game.Setpieces
 
         public static bool PutGround(World world, int x, int y, string groundName)
         {
-            Tile tile = world.GetTile(x, y);
             TileDesc desc;
-            if (tile == null || !Resources.Id2Tile.TryGetValue(groundName, out desc))
+            //Indexed directly: Tile is a struct (see RenderSubMap note).
+            if (world.GetTile(x, y) == null || !Resources.Id2Tile.TryGetValue(groundName, out desc))
                 return false;
             world.RemoveStatic(x, y);
-            tile.Type = desc.Type;
-            tile.UpdateCount++;
+            world.Tiles[x, y].Type = desc.Type;
+            world.Tiles[x, y].UpdateCount++;
             world.UpdateCount++;
             return true;
         }
@@ -294,9 +296,9 @@ namespace RotMG.Game.Setpieces
 
         public static Entity PutStatic(World world, int x, int y, string objName)
         {
-            Tile tile = world.GetTile(x, y);
             ObjectDesc desc;
-            if (tile == null || !Resources.Id2Object.TryGetValue(objName, out desc))
+            //Indexed directly: Tile is a struct (see RenderSubMap note).
+            if (world.GetTile(x, y) == null || !Resources.Id2Object.TryGetValue(objName, out desc))
                 return null;
             world.RemoveStatic(x, y);
             Entity entity = Entity.Resolve(desc.Type);
@@ -304,10 +306,10 @@ namespace RotMG.Game.Setpieces
                 return null;
             if (entity is Entities.StaticObject staticObject)
             {
-                tile.StaticObject = staticObject;
+                world.Tiles[x, y].StaticObject = staticObject;
                 if (entity.Desc.BlocksSight)
-                    tile.BlocksSight = true;
-                tile.UpdateCount++;
+                    world.Tiles[x, y].BlocksSight = true;
+                world.Tiles[x, y].UpdateCount++;
                 world.UpdateCount++;
             }
             return entity;

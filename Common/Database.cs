@@ -421,11 +421,22 @@ namespace RotMG.Common
             }
         }
 
+        //Serializes every connected player first (pure in-memory work),
+        //then commits all rows in ONE transaction. Per-player commits cost
+        //one fsync each, so the old loop stalled the tick thread for N
+        //sequential transactions every 60s. Crash semantics are unchanged
+        //(everything is durable once the single commit returns), and a
+        //per-player failure only drops that player from the batch.
         private static void AutosaveConnectedPlayers()
         {
             Client[] snapshot;
             try { snapshot = Manager.Clients.Values.ToArray(); }
             catch { return; }
+            Dictionary<string, string> writes = new Dictionary<string, string>(snapshot.Length * 2);
+            List<AccountModel> accs = new List<AccountModel>(snapshot.Length);
+            List<CharacterModel> chs = new List<CharacterModel>(snapshot.Length);
+            List<string> accXml = new List<string>(snapshot.Length);
+            List<string> chXml = new List<string>(snapshot.Length);
             foreach (Client client in snapshot)
             {
                 try
@@ -434,10 +445,39 @@ namespace RotMG.Common
                         continue;
                     if (client.Player != null && client.Player.Parent != null)
                         client.Player.SaveToCharacter();
+                    string a = client.Account.Export(false).ToString();
                     if (client.Character.Dead)
-                        client.Account.Save();
+                    {
+                        writes[AccountKey(client.Account.Id)] = a;
+                        accs.Add(client.Account);
+                        chs.Add(null);
+                        accXml.Add(a);
+                        chXml.Add(null);
+                    }
                     else
-                        SaveAccountAndCharacter(client.Account, client.Character);
+                    {
+                        string c = client.Character.Export(false).ToString();
+                        writes[AccountKey(client.Account.Id)] = a;
+                        writes[CharacterKey(client.Account.Id, client.Character.Id)] = c;
+                        accs.Add(client.Account);
+                        chs.Add(client.Character);
+                        accXml.Add(a);
+                        chXml.Add(c);
+                    }
+                }
+                catch { }
+            }
+            if (writes.Count == 0)
+                return;
+            try { WriteAtomically(writes); }
+            catch { return; }
+            for (int i = 0; i < accs.Count; i++)
+            {
+                try
+                {
+                    accs[i].Data = XElement.Parse(accXml[i]);
+                    if (chs[i] != null)
+                        chs[i].Data = XElement.Parse(chXml[i]);
                 }
                 catch { }
             }

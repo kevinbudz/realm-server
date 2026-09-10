@@ -69,6 +69,11 @@ namespace RotMG.Game.Entities
         private int _suspicion;
         private int _suspicionWindowStart;
         private readonly HashSet<int> _contactBullets = new HashSet<int>();
+        //Reused VerifyProjectiles snapshots: iterating a scratch copy keeps
+        //the exact remove-during-scan semantics of ToArray with no per-call
+        //allocation (VerifyProjectiles runs on every Move packet).
+        private readonly List<KeyValuePair<int, Projectile>> _shotVerifyScratch = new List<KeyValuePair<int, Projectile>>();
+        private readonly List<KeyValuePair<int, ProjectileAck>> _ackVerifyScratch = new List<KeyValuePair<int, ProjectileAck>>();
 
         public Queue<List<Projectile>> AwaitingProjectiles;
         public Dictionary<int, ProjectileAck> AckedProjectiles;
@@ -117,7 +122,9 @@ namespace RotMG.Game.Entities
             //so standing players would otherwise accumulate acked bullets.
             //Conservative bound mixes server/client clocks the same way the
             //awaiting check above does; no damage is ever dealt here.
-            foreach (KeyValuePair<int, ProjectileAck> p in AckedProjectiles.ToArray())
+            _ackVerifyScratch.Clear();
+            _ackVerifyScratch.AddRange(AckedProjectiles);
+            foreach (KeyValuePair<int, ProjectileAck> p in _ackVerifyScratch)
             {
                 Projectile projectile = p.Value.Projectile;
                 if (projectile?.Desc == null)
@@ -209,10 +216,10 @@ namespace RotMG.Game.Entities
                     }
                     else //Check collisions to make sure player isn't shooting through walls etc
                     {
-                        Tile tile = Parent.GetTileF(pos.X, pos.Y);
+                        Tile? tile = Parent.GetTileF(pos.X, pos.Y);
 
-                        if ((tile == null || tile.Type == 255) ||
-                            (tile.StaticObject != null && !tile.StaticObject.Desc.Enemy && (tile.StaticObject.Desc.EnemyOccupySquare || !p.Desc.PassesCover && tile.StaticObject.Desc.OccupySquare)))
+                        if ((tile == null || tile.Value.Type == 255) ||
+                            (tile.Value.StaticObject != null && !tile.Value.StaticObject.Desc.Enemy && (tile.Value.StaticObject.Desc.EnemyOccupySquare || !p.Desc.PassesCover && tile.Value.StaticObject.Desc.OccupySquare)))
                         {
 #if DEBUG
                             Program.Print(PrintType.Error, "Shot projectile hit wall, removed");
@@ -384,7 +391,9 @@ namespace RotMG.Game.Entities
             if (Parent == null)
                 return;
 
-            foreach (KeyValuePair<int, Projectile> p in ShotProjectiles.ToArray())
+            _shotVerifyScratch.Clear();
+            _shotVerifyScratch.AddRange(ShotProjectiles);
+            foreach (KeyValuePair<int, Projectile> p in _shotVerifyScratch)
             {
                 int elapsed = time - p.Value.Time;
                 if (elapsed > p.Value.Desc.LifetimeMS)
@@ -402,7 +411,9 @@ namespace RotMG.Game.Entities
                 HasConditionEffect(ConditionEffectIndex.Stasis))
                 return;
 
-            foreach (KeyValuePair<int, ProjectileAck> p in AckedProjectiles.ToArray())
+            _ackVerifyScratch.Clear();
+            _ackVerifyScratch.AddRange(AckedProjectiles);
+            foreach (KeyValuePair<int, ProjectileAck> p in _ackVerifyScratch)
             {
                 Projectile projectile = p.Value.Projectile;
                 if (projectile?.Desc == null)
@@ -465,11 +476,11 @@ namespace RotMG.Game.Entities
             //Defensive: never dereference a nulled world or descriptor here.
             if (Parent == null || projectile?.Desc == null)
                 return true;
-            Tile tile = Parent.GetTileF(pos.X, pos.Y);
-            return (tile == null || tile.Type == 255) ||
-                (tile.StaticObject != null && !tile.StaticObject.Desc.Enemy &&
-                 (tile.StaticObject.Desc.EnemyOccupySquare ||
-                  (!projectile.Desc.PassesCover && tile.StaticObject.Desc.OccupySquare)));
+            Tile? tile = Parent.GetTileF(pos.X, pos.Y);
+            return (tile == null || tile.Value.Type == 255) ||
+                (tile.Value.StaticObject != null && !tile.Value.StaticObject.Desc.Enemy &&
+                 (tile.Value.StaticObject.Desc.EnemyOccupySquare ||
+                  (!projectile.Desc.PassesCover && tile.Value.StaticObject.Desc.OccupySquare)));
         }
 
         private static float SegmentDistSquared(Position a, Position b, Position p)
@@ -570,10 +581,10 @@ namespace RotMG.Game.Entities
             if (AckedProjectiles.TryGetValue(bulletId, out ProjectileAck ac))
             {
                 Position pos = ac.Projectile.PositionAt(time - ac.Time);
-                Tile tile = Parent.GetTileF(pos.X, pos.Y);
+                Tile? tile = Parent.GetTileF(pos.X, pos.Y);
 
-                if ((tile == null || tile.Type == 255 || TileUpdates[(int)pos.X, (int)pos.Y] != Parent.Tiles[(int)pos.X, (int)pos.Y].UpdateCount) ||
-                    (tile.StaticObject != null && (tile.StaticObject.Desc.EnemyOccupySquare || !ac.Projectile.Desc.PassesCover && tile.StaticObject.Desc.OccupySquare)))
+                if ((tile == null || tile.Value.Type == 255 || GetSeenTileUpdate((int)pos.X, (int)pos.Y) != tile.Value.UpdateCount) ||
+                    (tile.Value.StaticObject != null && (tile.Value.StaticObject.Desc.EnemyOccupySquare || !ac.Projectile.Desc.PassesCover && tile.Value.StaticObject.Desc.OccupySquare)))
                 {
                     AckedProjectiles.Remove(bulletId);
                     _contactBullets.Remove(bulletId);

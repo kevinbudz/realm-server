@@ -63,25 +63,37 @@ namespace RotMG.Game.Entities
             SightRays = sightRays.ToArray();
         }
 
-        public int[,] TileUpdates;
+        //Last tile UpdateCount sent to this client, keyed by packed tile
+        //coords. Only ~700 sight tiles are ever stored, instead of a
+        //W*H array (16 MiB per player in a 2048x2048 Realm).
+        public Dictionary<long, int> TileUpdates;
+        private static long TileKey(int x, int y) => ((long)x << 32) | (uint)y;
+        private int GetSeenTileUpdate(int x, int y) => TileUpdates.TryGetValue(TileKey(x, y), out int v) ? v : 0;
+        private void SetSeenTileUpdate(int x, int y, int v) => TileUpdates[TileKey(x, y)] = v;
         public Dictionary<int, int> EntityUpdates;
         public HashSet<Entity> Entities;
         public HashSet<IntPoint> CalculatedSightCircle;
         private readonly List<Entity> _hitTestScratch = new List<Entity>();
         private readonly List<Entity> _dropScratch = new List<Entity>();
+        //Reused per-tick packet buffers: Update/NewTick serialize
+        //synchronously, so these never escape the call.
+        private readonly List<ObjectStatus> _statusScratch = new List<ObjectStatus>();
+        private readonly List<TileData> _tilesScratch = new List<TileData>();
+        private readonly List<ObjectDefinition> _addsScratch = new List<ObjectDefinition>();
+        private readonly List<ObjectDrop> _dropsScratch = new List<ObjectDrop>();
 
         public void SendNewTick()
         {
             HandleQuest();
-            List<ObjectStatus> statuses = new List<ObjectStatus>();
+            _statusScratch.Clear();
             foreach (Entity en in Entities)
                 if (EntityUpdates[en.Id] != en.UpdateCount)
                 {
-                    statuses.Add(en.GetObjectStatus(true));
+                    _statusScratch.Add(en.GetObjectStatus(true));
                     EntityUpdates[en.Id] = en.UpdateCount;
                 }
 
-            Client.Send(GameServer.NewTick(statuses, PrivateSVs));
+            Client.Send(GameServer.NewTick(_statusScratch, PrivateSVs));
             PrivateSVs.Clear();
             AwaitingMoves++;
         }
@@ -92,54 +104,42 @@ namespace RotMG.Game.Entities
             HashSet<IntPoint> sight = Parent.BlockSight == 0 ? SightCircle :
                     nUpdate ? CalculateSightCircle() : CalculatedSightCircle;
 
-            List<TileData> tiles = null;
-            List<ObjectDefinition> adds = null;
-            List<ObjectDrop> drops = null;
-            HashSet<int> droppedIds = null;
+            _tilesScratch.Clear();
+            _addsScratch.Clear();
+            _dropsScratch.Clear();
 
             if (nUpdate)
             {
-                //Get tiles
+                //Tiles and statics in one pass (one GetTile per sight
+                //point instead of two). The old second loop re-checked
+                //seen == UpdateCount after the first loop had synced every
+                //dirty tile, so its condition was always true: every
+                //in-sight static is covered below.
                 foreach (IntPoint p in sight)
                 {
                     int x = p.X + (int)Position.X;
                     int y = p.Y + (int)Position.Y;
-                    Tile tile = Parent.GetTile(x, y);
+                    Tile? tile = Parent.GetTile(x, y);
 
-                    if (tile == null || TileUpdates[x, y] == tile.UpdateCount)
+                    if (tile == null)
                         continue;
 
-                    if (tiles == null)
-                        tiles = new List<TileData>();
-                    tiles.Add(new TileData
+                    if (GetSeenTileUpdate(x, y) != tile.Value.UpdateCount)
                     {
-                        TileType = tile.Type,
-                        X = (short)x,
-                        Y = (short)y
-                    });
-
-                    TileUpdates[x, y] = tile.UpdateCount;
-                }
-
-                //Add statics
-                foreach (IntPoint p in sight)
-                {
-                    int x = p.X + (int)Position.X;
-                    int y = p.Y + (int)Position.Y;
-
-                    Tile tile = Parent.GetTile(x, y);
-                    if (tile == null || tile.StaticObject == null)
-                        continue;
-
-                    if (TileUpdates[x, y] == tile.UpdateCount)
-                    {
-                        if (Entities.Add(tile.StaticObject))
+                        _tilesScratch.Add(new TileData
                         {
-                            if (adds == null)
-                                adds = new List<ObjectDefinition>();
-                            adds.Add(tile.StaticObject.GetObjectDefinition());
-                            EntityUpdates.Add(tile.StaticObject.Id, tile.StaticObject.UpdateCount);
-                        }
+                            TileType = tile.Value.Type,
+                            X = (short)x,
+                            Y = (short)y
+                        });
+
+                        SetSeenTileUpdate(x, y, tile.Value.UpdateCount);
+                    }
+
+                    if (tile.Value.StaticObject != null && Entities.Add(tile.Value.StaticObject))
+                    {
+                        _addsScratch.Add(tile.Value.StaticObject.GetObjectDefinition());
+                        EntityUpdates.Add(tile.Value.StaticObject.Id, tile.Value.StaticObject.UpdateCount);
                     }
                 }
             }
@@ -155,9 +155,7 @@ namespace RotMG.Game.Entities
 
                 if (Entities.Add(en))
                 {
-                    if (adds == null)
-                        adds = new List<ObjectDefinition>();
-                    adds.Add(en.GetObjectDefinition());
+                    _addsScratch.Add(en.GetObjectDefinition());
                     EntityUpdates.Add(en.Id, en.UpdateCount);
                 }
             }
@@ -174,9 +172,7 @@ namespace RotMG.Game.Entities
                 int dy = (int)en.Position.Y - (int)Position.Y;
                 if (sight.Contains(new IntPoint(dx, dy)) && Entities.Add(en))
                 {
-                    if (adds == null)
-                        adds = new List<ObjectDefinition>();
-                    adds.Add(en.GetObjectDefinition());
+                    _addsScratch.Add(en.GetObjectDefinition());
                     EntityUpdates.Add(en.Id, en.UpdateCount);
                 }
             }
@@ -196,12 +192,7 @@ namespace RotMG.Game.Entities
                         continue;
                 }
 
-                if (drops == null)
-                    drops = new List<ObjectDrop>();
-                if (droppedIds == null)
-                    droppedIds = new HashSet<int>();
-                drops.Add(en.GetObjectDrop());
-                droppedIds.Add(en.Id);
+                _dropsScratch.Add(en.GetObjectDrop());
                 EntityUpdates.Remove(en.Id);
                 _dropScratch.Add(en);
             }
@@ -209,16 +200,10 @@ namespace RotMG.Game.Entities
             foreach (Entity en in _dropScratch)
                 Entities.Remove(en);
 
-            int tileCount = tiles == null ? 0 : tiles.Count;
-            int addCount = adds == null ? 0 : adds.Count;
-            int dropCount = drops == null ? 0 : drops.Count;
-            if (tileCount > 0 || addCount > 0 || dropCount > 0)
+            if (_tilesScratch.Count > 0 || _addsScratch.Count > 0 || _dropsScratch.Count > 0)
             {
-                Client.Send(GameServer.Update(
-                    tiles == null ? new List<TileData>() : tiles,
-                    adds == null ? new List<ObjectDefinition>() : adds,
-                    drops == null ? new List<ObjectDrop>() : drops));
-                FameStats.TilesUncovered += tileCount;
+                Client.Send(GameServer.Update(_tilesScratch, _addsScratch, _dropsScratch));
+                FameStats.TilesUncovered += _tilesScratch.Count;
             }
         }
 

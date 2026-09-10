@@ -4,12 +4,14 @@ using RotMG.Game.Logic;
 using RotMG.Networking;
 using RotMG.Utils;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace RotMG.Game
 {
@@ -32,6 +34,17 @@ namespace RotMG.Game
         public static SortedDictionary<int, Queue<Action>> Timers;
         private static readonly List<Client> ClientSnapshot = new List<Client>();
         private static readonly List<World> WorldSnapshot = new List<World>();
+        //Main-thread work queue: worker-built worlds are published through
+        //here so Worlds dict mutation stays single-threaded. Drained in Tick.
+        private static readonly ConcurrentQueue<Action> MainThreadQueue = new ConcurrentQueue<Action>();
+        private static bool _realmResetInFlight;
+        private static readonly HashSet<int> _castleBuildsInFlight = new HashSet<int>();
+
+        public static void RunOnMainThread(Action action)
+        {
+            if (action != null)
+                MainThreadQueue.Enqueue(action);
+        }
         public static BehaviorDb Behaviors;
         public static Stopwatch TickWatch;
         public static int TotalTicks;
@@ -113,14 +126,18 @@ namespace RotMG.Game
                 for (int dx = -r; dx <= r; dx++)
                     for (int dy = -r; dy <= r; dy++)
                     {
-                        Tile tile = world.GetTile(spawn.X + dx, spawn.Y + dy);
-                        if (tile == null || tile.StaticObject != null)
+                        //Indexed directly for the link below: Tile is a
+                        //struct, so a GetTile local would be a copy.
+                        int tx = spawn.X + dx;
+                        int ty = spawn.Y + dy;
+                        Tile? tile = world.GetTile(tx, ty);
+                        if (tile == null || tile.Value.StaticObject != null)
                             continue;
                         Portal portal = new Portal(type) { WorldInstance = target };
                         if (world.AddEntity(portal, new Position(spawn.X + dx + 0.5f, spawn.Y + dy + 0.5f)) != -1)
                         {
-                            tile.StaticObject = portal;
-                            tile.UpdateCount++;
+                            world.Tiles[tx, ty].StaticObject = portal;
+                            world.Tiles[tx, ty].UpdateCount++;
                             world.UpdateCount++;
 #if DEBUG
                             Program.Print(PrintType.Debug, $"Placed portal <{portalId}> to <{target.Name}> at <{spawn.X + dx},{spawn.Y + dy}>");
@@ -211,8 +228,46 @@ namespace RotMG.Game
         {
             if (realm.Players.Count == 0)
                 return;
-            World castle = CreateCastleWorld(realm.Players.Count);
-            realm.QuakeToWorld(castle);
+            if (!Settings.AsyncWorldCreation)
+            {
+                World syncCastle = CreateCastleWorld(realm.Players.Count);
+                realm.QuakeToWorld(syncCastle);
+                return;
+            }
+            //Build the castle off the tick thread: construction is a full
+            //tile loop plus population, and the sync version freezes every
+            //world for its duration at the climax of the event. The realm
+            //keeps ticking meanwhile; reconnect timers start at publish
+            //(inside QuakeToWorld), so clients can only ever be pointed at
+            //a world that already exists. Closed is set now so nobody
+            //re-enters during the build (QuakeToWorld re-asserts it).
+            if (!_castleBuildsInFlight.Add(realm.Id))
+                return;
+            realm.Closed = true;
+            Task.Run(() =>
+            {
+                try
+                {
+                    World castle = CreateWorld(Resources.Worlds["Castle"]);
+                    RunOnMainThread(() =>
+                    {
+                        _castleBuildsInFlight.Remove(realm.Id);
+                        if (realm.Players.Count == 0)
+                            return; //Everyone left mid-build: drop the castle rather than leak an empty world.
+                        castle.Id = ++NextWorldId;
+                        Worlds[castle.Id] = castle;
+                        realm.QuakeToWorld(castle);
+                    });
+                }
+                catch (Exception e)
+                {
+                    RunOnMainThread(() =>
+                    {
+                        _castleBuildsInFlight.Remove(realm.Id);
+                        Program.Print(PrintType.Error, "Async castle build failed: " + e.Message);
+                    });
+                }
+            });
         }
 
         //Drops an empty closed realm and builds a fresh one under the
@@ -227,14 +282,57 @@ namespace RotMG.Game
                 return;
             if (world.Players.Count > 0)
                 return;
+            if (!Settings.AsyncWorldCreation)
+            {
+                PublishResetRealm(world, CreateWorld(Resources.Worlds["Realm"]));
+                return;
+            }
+            //Same off-thread treatment as the castle path above. The old
+            //closed realm stays published during the build (it is empty
+            //and closed, so nothing can enter); a failed build just clears
+            //the flag and the next Overseer tick retries.
+            if (_realmResetInFlight)
+                return;
+            _realmResetInFlight = true;
+            Task.Run(() =>
+            {
+                try
+                {
+                    World fresh = CreateWorld(Resources.Worlds["Realm"]);
+                    fresh.Id = RealmId;
+                    RunOnMainThread(() =>
+                    {
+                        _realmResetInFlight = false;
+                        PublishResetRealm(world, fresh);
+                    });
+                }
+                catch (Exception e)
+                {
+                    RunOnMainThread(() =>
+                    {
+                        _realmResetInFlight = false;
+                        Program.Print(PrintType.Error, "Async realm reset failed: " + e.Message);
+                    });
+                }
+            });
+        }
+
+        //Swaps the fresh realm in under the stable RealmId. Main thread
+        //only. Re-checks the preconditions: the world may have been
+        //replaced while a worker build was in flight.
+        private static void PublishResetRealm(World old, World fresh)
+        {
+            if (!(Worlds.TryGetValue(RealmId, out World current) && current == old))
+                return;
+            if (old.Players.Count > 0)
+                return;
             Worlds.Remove(RealmId);
-            World fresh = CreateWorld(Resources.Worlds["Realm"]);
             fresh.Id = RealmId;
             Worlds[RealmId] = fresh;
             if (Worlds.TryGetValue(NexusId, out World nexus))
             {
                 foreach (StaticObject stat in nexus.Statics.Values.ToArray())
-                    if (stat is Portal portal && portal.WorldInstance == world)
+                    if (stat is Portal portal && portal.WorldInstance == old)
                         portal.WorldInstance = fresh;
                 if (nexus is NexusWorld nexusWorld)
                     nexusWorld.Monitor.UpdateWorldInstance(RealmId, fresh);
@@ -320,7 +418,15 @@ namespace RotMG.Game
                 const int MaxTimerActionsPerTick = 10000;
                 while (Timers.Count > 0)
                 {
-                    KeyValuePair<int, Queue<Action>> next = Timers.First();
+                    //First entry without LINQ: foreach over the concrete
+                    //SortedDictionary type uses its struct enumerator, so
+                    //this allocates nothing per tick.
+                    KeyValuePair<int, Queue<Action>> next = default;
+                    foreach (KeyValuePair<int, Queue<Action>> first in Timers)
+                    {
+                        next = first;
+                        break;
+                    }
                     if (next.Key > timerTick)
                         break;
                     Timers.Remove(next.Key);
@@ -337,6 +443,24 @@ namespace RotMG.Game
                     }
                     if (timerBudgetExceeded)
                         break;
+                }
+
+                //Publish worker-finished work (async world builds) before
+                //the worlds tick so fresh worlds participate immediately.
+                while (MainThreadQueue.TryDequeue(out Action mainAction))
+                {
+                    try
+                    {
+                        mainAction();
+                    }
+#if DEBUG
+                    catch (Exception e)
+                    {
+                        Program.Print(PrintType.Error, e.ToString());
+                    }
+#else
+                    catch { }
+#endif
                 }
 
                 WorldSnapshot.Clear();

@@ -151,7 +151,7 @@ namespace RotMG.Game.Entities
                 return;
             }
 
-            Tile tile = Parent.GetTile((int)pos.X, (int)pos.Y);
+            Tile? tile = Parent.GetTile((int)pos.X, (int)pos.Y);
             if (tile == null)
             {
 #if DEBUG
@@ -160,10 +160,10 @@ namespace RotMG.Game.Entities
                 Client.Disconnect();
                 return;
             }
-            TileDesc desc = Resources.Type2Tile[tile.Type];
+            TileDesc desc = Resources.Type2Tile[tile.Value.Type];
             if (desc.Damage > 0 && !HasConditionEffect(ConditionEffectIndex.Invincible))
             {
-                if (!(tile.StaticObject?.Desc.ProtectFromGroundDamage ?? false) && Damage(desc.Id, desc.Damage, new ConditionEffectDesc[0], true))
+                if (!(tile.Value.StaticObject?.Desc.ProtectFromGroundDamage ?? false) && Damage(desc.Id, desc.Damage, new ConditionEffectDesc[0], true))
                     return;
             }
             ApplyVatPoolEffects(desc);
@@ -199,12 +199,12 @@ namespace RotMG.Game.Entities
                 return;
             }
 
-            Tile tile = Parent.GetTile((int)pos.X, (int)pos.Y);
+            Tile? tile = Parent.GetTile((int)pos.X, (int)pos.Y);
             if (tile == null)
                 return;
-            TileDesc desc = Resources.Type2Tile[tile.Type];
+            TileDesc desc = Resources.Type2Tile[tile.Value.Type];
             if (desc.Damage > 0 && !HasConditionEffect(ConditionEffectIndex.Invincible))
-                if (!(tile.StaticObject?.Desc.ProtectFromGroundDamage ?? false))
+                if (!(tile.Value.StaticObject?.Desc.ProtectFromGroundDamage ?? false))
                     Damage(desc.Id, desc.Damage, new ConditionEffectDesc[0], true);
             ApplyVatPoolEffects(desc);
         }
@@ -235,8 +235,8 @@ namespace RotMG.Game.Entities
             if (!RegionUnblocked(pos.X, pos.Y))
                 return false;
 
-            Tile tile = Parent.GetTileF((int)pos.X, (int)pos.Y);
-            if (tile == null || TileUpdates[(int)pos.X, (int)pos.Y] != tile.UpdateCount)
+            Tile? tile = Parent.GetTileF((int)pos.X, (int)pos.Y);
+            if (tile == null || GetSeenTileUpdate((int)pos.X, (int)pos.Y) != tile.Value.UpdateCount)
                 return false;
 
             Parent.MoveEntity(this, pos);

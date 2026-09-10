@@ -1,5 +1,4 @@
 using RotMG.Utils;
-using System.Linq;
 
 namespace RotMG.Game.Logic.Transitions
 {
@@ -17,7 +16,7 @@ namespace RotMG.Game.Logic.Transitions
         public override bool Tick(Entity host)
         {
             if (SeeInvis)
-                return host.Parent.PlayerChunks.HitTest(host.Position, Distance).Any();
+                return host.Parent.PlayerChunks.AnyInRadius(host.Position, Distance);
             return host.GetNearestPlayer(Distance) != null;
         }
     }

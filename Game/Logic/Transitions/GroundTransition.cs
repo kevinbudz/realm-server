@@ -15,8 +15,8 @@ namespace RotMG.Game.Logic.Transitions
         {
             if (!Resources.Id2Tile.TryGetValue(Ground, out TileDesc desc))
                 return false;
-            Tile tile = host.Parent.GetTile((int)host.Position.X, (int)host.Position.Y);
-            return tile != null && tile.Type == desc.Type;
+            Tile? tile = host.Parent.GetTile((int)host.Position.X, (int)host.Position.Y);
+            return tile != null && tile.Value.Type == desc.Type;
         }
     }
 }

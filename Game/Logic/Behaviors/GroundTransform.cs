@@ -39,10 +39,10 @@ namespace RotMG.Game.Logic.Behaviors
             {
                 int x = (int)host.Position.X + RelativeX.Value;
                 int y = (int)host.Position.Y + RelativeY.Value;
-                Tile tile = host.Parent.GetTile(x, y);
-                if (tile == null || tile.Type == desc.Type)
+                Tile? tile = host.Parent.GetTile(x, y);
+                if (tile == null || tile.Value.Type == desc.Type)
                     return;
-                changed.Add(new GroundTileState { OriginalType = tile.Type, X = x, Y = y });
+                changed.Add(new GroundTileState { OriginalType = tile.Value.Type, X = x, Y = y });
                 host.Parent.UpdateTile(x, y, desc.Type);
                 return;
             }
@@ -52,10 +52,10 @@ namespace RotMG.Game.Logic.Behaviors
             for (int y = hy - Radius; y <= hy + Radius; y++)
                 for (int x = hx - Radius; x <= hx + Radius; x++)
                 {
-                    Tile tile = host.Parent.GetTile(x, y);
-                    if (tile == null || tile.Type == desc.Type)
+                    Tile? tile = host.Parent.GetTile(x, y);
+                    if (tile == null || tile.Value.Type == desc.Type)
                         continue;
-                    changed.Add(new GroundTileState { OriginalType = tile.Type, X = x, Y = y });
+                    changed.Add(new GroundTileState { OriginalType = tile.Value.Type, X = x, Y = y });
                     host.Parent.UpdateTile(x, y, desc.Type);
                 }
         }

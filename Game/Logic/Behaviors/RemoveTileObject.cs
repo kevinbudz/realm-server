@@ -23,8 +23,8 @@ namespace RotMG.Game.Logic.Behaviors
             for (int y = hy - Range; y <= hy + Range; y++)
                 for (int x = hx - Range; x <= hx + Range; x++)
                 {
-                    Tile tile = host.Parent.GetTile(x, y);
-                    if (tile?.StaticObject == null || tile.StaticObject.Type != objType)
+                    Tile? tile = host.Parent.GetTile(x, y);
+                    if (tile?.StaticObject == null || tile.Value.StaticObject.Type != objType)
                         continue;
                     if (Math.Abs(x - hx) > Range || Math.Abs(y - hy) > Range)
                         continue;

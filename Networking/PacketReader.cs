@@ -27,9 +27,12 @@ namespace RotMG.Networking
 
         public override float ReadSingle()
         {
-            byte[] arr = base.ReadBytes(4);
-            Array.Reverse(arr);
-            return BitConverter.ToSingle(arr, 0);
+            //Wire order is big-endian; BinaryReader reads little-endian.
+            //Reversing via ReverseEndianness avoids the byte[4] + Reverse
+            //per float the old code paid on the Move/Shoot hot path, with
+            //identical read semantics (FillBuffer still short-read loops).
+            return BitConverter.Int32BitsToSingle(
+                System.Buffers.Binary.BinaryPrimitives.ReverseEndianness(base.ReadInt32()));
         }
 
         public override string ReadString()

@@ -48,8 +48,8 @@ namespace RotMG.Game.Logic.Behaviors
                 {
                     if (Math.Abs(x - hx) > Range || Math.Abs(y - hy) > Range)
                         continue;
-                    Tile tile = host.Parent.GetTile(x, y);
-                    if (tile?.StaticObject == null || tile.StaticObject.Type != objType)
+                    Tile? tile = host.Parent.GetTile(x, y);
+                    if (tile?.StaticObject == null || tile.Value.StaticObject.Type != objType)
                         continue;
                     host.Parent.RemoveStatic(x, y);
                 }

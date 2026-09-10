@@ -105,12 +105,38 @@ namespace RotMG.Game
             int startY = Math.Max(0, beginY - size);
             int endX = Math.Min(Chunks.GetLength(0) - 1, beginX + size);
             int endY = Math.Min(Chunks.GetLength(1) - 1, beginY + size);
+            float r2 = radius * radius;
 
             for (int x = startX; x <= endX; x++)
                 for (int y = startY; y <= endY; y++)
                     foreach (Entity en in Chunks[x, y].Entities)
-                        if (target.Distance(en) < radius)
+                        if (target.DistanceSquared(en) < r2)
                             result.Add(en);
+        }
+
+        //Short-circuiting existence check with the same predicate as
+        //HitTest, but allocating nothing and stopping at the first match.
+        //The optional exclude covers "anyone but host" checks; comparison
+        //is by Id, matching Entity.Equals semantics within one world
+        //(tracked entities always have Id >= 1, so 0 matches nothing).
+        public bool AnyInRadius(Position target, float radius, Entity exclude = null)
+        {
+            int size = Convert(radius);
+            int beginX = Convert(target.X);
+            int beginY = Convert(target.Y);
+            int startX = Math.Max(0, beginX - size);
+            int startY = Math.Max(0, beginY - size);
+            int endX = Math.Min(Chunks.GetLength(0) - 1, beginX + size);
+            int endY = Math.Min(Chunks.GetLength(1) - 1, beginY + size);
+            float r2 = radius * radius;
+            int excludeId = exclude == null ? 0 : exclude.Id;
+
+            for (int x = startX; x <= endX; x++)
+                for (int y = startY; y <= endY; y++)
+                    foreach (Entity en in Chunks[x, y].Entities)
+                        if (en.Id != excludeId && target.DistanceSquared(en) < r2)
+                            return true;
+            return false;
         }
 
         public List<Entity> HitTest(Position target, float radius)

@@ -520,17 +520,17 @@ namespace RotMG.Game
 
         public bool TileOccupied(float x, float y)
         {
-            Tile tile = Parent.GetTile((int)x, (int)y);
+            Tile? tile = Parent.GetTile((int)x, (int)y);
             if (tile == null)
                 return true;
 
-            TileDesc desc = Resources.Type2Tile[tile.Type];
+            TileDesc desc = Resources.Type2Tile[tile.Value.Type];
             if (desc.NoWalk)
                 return true;
 
-            if (tile.StaticObject != null)
+            if (tile.Value.StaticObject != null)
             {
-                if (tile.StaticObject.Desc.EnemyOccupySquare)
+                if (tile.Value.StaticObject.Desc.EnemyOccupySquare)
                     return true;
             }
 
@@ -539,13 +539,13 @@ namespace RotMG.Game
 
         public bool TileFullOccupied(float x, float y)
         {
-            Tile tile = Parent.GetTile((int)x, (int)y);
+            Tile? tile = Parent.GetTile((int)x, (int)y);
             if (tile == null)
                 return true;
 
-            if (tile.StaticObject != null)
+            if (tile.Value.StaticObject != null)
             {
-                if (tile.StaticObject.Desc.FullOccupy)
+                if (tile.Value.StaticObject.Desc.FullOccupy)
                     return true;
             }
 

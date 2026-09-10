@@ -154,10 +154,13 @@ namespace RotMG.Game.Entities
 
         private Entity FindQuest()
         {
+            //Single pass, no OrderBy sort: max-tracking is order-independent,
+            //and the explicit distance tie-break reproduces the old stable
+            //sort's "nearest wins score ties" (dict order on full ties).
             Entity ret = null;
             double? bestScore = null;
-            foreach (Entity quest in Parent.Quests.Values
-                .OrderBy(q => Position.DistanceSquared(q.Position)))
+            double bestDist2 = 0;
+            foreach (Entity quest in Parent.Quests.Values)
             {
                 if (quest.Desc == null || !quest.Desc.Quest)
                     continue;
@@ -167,9 +170,11 @@ namespace RotMG.Game.Entities
                     continue;
                 double score = (20 - Math.Abs(quest.Desc.Level - Level)) * range.Item1
                     - Position.Distance(quest.Position) / 100;
-                if (bestScore == null || score > bestScore)
+                double d2 = Position.DistanceSquared(quest.Position);
+                if (bestScore == null || score > bestScore || (score == bestScore && d2 < bestDist2))
                 {
                     bestScore = score;
+                    bestDist2 = d2;
                     ret = quest;
                 }
             }

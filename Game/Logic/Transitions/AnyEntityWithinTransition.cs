@@ -1,5 +1,4 @@
 using RotMG.Game.Entities;
-using System.Linq;
 
 namespace RotMG.Game.Logic.Transitions
 {
@@ -14,9 +13,9 @@ namespace RotMG.Game.Logic.Transitions
 
         public override bool Tick(Entity host)
         {
-            if (host.Parent.EntityChunks.HitTest(host.Position, Distance).Any(e => !e.Equals(host)))
+            if (host.Parent.EntityChunks.AnyInRadius(host.Position, Distance, host))
                 return true;
-            return host.Parent.PlayerChunks.HitTest(host.Position, Distance).Any();
+            return host.Parent.PlayerChunks.AnyInRadius(host.Position, Distance);
         }
     }
 }

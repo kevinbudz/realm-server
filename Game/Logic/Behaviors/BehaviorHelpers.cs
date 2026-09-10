@@ -61,7 +61,7 @@ namespace RotMG.Game.Logic.Behaviors
             {
                 if (type != null && en.Type != type.Value)
                     continue;
-                float d = host.Position.Distance(en.Position);
+                float d = host.Position.DistanceSquared(en.Position);
                 if (d < dist)
                 {
                     nearest = en;
@@ -83,7 +83,7 @@ namespace RotMG.Game.Logic.Behaviors
             {
                 if (!MatchesName(en, name))
                     continue;
-                float d = host.Position.Distance(en.Position);
+                float d = host.Position.DistanceSquared(en.Position);
                 if (d < dist)
                 {
                     nearest = en;

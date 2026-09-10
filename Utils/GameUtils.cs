@@ -39,7 +39,7 @@ namespace RotMG.Utils
             foreach (Entity en in entity.Parent.EntityChunks.HitTest(entity.Position, radius))
             {
                 float d;
-                if ((d = entity.Position.Distance(en.Position)) < dist)
+                if ((d = entity.Position.DistanceSquared(en.Position)) < dist)
                 {
                     nearest = en;
                     dist = d;
@@ -63,7 +63,7 @@ namespace RotMG.Utils
                     continue;
 
                 float d;
-                if ((d = entity.Position.Distance(en.Position)) < dist)
+                if ((d = entity.Position.DistanceSquared(en.Position)) < dist)
                 {
                     nearest = en;
                     dist = d;
@@ -91,7 +91,7 @@ namespace RotMG.Utils
                     continue;
 
                 float d;
-                if ((d = entity.Position.Distance(en.Position)) < dist)
+                if ((d = entity.Position.DistanceSquared(en.Position)) < dist)
                 {
                     nearest = en;
                     dist = d;
@@ -122,7 +122,7 @@ namespace RotMG.Utils
                     continue;
 
                 float d;
-                if ((d = target.Distance(en.Position)) < dist)
+                if ((d = target.DistanceSquared(en.Position)) < dist)
                 {
                     nearest = en;
                     dist = d;
@@ -156,7 +156,7 @@ namespace RotMG.Utils
                     continue;
 
                 float d;
-                if ((d = target.Distance(en.Position)) < dist)
+                if ((d = target.DistanceSquared(en.Position)) < dist)
                 {
                     nearest = en;
                     dist = d;
@@ -187,7 +187,7 @@ namespace RotMG.Utils
                     continue;
 
                 float d;
-                if ((d = entity.Position.Distance(en.Position)) < dist)
+                if ((d = entity.Position.DistanceSquared(en.Position)) < dist)
                 {
                     nearest = en;
                     dist = d;
@@ -210,7 +210,7 @@ namespace RotMG.Utils
                     continue;
 
                 float d;
-                if ((d = entity.Position.Distance(en.Position)) < dist)
+                if ((d = entity.Position.DistanceSquared(en.Position)) < dist)
                 {
                     nearest = en;
                     dist = d;

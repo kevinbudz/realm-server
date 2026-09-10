@@ -23,8 +23,8 @@ namespace RotMG.Game.Logic.Behaviors
                 return false;
 
             World world = host.Parent;
-            Tile tile = world.GetTile((int)host.Position.X, (int)host.Position.Y);
-            if (tile != null && tile.Elevation != 0 && tile.Elevation < Altitude)
+            Tile? tile = world.GetTile((int)host.Position.X, (int)host.Position.Y);
+            if (tile != null && tile.Value.Elevation != 0 && tile.Value.Elevation < Altitude)
             {
                 Position vect = new Position(
                     world.Width / 2 - host.Position.X,

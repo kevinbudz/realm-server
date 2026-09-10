@@ -765,11 +765,12 @@ namespace RotMG.Game.Entities
             Portal portal = new Portal(portalDesc.Type);
             if (host.AddEntity(portal, at) == -1)
                 return;
-            Tile tile = host.GetTile(px, py);
-            if (tile != null)
+            //Indexed directly: Tile is a struct (see World). AddEntity
+            //succeeding above proves (px, py) in-bounds.
+            if (host.GetTile(px, py) != null)
             {
-                tile.StaticObject = portal;
-                tile.UpdateCount++;
+                host.Tiles[px, py].StaticObject = portal;
+                host.Tiles[px, py].UpdateCount++;
                 host.UpdateCount++;
             }
             SchedulePortalTimeout(host, portal, at, portalDesc);
@@ -797,8 +798,8 @@ namespace RotMG.Game.Entities
                     {
                         if (r > 0 && dx != -r && dx != r && dy != -r && dy != r)
                             continue;
-                        Tile tile = host.GetTile(x + dx, y + dy);
-                        if (tile != null && tile.StaticObject == null)
+                        Tile? tile = host.GetTile(x + dx, y + dy);
+                        if (tile != null && tile.Value.StaticObject == null)
                         {
                             px = x + dx;
                             py = y + dy;
@@ -823,12 +824,16 @@ namespace RotMG.Game.Entities
             {
                 if (portalRef.Parent != host)
                     return;
-                Tile t = host.GetTile((int)atRef.X, (int)atRef.Y);
-                if (t != null && t.StaticObject == portalRef)
+                //Indexed directly: Tile is a struct (see World). Non-null
+                //GetTile proves the coords in-bounds for the writes below.
+                int tx = (int)atRef.X;
+                int ty = (int)atRef.Y;
+                Tile? t = host.GetTile(tx, ty);
+                if (t != null && t.Value.StaticObject == portalRef)
                 {
-                    t.StaticObject = null;
-                    t.BlocksSight = false;
-                    t.UpdateCount++;
+                    host.Tiles[tx, ty].StaticObject = null;
+                    host.Tiles[tx, ty].BlocksSight = false;
+                    host.Tiles[tx, ty].UpdateCount++;
                     host.UpdateCount++;
                 }
                 host.RemoveEntity(portalRef);
@@ -881,11 +886,12 @@ namespace RotMG.Game.Entities
             open.TrySetSV(StatType.Name, portalDesc.DisplayId);
             if (host.AddEntity(open, at) == -1)
                 return;
-            Tile tile = host.GetTile((int)at.X, (int)at.Y);
-            if (tile != null)
+            //Indexed directly: Tile is a struct (see World). AddEntity
+            //succeeding above proves the coords in-bounds.
+            if (host.GetTile((int)at.X, (int)at.Y) != null)
             {
-                tile.StaticObject = open;
-                tile.UpdateCount++;
+                host.Tiles[(int)at.X, (int)at.Y].StaticObject = open;
+                host.Tiles[(int)at.X, (int)at.Y].UpdateCount++;
                 host.UpdateCount++;
             }
             World world = Manager.GetDungeonWorld(open, desc);
