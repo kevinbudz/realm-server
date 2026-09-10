@@ -622,6 +622,11 @@ namespace RotMG.Game
             _activeEntities.UnionWith(Constants.Values);
             foreach (Chunk chunk in _activeChunks)
                 _activeEntities.UnionWith(chunk.Entities);
+            //GameObject enemies (e.g. Oryx's Living Floor) live in Statics,
+            //not EntityChunks, so they would never run behaviors otherwise.
+            foreach (StaticObject st in Statics.Values)
+                if (st.Behavior != null)
+                    _activeEntities.Add(st);
 
             //Player broadcast parallelizes cleanly: each worker touches only
             //its own player's mutable state while world state is read-only

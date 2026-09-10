@@ -18,7 +18,7 @@ namespace RotMG.Utils
         //draw on the main thread. One lock for all draws: uncontended in
         //the common single-threaded case, correct in every case.
         private static readonly object _rndLock = new object();
-        private static RandomNumberGenerator _gen = RNGCryptoServiceProvider.Create();
+        private static readonly RandomNumberGenerator _gen = RandomNumberGenerator.Create();
         public static string GenerateSalt()
         {
             var x = new byte[0x10];

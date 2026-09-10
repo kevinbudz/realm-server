@@ -770,4 +770,21 @@
 		<XpMult>0.0</XpMult>
 		
 	</Object>
+
+	<!-- Custom: 7.0 CXML never named this; SP_Hermit.jm + Hermit.cs need it
+	     so Hermit God's death can drop an Ocean Trench portal. Type matches
+	     betterskillys CustomEntities.xml. -->
+	<Object type="0x495d" id="Hermit portal maker">
+		<Group>Hermit God Encounter</Group>
+		<Class>Character</Class>
+		<StasisImmune/>
+		<NoMiniMap/>
+
+		<Texture><File>invisible</File><Index>0</Index></Texture>
+
+		<MaxHitPoints>1000</MaxHitPoints>
+		<Size>0</Size>
+		<XpMult>0.0</XpMult>
+
+	</Object>
 </Objects>

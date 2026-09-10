@@ -46,7 +46,16 @@ namespace RotMG.Game
         Store_5,
         Store_6,
         Vault,
-        Enemy
+        Enemy,
+        //Dungeon-oriented names from EmbeddedData_RegionsCXML / TileRegion.
+        //Appended so existing enum values stay stable. JS maps parse by name;
+        //wmap still maps region bytes explicitly in Wmap.MapRegion.
+        Loot,
+        Defender,
+        Hallway,
+        Hallway_1,
+        Hallway_2,
+        Hallway_3
     }
 
     public struct JSTile
@@ -90,7 +99,7 @@ namespace RotMG.Game
 
             for (int i = 0; i < json.dict.Length; i++)
             {
-                loc o = json.dict[i];
+                Loc o = json.dict[i];
                 dict[(ushort)i] = new JSTile
                 {
                     GroundType = o.ground == null ? (ushort)255 : ResolveGround(o.ground),
@@ -147,8 +156,15 @@ namespace RotMG.Game
 
         internal static ushort ResolveObject(string id)
         {
+            //Empty obj slots are the map format's none marker (same as ground).
+            if (string.IsNullOrEmpty(id))
+                return 255;
             if (Resources.Id2Object.TryGetValue(id, out ObjectDesc desc))
                 return desc.Type;
+            //betterskillys editor marker painted into Cave / Snake Pit. No 7.0
+            //object, no behavior in any reference tree — drop without noise.
+            if (id == "invisible Spawner")
+                return 255;
             Program.Print(PrintType.Warn, $"Unknown map object <{id}>, skipping.");
             return 255;
         }
@@ -188,19 +204,19 @@ namespace RotMG.Game
         private struct json_dat
         {
             public byte[] data { get; set; }
-            public loc[] dict { get; set; }
+            public Loc[] dict { get; set; }
             public int height { get; set; }
             public int width { get; set; }
         }
 
-        private struct loc
+        private struct Loc
         {
             public string ground { get; set; }
-            public obj[] objs { get; set; }
-            public obj[] regions { get; set; }
+            public Obj[] objs { get; set; }
+            public Obj[] regions { get; set; }
         }
 
-        private struct obj
+        private struct Obj
         {
             public string id { get; set; }
             public string name { get; set; }

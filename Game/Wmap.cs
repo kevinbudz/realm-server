@@ -101,10 +101,9 @@ namespace RotMG.Game
             }
         }
 
-        // Only the regions overlapping this codebase's Region enum survive;
-        // the rest (dungeon-oriented TileRegions like Hallway/Loot/Enemy and
-        // Store_7+, none of which occur in the shipped realm maps) are
-        // dropped with a warning instead of crashing the world load.
+        // Realm .wmap files only paint Spawn / Realm_Portals / Store_1–6 /
+        // Vault. Dungeon names (Hallway, Loot, …) exist on the Region enum
+        // for .jm parse; unknown wmap bytes still drop instead of crashing.
         private static Region MapRegion(byte region)
         {
             switch (region)

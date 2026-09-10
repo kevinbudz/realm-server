@@ -509,7 +509,7 @@
 		
     </Object> 
 
-	<Object type="0x170d" id="s">
+	<Object type="0x170d" id="Sea Slurp Home">
         <Group>Ocean Trench</Group>
         <Enemy/>
         <Class>Character</Class>

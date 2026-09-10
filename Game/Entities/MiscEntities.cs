@@ -1,6 +1,4 @@
-﻿using RotMG.Networking;
-
-using RotMG.Common;
+﻿using RotMG.Common;
 using RotMG.Networking;
 using RotMG.Utils;
 

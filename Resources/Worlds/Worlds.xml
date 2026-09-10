@@ -165,23 +165,29 @@
 		<ShowDisplays>false</ShowDisplays>
 		<BlockSight>1</BlockSight>
 	</World>
-	<!-- No map file or generator template yet; portals to these report not implemented until one is added. -->
 	<World id="Snake Pit" display="Snake Pit">
-		<Maps></Maps>
+		<Maps>Dungeons/Snake Pit.jm</Maps>
 		<Background>0</Background>
 		<AllowTeleport>true</AllowTeleport>
 		<ShowDisplays>false</ShowDisplays>
 		<BlockSight>1</BlockSight>
 	</World>
 	<World id="Ocean Trench" display="Ocean Trench">
-		<Maps></Maps>
+		<Maps>Dungeons/Ocean Trench.jm</Maps>
 		<Background>0</Background>
 		<AllowTeleport>true</AllowTeleport>
 		<ShowDisplays>false</ShowDisplays>
 		<BlockSight>1</BlockSight>
 	</World>
+	<World id="Oryx's Chamber" display="Oryx's Chamber">
+		<Maps>Dungeons/Oryx's Chamber.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>false</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>1</BlockSight>
+	</World>
 	<World id="Wine Cellar" display="Wine Cellar">
-		<Maps></Maps>
+		<Maps>Dungeons/Wine Cellar.jm</Maps>
 		<Background>0</Background>
 		<AllowTeleport>true</AllowTeleport>
 		<ShowDisplays>false</ShowDisplays>
