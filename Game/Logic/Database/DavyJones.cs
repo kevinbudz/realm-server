@@ -154,6 +154,7 @@ namespace RotMG.Game.Logic.Database
                     new RemoveTileObject("GhostShip PurpleDoor Lf", 200),
                     new RemoveTileObject("GhostShip PurpleDoor Rt", 200),
                     new Taunt(true, "Purple Key has been found!"),
+                    new GlobalNotification("purple"),
                     new Suicide()
                 )
             );
@@ -166,6 +167,7 @@ namespace RotMG.Game.Logic.Database
                     new RemoveTileObject("GhostShip RedDoor Lf", 200),
                     new RemoveTileObject("GhostShip RedDoor Rt", 200),
                     new Taunt(true, "Red Key has been found!"),
+                    new GlobalNotification("red"),
                     new Suicide()
                 )
             );
@@ -178,6 +180,7 @@ namespace RotMG.Game.Logic.Database
                     new RemoveTileObject("GhostShip GreenDoor Lf", 200),
                     new RemoveTileObject("GhostShip GreenDoor Rt", 200),
                     new Taunt(true, "Green Key has been found!"),
+                    new GlobalNotification("green"),
                     new Suicide()
                 )
             );
@@ -188,6 +191,7 @@ namespace RotMG.Game.Logic.Database
                 ),
                 new State("Cycle",
                     new Taunt(true, "Yellow Key has been found!"),
+                    new GlobalNotification("yellow"),
                     new RemoveTileObject("GhostShip YellowDoor Lf", 200),
                     new RemoveTileObject("GhostShip YellowDoor Rt", 200),
                     new Suicide()

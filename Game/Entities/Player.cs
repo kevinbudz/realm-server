@@ -260,6 +260,7 @@ namespace RotMG.Game.Entities
             TileUpdates = new Dictionary<long, int>(1024);
             EntityUpdates = new Dictionary<int, int>();
             Entities = new HashSet<Entity>();
+            _nearPlayerIds.Clear();
             CalculatedSightCircle = new HashSet<IntPoint>();
             AwaitingProjectiles = new Queue<List<Projectile>>();
             AckedProjectiles = new Dictionary<int, ProjectileAck>();

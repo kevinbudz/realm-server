@@ -79,7 +79,8 @@ namespace RotMG.Networking
             AcceptTrade = 56,
             CancelTrade = 57,
             TradeDone = 58,
-            TradeAccepted = 59
+            TradeAccepted = 59,
+            GlobalNotification = 60
         }
 
         public static void Read(Client client, int id, byte[] data)
@@ -847,6 +848,17 @@ namespace RotMG.Networking
             wtr.Write(objectId);
             wtr.Write(text);
             wtr.Write((int)color);
+            return PacketWriter.RentedBytes();
+        }
+
+        //Davy Jones key HUD channel (see KeysView in realm-client).
+        //Payload mirrors the reference implementation: int type, UTF string.
+        public static byte[] GlobalNotification(int type, string text)
+        {
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.GlobalNotification);
+            wtr.Write(type);
+            wtr.Write(text);
             return PacketWriter.RentedBytes();
         }
 

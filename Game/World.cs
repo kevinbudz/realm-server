@@ -497,6 +497,11 @@ namespace RotMG.Game
             {
                 Players.Add(en.Id, en as Player);
                 PlayerChunks.Insert(en);
+                //Davy Jones' Locker tracks collected keys in a client-side
+                //HUD (KeysView); show it on arrival, key pickups light the
+                //individual keys (see DavyJones.cs).
+                if (Name == "Davy Jones's Locker")
+                    (en as Player).Client.Send(GameServer.GlobalNotification(0, "showKeyUI"));
             }
             else if (en is Decoy)
             {

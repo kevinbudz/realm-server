@@ -73,6 +73,15 @@ namespace RotMG.Game.Entities
         public Dictionary<int, int> EntityUpdates;
         public HashSet<Entity> Entities;
         public HashSet<IntPoint> CalculatedSightCircle;
+        //Presence tier for far players (minimap/teleport): tracked world-wide
+        //like realm-src, refreshed at a reduced rate. 5 tps / 4 ~= 1.25 Hz
+        //dot movement, enough for the minimap while bounding NewTick fan-out.
+        private const int FarPlayerTickDivisor = 4;
+        private int _newTickCount;
+        //Ids of tracked players inside sight on the last SendUpdate. Rebuilt
+        //there (pre-move) and read by SendNewTick (post-move); sub-tick
+        //staleness is irrelevant for throttle bucketing.
+        private readonly HashSet<int> _nearPlayerIds = new HashSet<int>();
         private readonly List<Entity> _hitTestScratch = new List<Entity>();
         private readonly List<Entity> _dropScratch = new List<Entity>();
         //Reused per-tick packet buffers: Update/NewTick serialize
@@ -85,13 +94,28 @@ namespace RotMG.Game.Entities
         public void SendNewTick()
         {
             HandleQuest();
+            _newTickCount++;
             _statusScratch.Clear();
             foreach (Entity en in Entities)
+            {
                 if (EntityUpdates[en.Id] != en.UpdateCount)
                 {
-                    _statusScratch.Add(en.GetObjectStatus(true));
+                    if (en is Player && en != this && !_nearPlayerIds.Contains(en.Id))
+                    {
+                        //Far presence: round-robin slice only. Full stats keep
+                        //every send self-contained, so no delta is ever lost
+                        //across skipped ticks (NewSVs are cleared globally).
+                        if ((_newTickCount + en.Id) % FarPlayerTickDivisor != 0)
+                            continue;
+                        _statusScratch.Add(en.GetObjectStatus(false));
+                    }
+                    else if (en is Player)
+                        _statusScratch.Add(en.GetObjectStatus(false));
+                    else
+                        _statusScratch.Add(en.GetObjectStatus(true));
                     EntityUpdates[en.Id] = en.UpdateCount;
                 }
+            }
 
             Client.Send(GameServer.NewTick(_statusScratch, PrivateSVs));
             PrivateSVs.Clear();
@@ -144,7 +168,11 @@ namespace RotMG.Game.Entities
                 }
             }
 
-            //Add players (chunk-routed, sight-gated; self passes at 0,0 and must stay tracked for NewTick)
+            //Near players (chunk-routed, sight-gated; self passes at 0,0 and
+            //must stay tracked for NewTick). Records the near set for the
+            //SendNewTick throttle below.
+            _nearPlayerIds.Clear();
+            _nearPlayerIds.Add(Id);
             Parent.PlayerChunks.HitTest(Position, SightRadius, _hitTestScratch);
             foreach (Entity en in _hitTestScratch)
             {
@@ -153,10 +181,29 @@ namespace RotMG.Game.Entities
                 if (!sight.Contains(new IntPoint(dx, dy)))
                     continue;
 
+                _nearPlayerIds.Add(en.Id);
                 if (Entities.Add(en))
                 {
                     _addsScratch.Add(en.GetObjectDefinition());
                     EntityUpdates.Add(en.Id, en.UpdateCount);
+                }
+            }
+
+            //Far presence: every world player stays known (realm-src parity)
+            //so minimap dots and teleport clicks work at any distance. This
+            //fires once per join, not per tick: afterwards Entities.Add hits.
+            //Near ids are topped up for players the chunk query missed.
+            foreach (Player p in Parent.Players.Values)
+            {
+                int dx = (int)p.Position.X - (int)Position.X;
+                int dy = (int)p.Position.Y - (int)Position.Y;
+                if (dx * dx + dy * dy <= SightRadius * SightRadius && sight.Contains(new IntPoint(dx, dy)))
+                    _nearPlayerIds.Add(p.Id);
+
+                if (Entities.Add(p))
+                {
+                    _addsScratch.Add(p.GetObjectDefinition());
+                    EntityUpdates.Add(p.Id, p.UpdateCount);
                 }
             }
 
@@ -177,6 +224,16 @@ namespace RotMG.Game.Entities
                 }
             }
 
+            //The quest target is always known to the client, even far out
+            //of sight: the QuestArrow needs its GameObject to point at it.
+            //Mirrors realm-src-master Player.Update GetNewEntities, which
+            //yields questEntity unconditionally.
+            if (Quest != null && Quest.Parent == Parent && Entities.Add(Quest))
+            {
+                _addsScratch.Add(Quest.GetObjectDefinition());
+                EntityUpdates.Add(Quest.Id, Quest.UpdateCount);
+            }
+
             //Remove entities and statics (as they end up in the same Entities dictionary
             _dropScratch.Clear();
             foreach (Entity en in Entities)
@@ -184,16 +241,37 @@ namespace RotMG.Game.Entities
                 if (en == this)
                     continue;
 
-                if (en.Parent != null)
+                //Players persist world-wide for minimap/teleport (mirrors
+                //realm-src-master GetRemovedEntities skipping players); only
+                //a gone player (Parent == null) falls through to the drop.
+                //Far ones are throttled in SendNewTick instead of dropped.
+                if (en is Player)
                 {
-                    int dx = (int)en.Position.X - (int)Position.X;
-                    int dy = (int)en.Position.Y - (int)Position.Y;
-                    if (sight.Contains(new IntPoint(dx, dy)))
+                    if (en.Parent != null)
                         continue;
+                }
+                else
+                {
+                    //The live quest target is never dropped (mirrors
+                    //realm-src-master GetRemovedEntities keeping questEntity).
+                    //The liveness gate matters: a dead quest (Parent == null)
+                    //must fall through to the drop below, exactly like the
+                    //reference drops Owner == null before its quest check.
+                    if (en == Quest && Quest.Parent != null)
+                        continue;
+
+                    if (en.Parent != null)
+                    {
+                        int dx = (int)en.Position.X - (int)Position.X;
+                        int dy = (int)en.Position.Y - (int)Position.Y;
+                        if (sight.Contains(new IntPoint(dx, dy)))
+                            continue;
+                    }
                 }
 
                 _dropsScratch.Add(en.GetObjectDrop());
                 EntityUpdates.Remove(en.Id);
+                _nearPlayerIds.Remove(en.Id);
                 _dropScratch.Add(en);
             }
 
