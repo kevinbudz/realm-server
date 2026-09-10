@@ -645,12 +645,18 @@ namespace RotMG.Game.Entities
         //wServer/realm/entities/player/Player.UseItem.cs AEUnlockPortal:
         //nearest LockedName portal within 3 of the player is swapped for
         //the dungeon's open portal, which expires after its Timeout and is
-        //announced world-wide. Dungeons resolve through DungeonDefs (the
-        //local equivalent of the reference ProtoWorld/portals lookup).
+        //announced world-wide. Dungeons are Worlds.xml entries keyed by
+        //dungeon name; the open portal is the Portal object pointing at it.
         private void UnlockDungeon(ActivateEffectDesc eff)
         {
             if (string.IsNullOrWhiteSpace(eff.LockedName) || string.IsNullOrWhiteSpace(eff.DungeonName))
                 return;
+
+            if (!Resources.Worlds.TryGetValue(eff.DungeonName, out WorldDesc desc) || !Dungeons.DungeonWorld.IsSupported(desc))
+            {
+                SendError("Dungeon not implemented.");
+                return;
+            }
 
             Portal locked = null;
             float best = float.MaxValue;
@@ -668,15 +674,8 @@ namespace RotMG.Game.Entities
             if (locked == null)
                 return;
 
-            Dungeons.DungeonDef def = Dungeons.DungeonDefs.ByName(eff.DungeonName);
-            if (def == null)
-            {
-                SendError("Dungeon not implemented.");
-                return;
-            }
-
-            ObjectDesc portalDesc;
-            if (!Resources.Id2Object.TryGetValue(def.PortalObject, out portalDesc))
+            ObjectDesc portalDesc = ResolveDungeonPortal(eff.DungeonName);
+            if (portalDesc == null)
                 return;
 
             Position at = locked.Position;
@@ -694,7 +693,7 @@ namespace RotMG.Game.Entities
                 tile.UpdateCount++;
                 host.UpdateCount++;
             }
-            World world = Manager.GetDungeonWorld(open, def);
+            World world = Manager.GetDungeonWorld(open, desc);
 
             SchedulePortalTimeout(host, open, at, portalDesc);
 
@@ -705,6 +704,16 @@ namespace RotMG.Game.Entities
                 player.Client.Send(notification);
                 player.SendInfo(info);
             }
+        }
+
+        //The open portal for a key-unlocked dungeon is the Portal object
+        //whose DungeonName points at it (see GameData).
+        private static ObjectDesc ResolveDungeonPortal(string dungeonName)
+        {
+            foreach (ObjectDesc candidate in Resources.Id2Object.Values)
+                if (candidate.Portal && candidate.DungeonName == dungeonName)
+                    return candidate;
+            return null;
         }
     }
 }

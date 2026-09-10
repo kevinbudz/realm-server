@@ -156,14 +156,15 @@ namespace RotMG.Game
             return world;
         }
 
-        //Fresh generated dungeon per portal, mirroring the dynamic case of
-        //realm-src-master Portal.CreateWorld.
-        public static World GetDungeonWorld(Portal portal, Dungeons.DungeonDef def)
+        //Fresh dungeon instance per portal, mirroring the dynamic case of
+        //realm-src-master Portal.CreateWorld. The dungeon is a Worlds.xml
+        //entry; callers check Dungeons.DungeonWorld.IsSupported first.
+        public static World GetDungeonWorld(Portal portal, WorldDesc desc)
         {
-            World world = new Dungeons.DungeonWorld(def, Guid.NewGuid().GetHashCode());
+            World world = new Dungeons.DungeonWorld(desc, Guid.NewGuid().GetHashCode());
             AddWorld(world);
             portal.WorldInstance = world;
-            PortalDungeons[portal.Id] = def.Name;
+            PortalDungeons[portal.Id] = desc.Id;
             return world;
         }
 

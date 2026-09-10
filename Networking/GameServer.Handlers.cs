@@ -328,22 +328,20 @@ namespace RotMG.Networking
             //Key-unlocked portals remember their dungeon per instance.
             if (Manager.PortalDungeons.TryGetValue(portal.Id, out string mappedName))
             {
-                Game.Dungeons.DungeonDef mapped = Game.Dungeons.DungeonDefs.ByName(mappedName);
-                if (mapped != null)
+                if (Resources.Worlds.TryGetValue(mappedName, out WorldDesc mapped) && Game.Dungeons.DungeonWorld.IsSupported(mapped))
                     return Manager.GetDungeonWorld(portal, mapped);
             }
 
-            //Generated dungeon portals carry their DungeonName in the object
-            //descriptor (see Game/Dungeons).
+            //Dungeon portals carry their dungeon in the object descriptor;
+            //dungeons are Worlds.xml entries whose map comes from <Maps>.
             if (!string.IsNullOrWhiteSpace(portal.Desc.DungeonName))
             {
-                Game.Dungeons.DungeonDef def = Game.Dungeons.DungeonDefs.ByName(portal.Desc.DungeonName);
-                if (def == null)
+                if (!Resources.Worlds.TryGetValue(portal.Desc.DungeonName, out WorldDesc desc) || !Game.Dungeons.DungeonWorld.IsSupported(desc))
                 {
                     player.SendInfo("Portal not implemented.");
                     return null;
                 }
-                return Manager.GetDungeonWorld(portal, def);
+                return Manager.GetDungeonWorld(portal, desc);
             }
 
             player.SendInfo("Portal not implemented.");

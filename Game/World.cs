@@ -67,7 +67,7 @@ namespace RotMG.Game
             BlockSight = desc.BlockSight;
         }
 
-        //Generated dungeons bypass WorldDesc (see Game/Dungeons).
+        //Direct construction without a WorldDesc.
         protected World(IGameMap map, string name, string displayName, int background)
         {
             Map = map;

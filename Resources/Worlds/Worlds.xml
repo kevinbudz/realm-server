@@ -38,4 +38,153 @@
 		<ShowDisplays>false</ShowDisplays>
 		<BlockSight>1</BlockSight>
 	</World>
+	<World id="Spider Den" display="Spider Den">
+		<Maps>Dungeons/Spider Den.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Undead Lair" display="Undead Lair">
+		<Maps>Dungeons/Undead Lair.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Tomb of the Ancients" display="Tomb of the Ancients">
+		<Maps>Dungeons/Tomb of the Ancients.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Sprite World" display="Sprite World">
+		<Maps>Dungeons/Sprite World.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Candyland Hunting Grounds" display="Candyland Hunting Grounds">
+		<Maps>Dungeons/Candyland Hunting Grounds.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Cave of A Thousand Treasures" display="Cave of A Thousand Treasures">
+		<Maps>Dungeons/Cave of a Thousand Treasures.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Beachzone" display="Beachzone">
+		<Maps>Dungeons/Beachzone.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Manor of the Immortals" display="Manor of the Immortals">
+		<Maps>Dungeons/Manor of the Immortals.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Forbidden Jungle" display="Forbidden Jungle">
+		<Maps>Dungeons/Forbidden Jungle.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Davy Jones's Locker" display="Davy Jones's Locker">
+		<Maps>Dungeons/Davy Jones' Locker.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Haunted Cemetery" display="Haunted Cemetery">
+		<Maps>Dungeons/Haunted Cemetery.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Haunted Cemetery Gates" display="Haunted Cemetery Gates">
+		<Maps>Dungeons/Haunted Cemetery Gates.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Haunted Cemetery Graves" display="Haunted Cemetery Graves">
+		<Maps>Dungeons/Haunted Cemetery Graves.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Haunted Cemetery Final Battle" display="Haunted Cemetery Final Battle">
+		<Maps>Dungeons/Haunted Cemetery Final Battle.jm</Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<!-- Generated dungeons: no map file, built by their DungeonGen template. -->
+	<World id="Abyss of Demons" display="Abyss of Demons">
+		<Maps></Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Mad Lab" display="Mad Lab">
+		<Maps></Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Pirate Cave" display="Pirate Cave">
+		<Maps></Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<!-- No map file or generator template yet; portals to these report not implemented until one is added. -->
+	<World id="Snake Pit" display="Snake Pit">
+		<Maps></Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Ocean Trench" display="Ocean Trench">
+		<Maps></Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Wine Cellar" display="Wine Cellar">
+		<Maps></Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
+	<World id="Dreamscape Labyrinth" display="Dreamscape Labyrinth">
+		<Maps></Maps>
+		<Background>0</Background>
+		<AllowTeleport>true</AllowTeleport>
+		<ShowDisplays>false</ShowDisplays>
+		<BlockSight>0</BlockSight>
+	</World>
 </Worlds>

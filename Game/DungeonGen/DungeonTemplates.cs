@@ -10,8 +10,8 @@ namespace RotMG.Game.DungeonGen
 {
     //Maps dungeon names onto reference generator templates. The reference
     //only ships three templates (see its DungeonTemplates, which reflects
-    //over "{world}Template" types); dungeons without a template keep the
-    //local room-and-corridor generator (see Game/Dungeons).
+    //over "{world}Template" types); dungeons without a template need a
+    //<Maps> entry in Worlds.xml.
     public static class DungeonTemplates
     {
         public static DungeonTemplate GetTemplate(string dungeonName)

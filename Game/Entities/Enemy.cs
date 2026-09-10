@@ -151,7 +151,6 @@ namespace RotMG.Game.Entities
             }
 
             (Parent as RealmWorld)?.Overseer?.OnEnemyKilled(this, killer);
-            (Parent as Dungeons.DungeonWorld)?.OnBossKilled(this, killer);
 
             Dead = true;
             Parent.RemoveEntity(this);
