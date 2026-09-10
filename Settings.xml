@@ -1,10 +1,14 @@
 ﻿<Settings res="Resources" db="Database">
 <!--db is a directory (realm.db is created inside it) or a direct .db file path-->
-	<MaxClients>256</MaxClients>
+	<MaxClients>512</MaxClients>
+	<!--TEMP-VISIBLE-SOAK: lets the localhost bot crowd connect from one IP. Remove to restore the anti-multibox cap of 4.-->
+	<MaxClientsPerIp>1000</MaxClientsPerIp>
 	<Address>127.0.0.1</Address>
 	<Ports>7777:2050</Ports>
 	<TicksPerSecond>10</TicksPerSecond> 
 <!--Client & Server designed to run at 10TPS, changing that might result in laggy animations/movement-->
 <!--Soak-test flag (default false): build large worlds off the tick thread-->
 	<AsyncWorldCreation>false</AsyncWorldCreation>
+<!--Realm instances for spreading players (default 1). Each extra realm gets its own Nexus portal.-->
+	<RealmInstances>1</RealmInstances>
 </Settings>

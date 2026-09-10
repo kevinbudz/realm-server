@@ -361,6 +361,13 @@ namespace RotMG.Common
         public bool Notifications;
 
         public AccountModel() : base(null) { }
+        //Detached build for a brand-new id: skips the database Reload (the
+        //row does not exist yet), so register can construct the model inside
+        //its write transaction without opening a nested connection.
+        internal AccountModel(int key, bool skipReload) : base(null)
+        {
+            Id = key;
+        }
         public AccountModel(int key) : base($"account.{key}")
         {
             Id = key;

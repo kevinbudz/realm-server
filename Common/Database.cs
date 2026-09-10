@@ -38,8 +38,11 @@ namespace RotMG.Common
         private const int MaxInvalidLoginAttempts = 5;
         private static Dictionary<string, byte> InvalidLoginAttempts;
 
+        //Reverted to the original shared-run value (1) after local bot
+        //seeding finished. int (not byte) so the comparison is meaningful
+        //for any future lift.
         private const int MaxRegisteredAccounts = 1;
-        private static Dictionary<string, byte> RegisteredAccounts;
+        private static Dictionary<string, int> RegisteredAccounts;
 
         private const int ResetCooldown = 60000 * 5; //5 minutes
         private static int ResetTime;
@@ -64,14 +67,19 @@ namespace RotMG.Common
         public static void Init()
         {
             InvalidLoginAttempts = new Dictionary<string, byte>();
-            RegisteredAccounts = new Dictionary<string, byte>();
+            RegisteredAccounts = new Dictionary<string, int>();
             if (!string.IsNullOrWhiteSpace(Settings.DatabaseDirectory) && !Directory.Exists(Settings.DatabaseDirectory))
                 Directory.CreateDirectory(Settings.DatabaseDirectory);
 
+            //Private (default) cache, NOT Shared: with shared-cache mode every
+            //connection in the process shares table locks, so a nested read
+            //on a second connection while a write transaction is open fails
+            //instantly with SQLITE_LOCKED instead of waiting. WAL mode plus
+            //the _lock-serialized writers below already give us concurrent
+            //readers with one writer and busy_timeout backoff.
             SqliteConnectionStringBuilder builder = new SqliteConnectionStringBuilder
             {
-                DataSource = Settings.DatabasePath,
-                Cache = SqliteCacheMode.Shared
+                DataSource = Settings.DatabasePath
             };
             _connectionString = builder.ToString();
 
@@ -582,7 +590,7 @@ namespace RotMG.Common
 
         public static bool CanRegisterAccount(string ip)
         {
-            if (RegisteredAccounts.TryGetValue(ip, out byte attempts) && attempts >= MaxRegisteredAccounts)
+            if (RegisteredAccounts.TryGetValue(ip, out int attempts) && attempts >= MaxRegisteredAccounts)
                 return false;
             return true;
         }
@@ -682,7 +690,10 @@ namespace RotMG.Common
                 UpsertKeyInTx(conn, $"login.hash.{id}", (password + salt).ToSHA1());
                 UpsertKeyInTx(conn, $"login.salt.{id}", salt);
 
-                AccountModel acc = new AccountModel(id)
+                //Detached: the account row is being created by this very
+                //transaction, so there is nothing to Reload (and the ctor
+                //Reload would open a nested connection inside the tx).
+                AccountModel acc = new AccountModel(id, skipReload: true)
                 {
                     Stats = new StatsInfo
                     {

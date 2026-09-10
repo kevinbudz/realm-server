@@ -22,6 +22,14 @@ namespace RotMG.Common
         //castle siege) on a worker thread and publish on the main thread
         //instead of stalling every tick for the full construction.
         public static bool AsyncWorldCreation;
+        //Realm instance count for spreading players across worlds
+        //(default 1 = legacy single realm). Each instance gets its own
+        //Nexus portal, overseer lifecycle, and close/quake/reset cycle.
+        public static int RealmInstances;
+        //Anti-multibox cap: concurrent game connections per IP (default 4
+        //= legacy behavior). Localhost stress runs hundreds of bots from
+        //127.0.0.1, so the stress config lifts this; live keeps 4.
+        public static int MaxClientsPerIp;
 
         public static void Init()
         {
@@ -52,6 +60,8 @@ namespace RotMG.Common
                 MillisecondsPerTick = 1000 / TicksPerSecond;
                 SecondsPerTick = 1f / TicksPerSecond;
                 AsyncWorldCreation = data.ParseBool("AsyncWorldCreation", false);
+                RealmInstances = Math.Max(1, data.ParseInt("RealmInstances", 1));
+                MaxClientsPerIp = Math.Max(1, data.ParseInt("MaxClientsPerIp", 4));
             }
         }
     }

@@ -531,7 +531,7 @@ namespace RotMG.Game
             if (_world.Closed)
             {
                 if (_world.Players.Count == 0)
-                    Manager.ResetRealm();
+                    Manager.ResetRealmInstance(_world);
                 return;
             }
 

@@ -25,6 +25,9 @@ namespace RotMG.Game
 
         public static int NextWorldId;
         public static int NextClientId;
+        //All realm instance ids: RealmId (primary) first, then generated
+        //ones. Portals, overseers, and reset/quake lifecycles are per id.
+        public static readonly List<int> RealmIds = new List<int>();
         public static Dictionary<int, int> AccountIdToClientId;
         public static Dictionary<int, Client> Clients;
         public static Dictionary<int, World> Worlds;
@@ -37,7 +40,7 @@ namespace RotMG.Game
         //Main-thread work queue: worker-built worlds are published through
         //here so Worlds dict mutation stays single-threaded. Drained in Tick.
         private static readonly ConcurrentQueue<Action> MainThreadQueue = new ConcurrentQueue<Action>();
-        private static bool _realmResetInFlight;
+        private static readonly HashSet<int> _realmResetsInFlight = new HashSet<int>();
         private static readonly HashSet<int> _castleBuildsInFlight = new HashSet<int>();
 
         public static void RunOnMainThread(Action action)
@@ -70,14 +73,19 @@ namespace RotMG.Game
             Behaviors = new BehaviorDb();
 
             AddWorld(Resources.Worlds["Nexus"], NexusId);
+            RealmIds.Add(RealmId);
             AddWorld(Resources.Worlds["Realm"], RealmId);
+            for (int i = 1; i < Settings.RealmInstances; i++)
+                RealmIds.Add(AddWorld(CreateWorld(Resources.Worlds["Realm"])));
             AddWorld(Resources.Worlds["Vault"], VaultId);
 
             //Realm portals live on the map's Realm_Portals region (one per
             //tracked realm, so extra realms each get their own portal). The
             //map-baked Vault and Guild Hall portals resolve dynamically, so
             //no spawn-adjacent placeholder portals are placed here.
-            ((NexusWorld)Worlds[NexusId]).Monitor.AddPortal(RealmId);
+            NexusWorld nexus = (NexusWorld)Worlds[NexusId];
+            foreach (int realmId in RealmIds)
+                nexus.Monitor.AddPortal(realmId);
         }
 
         public static World CreateWorld(WorldDesc desc, int mapIndex = -1)
@@ -270,72 +278,75 @@ namespace RotMG.Game
             });
         }
 
-        //Drops an empty closed realm and builds a fresh one under the
-        //same id, re-pointing the Nexus realm portal at it. Adapted
-        //from reference Realm.Tick, which re-Inits the world in place;
-        //static maps here cannot reset in place, so the world is
+        //Drops an empty closed realm instance and builds a fresh one under
+        //the same id, re-pointing that instance's Nexus portal at it.
+        //Adapted from reference Realm.Tick, which re-Inits the world in
+        //place; static maps here cannot reset in place, so the world is
         //recreated (the constructor re-rolls SBName, setpieces and
-        //the overseer).
+        //the overseer). Instance-keyed: every realm has its own cycle.
         public static void ResetRealm()
         {
-            if (!(Worlds.TryGetValue(RealmId, out World world) && world is RealmWorld))
-                return;
-            if (world.Players.Count > 0)
+            if (Worlds.TryGetValue(RealmId, out World world) && world is RealmWorld realm)
+                ResetRealmInstance(realm);
+        }
+
+        public static void ResetRealmInstance(RealmWorld realm)
+        {
+            if (realm.Players.Count > 0)
                 return;
             if (!Settings.AsyncWorldCreation)
             {
-                PublishResetRealm(world, CreateWorld(Resources.Worlds["Realm"]));
+                PublishResetRealm(realm, CreateWorld(Resources.Worlds["Realm"]));
                 return;
             }
             //Same off-thread treatment as the castle path above. The old
             //closed realm stays published during the build (it is empty
             //and closed, so nothing can enter); a failed build just clears
             //the flag and the next Overseer tick retries.
-            if (_realmResetInFlight)
+            if (!_realmResetsInFlight.Add(realm.Id))
                 return;
-            _realmResetInFlight = true;
             Task.Run(() =>
             {
                 try
                 {
                     World fresh = CreateWorld(Resources.Worlds["Realm"]);
-                    fresh.Id = RealmId;
+                    fresh.Id = realm.Id;
                     RunOnMainThread(() =>
                     {
-                        _realmResetInFlight = false;
-                        PublishResetRealm(world, fresh);
+                        _realmResetsInFlight.Remove(realm.Id);
+                        PublishResetRealm(realm, fresh);
                     });
                 }
                 catch (Exception e)
                 {
                     RunOnMainThread(() =>
                     {
-                        _realmResetInFlight = false;
+                        _realmResetsInFlight.Remove(realm.Id);
                         Program.Print(PrintType.Error, "Async realm reset failed: " + e.Message);
                     });
                 }
             });
         }
 
-        //Swaps the fresh realm in under the stable RealmId. Main thread
-        //only. Re-checks the preconditions: the world may have been
-        //replaced while a worker build was in flight.
-        private static void PublishResetRealm(World old, World fresh)
+        //Swaps the fresh realm in under its stable id. Main thread only.
+        //Re-checks the preconditions: the world may have been replaced
+        //while a worker build was in flight.
+        private static void PublishResetRealm(RealmWorld old, World fresh)
         {
-            if (!(Worlds.TryGetValue(RealmId, out World current) && current == old))
+            if (!(Worlds.TryGetValue(old.Id, out World current) && current == old))
                 return;
             if (old.Players.Count > 0)
                 return;
-            Worlds.Remove(RealmId);
-            fresh.Id = RealmId;
-            Worlds[RealmId] = fresh;
+            Worlds.Remove(old.Id);
+            fresh.Id = old.Id;
+            Worlds[old.Id] = fresh;
             if (Worlds.TryGetValue(NexusId, out World nexus))
             {
                 foreach (StaticObject stat in nexus.Statics.Values.ToArray())
                     if (stat is Portal portal && portal.WorldInstance == old)
                         portal.WorldInstance = fresh;
                 if (nexus is NexusWorld nexusWorld)
-                    nexusWorld.Monitor.UpdateWorldInstance(RealmId, fresh);
+                    nexusWorld.Monitor.UpdateWorldInstance(old.Id, fresh);
             }
         }
 
@@ -480,6 +491,7 @@ namespace RotMG.Game
                 TickDelta = (int)(TickWatch.ElapsedMilliseconds - LastTickTime);
                 TotalTime += Settings.MillisecondsPerTick;
                 TotalTicks++;
+                ServerPerf.EndTick(TickDelta);
             }
         }
     }

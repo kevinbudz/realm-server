@@ -583,8 +583,16 @@ namespace RotMG.Game
             en.Dispose();
         }
 
+        //Last-tick phase timings (ms) for ServerPerf. Written on the
+        //main thread: the parallel broadcast loops below block, so the
+        //stamps around them are main-thread reads.
+        public double LastBroadcastMs;
+        public double LastEntityMs;
+        public double LastTickMs;
+
         public void Tick()
         {
+            long tickStart = ServerPerf.Stamp();
             OnTick();
 
             if (Players.Count == 0)
@@ -607,6 +615,7 @@ namespace RotMG.Game
             _activeEntities.UnionWith(Constants.Values);
             foreach (Chunk chunk in _activeChunks)
                 _activeEntities.UnionWith(chunk.Entities);
+            long broadcastStart = ServerPerf.Stamp();
 
             //Player broadcast parallelizes cleanly: each worker touches only
             //its own player's mutable state while world state is read-only
@@ -619,17 +628,23 @@ namespace RotMG.Game
                 foreach (Player player in Players.Values)
                     player.SendUpdate();
 
+            double broadcastMs = ServerPerf.ElapsedMs(broadcastStart, ServerPerf.Stamp());
+
             //Tick logic first
+            long entityStart = ServerPerf.Stamp();
             foreach (Entity en in _activeEntities) 
                 if (en.TickEntity())
                     en.Tick();
+            long entityEnd = ServerPerf.Stamp();
 
             //Send NewTick to players (same independence as SendUpdate above)
+            long newTickStart = ServerPerf.Stamp();
             if (Players.Count >= ParallelBroadcastThreshold)
                 Parallel.ForEach(Players.Values, player => player.SendNewTick());
             else
                 foreach (Player player in Players.Values)
                     player.SendNewTick();
+            long newTickEnd = ServerPerf.Stamp();
 
             //Clear new stats
             foreach (Entity en in _activeEntities)
@@ -637,6 +652,10 @@ namespace RotMG.Game
                     en.NewSVs.Clear();
 
             ChatMessages.Clear();
+
+            LastBroadcastMs = broadcastMs + ServerPerf.ElapsedMs(newTickStart, newTickEnd);
+            LastEntityMs = ServerPerf.ElapsedMs(entityStart, entityEnd);
+            LastTickMs = ServerPerf.ElapsedMs(tickStart, ServerPerf.Stamp());
         }
 
         protected virtual void OnTick()

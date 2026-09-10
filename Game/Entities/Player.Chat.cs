@@ -225,6 +225,11 @@ namespace RotMG.Game.Entities
                     case "/loc":
                         SendInfo(this.ToString());
                         break;
+                    case "/perf":
+                    case "/tick":
+                        foreach (string line in ServerPerf.Summary())
+                            SendInfo(line);
+                        break;
                     case "/where":
                     case "/find":
                         Player findTarget = Manager.GetPlayer(input);

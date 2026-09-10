@@ -150,20 +150,20 @@ namespace RotMG.Game
 
         public void Tick()
         {
-            RealmWorld realm = Manager.GetWorld(Manager.RealmId) as RealmWorld;
-            if (realm != null)
-            {
-                if (realm.Closed)
-                    ClosePortal(Manager.RealmId);
-                else
-                    OpenPortal(Manager.RealmId);
-            }
-
             foreach (KeyValuePair<int, Portal> kv in _portals.ToArray())
             {
                 World world = kv.Value.WorldInstance ?? Manager.GetWorld(kv.Key);
                 if (world == null)
                     continue;
+                //Each tracked realm opens/closes its own portal; other
+                //worlds keep whatever state their own logic sets.
+                if (world is RealmWorld realm)
+                {
+                    if (realm.Closed)
+                        ClosePortal(kv.Key);
+                    else
+                        OpenPortal(kv.Key);
+                }
                 kv.Value.TrySetSV(StatType.Name, world.GetDisplayName() + " (" + world.Players.Count + ")");
             }
         }
