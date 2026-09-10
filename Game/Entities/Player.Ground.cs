@@ -23,6 +23,37 @@ namespace RotMG.Game.Entities
         public float PushX;
         public float PushY;
 
+        //Mad Lab vat pools (production behavior): the green "Bad Vat"
+        //pools hex, the blue "Good Vat" pools cleanse. Tile types are fixed
+        //by GameData, so they are matched by type, not by name.
+        private const ushort LabBadVatNoSlow = 0x82;
+        private const ushort LabBadVatRug = 0xa9;
+        private const ushort LabGoodVatNoSlow = 0x83;
+        private const ushort LabGoodVatRug = 0xa7;
+
+        public static bool IsHexPoolTile(ushort tileType) =>
+            tileType == LabBadVatNoSlow || tileType == LabBadVatRug;
+
+        public static bool IsCleansePoolTile(ushort tileType) =>
+            tileType == LabGoodVatNoSlow || tileType == LabGoodVatRug;
+
+        //Green pools hex until cleansed (infinite duration, like
+        //production) and strip Speedy to prevent green-pool speed abuse;
+        //blue pools remove the hex.
+        private void ApplyVatPoolEffects(TileDesc desc)
+        {
+            if (IsHexPoolTile(desc.Type))
+            {
+                ApplyConditionEffect(ConditionEffectIndex.Hexed, -1);
+                if (HasConditionEffect(ConditionEffectIndex.Speedy))
+                    RemoveConditionEffect(ConditionEffectIndex.Speedy);
+            }
+            else if (IsCleansePoolTile(desc.Type))
+            {
+                RemoveConditionEffect(ConditionEffectIndex.Hexed);
+            }
+        }
+
         public void PushSpeedToHistory(float speed, float mult)
         {
             SpeedHistory.Add(speed);
@@ -135,6 +166,7 @@ namespace RotMG.Game.Entities
                 if (!(tile.StaticObject?.Desc.ProtectFromGroundDamage ?? false) && Damage(desc.Id, desc.Damage, new ConditionEffectDesc[0], true))
                     return;
             }
+            ApplyVatPoolEffects(desc);
 
             Parent.MoveEntity(this, pos);
             //Verify-don't-punish-grazes: server never deals bullet damage
@@ -174,6 +206,7 @@ namespace RotMG.Game.Entities
             if (desc.Damage > 0 && !HasConditionEffect(ConditionEffectIndex.Invincible))
                 if (!(tile.StaticObject?.Desc.ProtectFromGroundDamage ?? false))
                     Damage(desc.Id, desc.Damage, new ConditionEffectDesc[0], true);
+            ApplyVatPoolEffects(desc);
         }
 
         public void TryGotoAck(int time)

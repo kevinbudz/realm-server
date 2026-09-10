@@ -89,8 +89,9 @@ namespace RotMG.Utils
         {
             string value = name[0].Equals('@') ? element.Attribute(name.Remove(0, 1))?.Value : element.Element(name)?.Value;
             if (string.IsNullOrWhiteSpace(value)) return undefined;
-            value = Regex.Replace(value, @"\s+", "");
-            return value.Split(seperator);
+            //Trim each entry instead of stripping all whitespace, so values
+            //with meaningful inner spaces (e.g. map paths like "Spider Den.jm") survive.
+            return value.Split(seperator).Select(k => k.Trim()).ToArray();
         }
 
         public static int[] ParseIntArray(this XElement element, string name, string seperator, int[] undefined = null)

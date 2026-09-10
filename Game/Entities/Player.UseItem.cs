@@ -19,6 +19,26 @@ namespace RotMG.Game.Entities
         public int UseDuration;
         public int UseTime;
 
+        //Conditions cleared by RemoveNegativeConditions(Self), mirroring
+        //realm-src-master Player.NegativeEffs.
+        private static readonly ConditionEffectIndex[] NegativeEffs =
+        {
+            ConditionEffectIndex.Slowed,
+            ConditionEffectIndex.Paralyzed,
+            ConditionEffectIndex.Weak,
+            ConditionEffectIndex.Stunned,
+            ConditionEffectIndex.Confused,
+            ConditionEffectIndex.Blind,
+            ConditionEffectIndex.Quiet,
+            ConditionEffectIndex.ArmorBroken,
+            ConditionEffectIndex.Bleeding,
+            ConditionEffectIndex.Dazed,
+            ConditionEffectIndex.Sick,
+            ConditionEffectIndex.Drunk,
+            ConditionEffectIndex.Hallucinating,
+            ConditionEffectIndex.Hexed,
+        };
+
         public void TryUseItem(int time, SlotData slot, Position target)
         {
             if (!ValidTime(time))
@@ -405,6 +425,34 @@ namespace RotMG.Game.Entities
                             });
                         }
                         break;
+                    case ActivateEffectIndex.IncrementStat:
+                        {
+                            int statIdx = ItemDesc.GetBoostIndex(eff.Stats);
+                            if (statIdx == -1)
+                                break;
+                            int maxValue = (Desc as PlayerDesc).Stats[statIdx].MaxValue;
+                            Stats[statIdx] += eff.Amount;
+                            if (Stats[statIdx] > maxValue)
+                            {
+                                Stats[statIdx] = maxValue;
+                                //Maxed stat potions grant a small permanent
+                                //boost instead, mirroring realm-src-master
+                                //AEIncrementStat.
+                                ActivateBoosts[statIdx] += (statIdx == 0 || statIdx == 1) ? 20 : 1;
+                                SendInfo("Already maxed... Stat boosted!");
+                            }
+                            else
+                                SendInfo("Potion consumed...");
+                            RecalculateEquipBonuses();
+                        }
+                        break;
+                    case ActivateEffectIndex.Heal:
+                        if (!HasConditionEffect(ConditionEffectIndex.Sick))
+                            Heal(eff.Amount, false);
+                        break;
+                    case ActivateEffectIndex.Magic:
+                        Heal(eff.Amount, true);
+                        break;
                     case ActivateEffectIndex.HealNova:
                         {
                             byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
@@ -414,6 +462,70 @@ namespace RotMG.Game.Entities
                                 {
                                     if (Position.Distance(j) <= eff.Range)
                                         k.Heal(eff.Amount, false);
+                                    if (k.Client.Account.Effects || k.Equals(this))
+                                        k.Client.Send(nova);
+                                }
+                            }
+                        }
+                        break;
+                    case ActivateEffectIndex.MagicNova:
+                        {
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
+                            foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
+                            {
+                                if (j is Player k)
+                                {
+                                    if (Position.Distance(j) <= eff.Range)
+                                        k.Heal(eff.Amount, true);
+                                    if (k.Client.Account.Effects || k.Equals(this))
+                                        k.Client.Send(nova);
+                                }
+                            }
+                        }
+                        break;
+                    case ActivateEffectIndex.StatBoostSelf:
+                        {
+                            int statIdx = ItemDesc.GetBoostIndex(eff.Stats);
+                            if (statIdx == -1)
+                                break;
+                            int statAmount = eff.Amount;
+                            ActivateBoosts[statIdx] += statAmount;
+                            RecalculateEquipBonuses();
+
+                            byte[] potion = GameServer.ShowEffect(ShowEffectIndex.Heal, Id, 0xffffffff);
+                            foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                                if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
+                                    k.Client.Send(potion);
+
+                            Manager.AddTimedAction(eff.DurationMS, () =>
+                            {
+                                ActivateBoosts[statIdx] -= statAmount;
+                                RecalculateEquipBonuses();
+                            });
+                        }
+                        break;
+                    case ActivateEffectIndex.StatBoostAura:
+                        {
+                            int statIdx = ItemDesc.GetBoostIndex(eff.Stats);
+                            if (statIdx == -1)
+                                break;
+                            int statAmount = eff.Amount;
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
+                            foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
+                            {
+                                if (j is Player k)
+                                {
+                                    if (Position.Distance(j) <= eff.Range)
+                                    {
+                                        Player boosted = k;
+                                        boosted.ActivateBoosts[statIdx] += statAmount;
+                                        boosted.RecalculateEquipBonuses();
+                                        Manager.AddTimedAction(eff.DurationMS, () =>
+                                        {
+                                            boosted.ActivateBoosts[statIdx] -= statAmount;
+                                            boosted.RecalculateEquipBonuses();
+                                        });
+                                    }
                                     if (k.Client.Account.Effects || k.Equals(this))
                                         k.Client.Send(nova);
                                 }
@@ -444,6 +556,45 @@ namespace RotMG.Game.Entities
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
                                 if (j is Player k && k.Client.Account.Effects)
                                     k.Client.Send(nova);
+                        }
+                        break;
+                    case ActivateEffectIndex.ClearConditionEffectSelf:
+                    case ActivateEffectIndex.ClearConditionsEffectSelf:
+                        if (!eff.CheckExistingEffect.HasValue || HasConditionEffect(eff.CheckExistingEffect.Value))
+                            ApplyConditionEffect(eff.Effect, 0);
+                        break;
+                    case ActivateEffectIndex.ClearConditionEffectAura:
+                        foreach (Entity j in Parent.PlayerChunks.HitTest(Position, eff.Range))
+                        {
+                            if (j is Player k && Position.Distance(j) <= eff.Range &&
+                                (!eff.CheckExistingEffect.HasValue || k.HasConditionEffect(eff.CheckExistingEffect.Value)))
+                                k.ApplyConditionEffect(eff.Effect, 0);
+                        }
+                        break;
+                    case ActivateEffectIndex.RemoveNegativeConditionsSelf:
+                        foreach (ConditionEffectIndex neg in NegativeEffs)
+                            RemoveConditionEffect(neg);
+                        {
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(1, 0));
+                            foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                                if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
+                                    k.Client.Send(nova);
+                        }
+                        break;
+                    case ActivateEffectIndex.RemoveNegativeConditions:
+                        {
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
+                            foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
+                            {
+                                if (j is Player k)
+                                {
+                                    if (Position.Distance(j) <= eff.Range)
+                                        foreach (ConditionEffectIndex neg in NegativeEffs)
+                                            k.RemoveConditionEffect(neg);
+                                    if (k.Client.Account.Effects || k.Equals(this))
+                                        k.Client.Send(nova);
+                                }
+                            }
                         }
                         break;
                     case ActivateEffectIndex.Dye:
@@ -501,6 +652,19 @@ namespace RotMG.Game.Entities
                     case ActivateEffectIndex.UnlockPortal:
                         UnlockDungeon(eff);
                         break;
+                    case ActivateEffectIndex.Pet:
+                    case ActivateEffectIndex.DazeBlast:
+                        //No-ops, mirroring realm-src-master Activate
+                        //(Pet and DazeBlast are unimplemented there too).
+                        break;
+                    case ActivateEffectIndex.PermaPet:
+                        if (!string.IsNullOrWhiteSpace(eff.ObjectId) &&
+                            Resources.Id2Object.TryGetValue(eff.ObjectId, out ObjectDesc petDesc))
+                        {
+                            PetId = petDesc.Type;
+                            SpawnPetIfAttached();
+                        }
+                        break;
                     case ActivateEffectIndex.Backpack:
                         if (HasBackpack)
                             callback = () =>
@@ -539,7 +703,14 @@ namespace RotMG.Game.Entities
 
             if (desc.Consumable)
             {
-                con.Inventory[slot.SlotId] = -1;
+                //Multi-dose consumables (e.g. Elixir of Health 7-1) chain
+                //via SuccessorId, mirroring realm-src-master UseItem: the
+                //slot downgrades to the successor instead of emptying.
+                int next = -1;
+                if (!string.IsNullOrWhiteSpace(desc.SuccessorId) &&
+                    Resources.Id2Item.TryGetValue(desc.SuccessorId, out ItemDesc successor))
+                    next = successor.Type;
+                con.Inventory[slot.SlotId] = next;
                 con.UpdateInventorySlot(slot.SlotId);
             }
 

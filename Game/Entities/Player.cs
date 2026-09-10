@@ -187,6 +187,11 @@ namespace RotMG.Game.Entities
 
         public FameStatsInfo FameStats;
 
+        //Attached vanity-pet object type (0 = none), persisted on the
+        //character and mirrored from realm-src-master Player.PetId.
+        public int PetId;
+        public Pet Pet;
+
         public Player(Client client) : base((ushort)client.Character.ClassType)
         {
             PrivateSVs = new Dictionary<StatType, object>();
@@ -202,6 +207,7 @@ namespace RotMG.Game.Entities
             if (client.Character.HealthPotions != 0) HealthPotions = client.Character.HealthPotions;
             if (client.Character.MagicPotions != 0) MagicPotions = client.Character.MagicPotions;
             if (client.Character.HasBackpack) HasBackpack = client.Character.HasBackpack;
+            PetId = client.Character.PetId;
             if (client.Character.SkinType != 0) SkinType = client.Character.SkinType;
             if (client.Character.Tex1 != 0) Tex1 = client.Character.Tex1;
             if (client.Character.Tex2 != 0) Tex2 = client.Character.Tex2;
@@ -236,6 +242,7 @@ namespace RotMG.Game.Entities
             Client.Character.HealthPotions = HealthPotions;
             Client.Character.MagicPotions = MagicPotions;
             Client.Character.HasBackpack = HasBackpack;
+            Client.Character.PetId = PetId;
             Client.Character.SkinType = SkinType;
             Client.Character.Tex1 = Tex1;
             Client.Character.Tex2 = Tex2;
@@ -271,6 +278,33 @@ namespace RotMG.Game.Entities
 
             ApplyConditionEffect(ConditionEffectIndex.Invulnerable, 3000);
             ApplyConditionEffect(ConditionEffectIndex.Invisible, 3000);
+
+            SpawnPetIfAttached();
+        }
+
+        //Spawns the attached vanity pet at the player's position,
+        //mirroring realm-src-master Player.SpawnPetIfAttached: any active
+        //pet is despawned first so re-using a generator (or re-entering a
+        //world) never duplicates it. AddEntity runs Init after positioning,
+        //so this is safe to call from Init on every world enter.
+        public void SpawnPetIfAttached()
+        {
+            if (Pet != null)
+            {
+                if (Pet.Parent != null)
+                    Pet.Parent.RemoveEntity(Pet);
+                Pet = null;
+            }
+
+            if (PetId == 0 || Parent == null)
+                return;
+
+            if (!Resources.Type2Object.ContainsKey((ushort)PetId))
+                return;
+
+            Pet pet = new Pet((ushort)PetId, this);
+            if (Parent.AddEntity(pet, Position) != -1)
+                Pet = pet;
         }
 
         public void Heal(int amount, bool magic)
@@ -279,7 +313,7 @@ namespace RotMG.Game.Entities
             if (magic)
             {
                 int mp = MP;
-                MP = Math.Max(1, Math.Min(GetStat(0), MP + amount));
+                MP = Math.Max(1, Math.Min(GetStat(1), MP + amount));
                 heal = MP - mp;
             }
             else

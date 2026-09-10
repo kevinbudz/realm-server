@@ -26,8 +26,11 @@ namespace RotMG.Game.Logic.Database
                     new Taunt(0.001f, 1000, "baa", "baa baa")
                 )
             );
-            db.Init(new string[] { "Black Cat", "Snowman" },
-                new PetFollow()
+            db.InitMany("Black Cat", "Snowman", name =>
+                new IBehavior[]
+                {
+                    new PetFollow()
+                }
             );
         }
     }

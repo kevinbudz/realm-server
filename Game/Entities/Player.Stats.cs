@@ -20,6 +20,11 @@ namespace RotMG.Game.Entities
 
         public int[] Stats;
         public int[] Boosts;
+        //Non-equipment boosts: timed StatBoostSelf/Aura pushes and
+        //IncrementStat overflow from maxed stat potions. Kept apart from
+        //equipment so RecalculateEquipBonuses never wipes them, mirroring
+        //realm-src-master's separate ActivateBoost bucket.
+        public int[] ActivateBoosts;
         public Dictionary<StatType, object> PrivateSVs;
 
         float _hpRegenCounter;
@@ -153,6 +158,7 @@ namespace RotMG.Game.Entities
         {
             Stats = character.Stats.ToArray();
             Boosts = new int[Stats.Length];
+            ActivateBoosts = new int[Stats.Length];
         }
 
         public void SetPrivateSV(StatType type, object value)

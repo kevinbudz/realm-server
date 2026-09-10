@@ -415,6 +415,8 @@ namespace RotMG.Common
         public readonly string DungeonName;
         public readonly string Id;
         public readonly string ObjectId;
+        public readonly int Stats;
+        public readonly ConditionEffectIndex? CheckExistingEffect;
 
         public ActivateEffectDesc(XElement e)
         {
@@ -445,6 +447,9 @@ namespace RotMG.Common
             DungeonName = e.ParseString("@dungeonName");
             Id = e.ParseString("@id");
             ObjectId = e.ParseString("@objectId");
+            Stats = e.ParseInt("@stat");
+            if (e.Attribute("checkExistingEffect") != null)
+                CheckExistingEffect = e.ParseConditionEffect("@checkExistingEffect");
         }
     }
     

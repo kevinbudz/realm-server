@@ -113,6 +113,31 @@ namespace RotMG.Game.Logic
                 Init(id, behaviors);
         }
 
+        //Registers behaviors for every object type in the idMin-idMax
+        //range, mirroring realm-src-master BehaviorDb.InitMany: types that
+        //already have a model keep it, and the factory receives each type's
+        //name so shared states can be built per entity.
+        public void InitMany(string idMin, string idMax, Func<string, IBehavior[]> behaviors)
+        {
+            if (!Resources.Id2Object.TryGetValue(idMin, out ObjectDesc minDesc) ||
+                !Resources.Id2Object.TryGetValue(idMax, out ObjectDesc maxDesc))
+            {
+#if DEBUG
+                Program.Print(PrintType.Error, $"Failed to add behaviors: {idMin}-{idMax}. Xml data not found.");
+#endif
+                return;
+            }
+
+            for (int type = minDesc.Type; type <= maxDesc.Type; type++)
+            {
+                if (Models.ContainsKey(type))
+                    continue;
+                if (!Resources.Type2Object.TryGetValue((ushort)type, out ObjectDesc desc))
+                    continue;
+                Init(desc.Id, behaviors(desc.Id));
+            }
+        }
+
         public BehaviorModel Resolve(ushort type)
         {
             if (Models.TryGetValue((int)type, out BehaviorModel model))

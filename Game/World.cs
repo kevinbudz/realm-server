@@ -501,10 +501,18 @@ namespace RotMG.Game
                 return;
             }
 
-            if (en is Player)
+            if (en is Player player)
             {
                 Players.Remove(en.Id);
                 PlayerChunks.Remove(en);
+                //Owned vanity pets leave with their owner so world changes
+                //and deaths never orphan them (see SpawnPetIfAttached).
+                if (player.Pet != null)
+                {
+                    if (player.Pet.Parent == this)
+                        RemoveEntity(player.Pet);
+                    player.Pet = null;
+                }
             }
             else if (en is Decoy)
             {

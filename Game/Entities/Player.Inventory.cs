@@ -70,6 +70,9 @@ namespace RotMG.Game.Entities
                 Boosts[7] += (int)(ItemDesc.GetStat(data, ItemData.Wisdom, 1));
             }
 
+            for (int i = 0; i < 8; i++)
+                Boosts[i] += ActivateBoosts[i];
+
             UpdateStats();
         }
 
