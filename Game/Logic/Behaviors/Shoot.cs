@@ -73,7 +73,7 @@ namespace RotMG.Game.Logic.Behaviors
                 if (host.HasConditionEffect(ConditionEffectIndex.Dazed))
                     count = (byte)Math.Ceiling(count / 2f);
 
-                Entity target = host.GetNearestPlayer(Range);
+                Entity target = Range <= 0 ? null : host.GetNearestPlayer(Range);
                 if (target != null || DefaultAngle != null || FixedAngle != null)
                 {
                     if (!host.Desc.Projectiles.TryGetValue(Index, out ProjectileDesc desc))

@@ -20,6 +20,7 @@ namespace RotMG.Game.Logic.Behaviors
         public readonly int CooldownVariance;
         public readonly ConditionEffectDesc[] Effects;
         public readonly uint Color;
+        public readonly int TravelTime;
 
         public Grenade(
             float range = 8, 
@@ -29,9 +30,10 @@ namespace RotMG.Game.Logic.Behaviors
             int cooldown = 0,
             int cooldownOffset = 0,
             int cooldownVariance = 0,
-            ConditionEffectIndex effect = ConditionEffectIndex.Nothing, 
-            int effectDuration = 0, 
-            uint color = 0xFFFF0000)
+            ConditionEffectIndex effect = ConditionEffectIndex.Nothing,
+            int effectDuration = 0,
+            uint color = 0xFFFF0000,
+            int travelTime = 1500)
         {
             Range = range;
             Damage = damage;
@@ -45,6 +47,7 @@ namespace RotMG.Game.Logic.Behaviors
                 new ConditionEffectDesc(effect, effectDuration)
             };
             Color = color;
+            TravelTime = travelTime;
         }
 
         public override void Enter(Entity host)
@@ -60,7 +63,7 @@ namespace RotMG.Game.Logic.Behaviors
                 if (host.HasConditionEffect(ConditionEffectIndex.Stunned))
                     return false;
 
-                Entity target = host.GetNearestPlayer(Range);
+                Entity target = Range <= 0 ? null : host.GetNearestPlayer(Range);
                 if (target != null || FixedAngle != null)
                 {
                     Position p;
@@ -82,10 +85,10 @@ namespace RotMG.Game.Logic.Behaviors
                         Effects = Effects,
                         Position = p,
                         Hitter = host.Desc.DisplayId,
-                        Time = Manager.TotalTime + 1500
+                        Time = Manager.TotalTime + TravelTime
                     };
 
-                    byte[] eff = GameServer.ShowEffect(ShowEffectIndex.Throw, host.Id, Color, p);
+                    byte[] eff = GameServer.ThrowEffect(host.Id, Color, p, TravelTime);
                     byte[] aoe = GameServer.Aoe(p, Radius, Damage, Effects[0].Effect, Color);
                     Entity[] players = host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius)
                         .Where(e => (e is Player j) && j.Entities.Contains(host)).ToArray();
@@ -93,7 +96,7 @@ namespace RotMG.Game.Logic.Behaviors
                     foreach (Entity en in players)
                         (en as Player).Client.Send(eff);
 
-                    Manager.AddTimedAction(1500, () => 
+                    Manager.AddTimedAction(TravelTime, () =>
                     {
                         foreach (Entity en in players)
                             if (en.Parent != null)

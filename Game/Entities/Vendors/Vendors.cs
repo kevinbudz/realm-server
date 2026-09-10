@@ -170,6 +170,16 @@ namespace RotMG.Game.Entities.Vendors
                 player.GiveItem(Item);
                 player.Credits = player.Client.Account.Stats.Credits;
                 player.Fame = player.Client.Account.Stats.Fame;
+                //The account row was already saved by TryDeduct, but the new
+                //item lives only in memory until the character row saves: a
+                //crash in between would charge for an item that never
+                //existed. Commit both rows before confirming the purchase.
+                try
+                {
+                    player.SaveToCharacter();
+                    Database.SaveAccountAndCharacter(player.Client.Account, player.Client.Character);
+                }
+                catch { }
                 SendSuccess(player, "Item purchased!");
 
                 if (Count != -1 && --Count <= 0)
@@ -268,11 +278,6 @@ namespace RotMG.Game.Entities.Vendors
                 SendFailed(player, error);
                 return;
             }
-            if (!player.TryDeduct(Currency, Price))
-            {
-                SendFailed(player, "Purchase Error: Insufficient Funds.");
-                return;
-            }
 
             if (!Resources.Id2Object.TryGetValue("Vault Chest", out ObjectDesc chestDesc))
             {
@@ -280,20 +285,51 @@ namespace RotMG.Game.Entities.Vendors
                 return;
             }
 
-            int index = Database.GetVaultCount(player.Client.Account);
-            Database.SetVaultCount(player.Client.Account, index + 1);
-
+            //Place the chest before charging: if the world rejects it, the
+            //player pays nothing (the old code deducted first and charged
+            //for a chest that never appeared).
             Container chest = new Container(chestDesc.Type)
             {
                 VaultOwnerId = player.Client.Account.Id,
-                VaultIndex = index
+                VaultIndex = -1 //Assigned by the atomic purchase below.
             };
-            Database.GetVaultItems(chest.VaultOwnerId, index, chest.Inventory, chest.ItemDatas);
 
             Position at = Position;
             player.Parent.RemoveStatic((int)at.X, (int)at.Y);
             if (player.Parent.AddEntity(chest, at) == -1)
             {
+                SendFailed(player, "Purchase Error: Transaction failed.");
+                return;
+            }
+
+            //Fame deduct, chest-count bump and player rows commit atomically
+            //(see BuyVaultChestSlot); rapid double-Buy packets can no longer
+            //read the same count and collapse two purchases into one chest.
+            try
+            {
+                player.SaveToCharacter();
+                int index = Database.BuyVaultChestSlot(player.Client.Account, player.Client.Character, Price);
+                if (index == -1)
+                {
+                    player.Parent.RemoveEntity(chest);
+                    SendFailed(player, "Purchase Error: Insufficient Funds.");
+                    return;
+                }
+                chest.VaultIndex = index;
+                Database.GetVaultItems(chest.VaultOwnerId, index, chest.Inventory, chest.ItemDatas);
+                chest.UpdateInventory();
+            }
+            catch
+            {
+                //The transaction committed nothing, so refund the in-memory
+                //deduct before anything else can persist it.
+                try
+                {
+                    player.Client.Account.Stats.Fame += Price;
+                    player.Fame = player.Client.Account.Stats.Fame;
+                    player.Parent.RemoveEntity(chest);
+                }
+                catch { }
                 SendFailed(player, "Purchase Error: Transaction failed.");
                 return;
             }

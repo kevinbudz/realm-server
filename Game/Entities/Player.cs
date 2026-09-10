@@ -348,6 +348,7 @@ namespace RotMG.Game.Entities
 
             Client.Active = false;
             Dead = true;
+            CancelTradeIfTrading();
 
             SaveToCharacter();
             Database.Death(killer, Client.Account, Client.Character);

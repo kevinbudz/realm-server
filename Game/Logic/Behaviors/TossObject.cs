@@ -1,4 +1,5 @@
 using RotMG.Common;
+using RotMG.Networking;
 using RotMG.Utils;
 using System;
 
@@ -22,6 +23,7 @@ namespace RotMG.Game.Logic.Behaviors
         public readonly int? MaxDensity;
         public readonly Region Region;
         public readonly float RegionRange;
+        public readonly int TravelTime;
 
         public TossObject(string child, double range = 5, double? angle = null,
             int cooldown = 1000, int cooldownVariance = 0, int cooldownOffset = 0,
@@ -29,7 +31,8 @@ namespace RotMG.Game.Logic.Behaviors
             double? minAngle = null, double? maxAngle = null,
             double? minRange = null, double? maxRange = null,
             double? densityRange = null, int? maxDensity = null,
-            Region region = Region.None, double regionRange = 10)
+            Region region = Region.None, double regionRange = 10,
+            int travelTime = 1500)
         {
             Child = child;
             Range = (float)range;
@@ -47,6 +50,7 @@ namespace RotMG.Game.Logic.Behaviors
             MaxDensity = maxDensity;
             Region = region;
             RegionRange = (float)regionRange;
+            TravelTime = travelTime;
         }
 
         public override void Enter(Entity host)
@@ -110,7 +114,20 @@ namespace RotMG.Game.Logic.Behaviors
                 at = host.Position + new Position(MathF.Cos(angle) * range, MathF.Sin(angle) * range);
             }
 
-            return BehaviorHelpers.SpawnChild(host, type, at) != null;
+            //The client flies its throw particle for the travel time, so the
+            //child spawns on landing; the default matches its 1500ms flight.
+            //Gold matches the reference implementations' toss color.
+            BehaviorHelpers.BroadcastToViewers(host,
+                GameServer.ThrowEffect(host.Id, 0xffffbf00, at, TravelTime));
+
+            World world = host.Parent;
+            Manager.AddTimedAction(TravelTime, () =>
+            {
+                if (world == null)
+                    return;
+                BehaviorHelpers.SpawnChild(host, type, at);
+            });
+            return true;
         }
 
         public override void Exit(Entity host)

@@ -206,6 +206,7 @@ namespace RotMG.Networking
         public static void Escape(Client client, PacketReader rdr)
         {
             client.Active = false;
+            client.Player.CancelTradeIfTrading();
             client.Player.FameStats.Escapes++;
             if (client.Player.HP <= 10)
                 client.Player.FameStats.NearDeathEscapes++;
@@ -260,10 +261,10 @@ namespace RotMG.Networking
             }
 
             client.Account.Stats.Credits -= price;
-            Database.DeleteKey($"login.username.{client.Account.Name}");
-            Database.SetKey($"login.username.{name}", client.Account.Id.ToString());
-            Database.SetKey($"login.id.{client.Account.Id}", name);
-            client.Account.Save();
+            //Old name key, new name keys and the account row commit as one
+            //transaction: a crash between them used to orphan the account
+            //under two names or none.
+            Database.RenameAccountKeys(client.Account.Id, client.Account.Name, name, client.Account);
 
             AccountModel fresh = new AccountModel(client.Account.Id);
             fresh.Load();
@@ -296,6 +297,7 @@ namespace RotMG.Networking
                 return;
 
             client.Active = false;
+            player.CancelTradeIfTrading();
             client.Send(Reconnect(world.Id));
             Manager.AddTimedAction(2000, client.Disconnect);
         }
@@ -718,6 +720,15 @@ namespace RotMG.Networking
             if (pos2.X != 0 || pos2.Y != 0)
                 pos2.Write(wtr);
             return PacketWriter.RentedBytes();
+        }
+
+        //Throw visual whose particle flies for travelTime ms. The client flies
+        //1500ms unless pos2 carries another duration, so the default sends
+        //the legacy layout and only custom times add the second position.
+        public static byte[] ThrowEffect(int targetObjectId, uint color, Position target, int travelTime)
+        {
+            Position duration = travelTime == 1500 ? new Position() : new Position(travelTime, 0);
+            return ShowEffect(ShowEffectIndex.Throw, targetObjectId, color, target, duration);
         }
 
         public static byte[] Goto(int objectId, Position pos)

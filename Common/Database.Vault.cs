@@ -48,13 +48,37 @@ namespace RotMG.Common
 
         public static void SetVaultItems(int accountId, int index, int[] types, int[] datas)
         {
-            string[] parts = new string[types.Length * 2];
-            for (int i = 0; i < types.Length; i++)
+            SetKey($"vault.{accountId}.{index}", VaultValue(types, datas));
+        }
+
+        //Buys one more vault chest: fame check, deduct, chest-count bump and
+        //the account/character rows commit in ONE transaction, with the count
+        //read inside the transaction. Two rapid Buy packets used to both read
+        //the same count and both write count+1 (double charge, one chest);
+        //a crash between deduct and count used to charge for nothing.
+        //Returns the new chest index, or -1 when funds are insufficient.
+        public static int BuyVaultChestSlot(AccountModel acc, CharacterModel ch, int price)
+        {
+            if (acc.Stats.Fame < price)
+                return -1;
+            acc.Stats.Fame -= price;
+            string accountXml = acc.Export(false).ToString();
+            string charXml = ch.Export(false).ToString();
+            int index = -1;
+            Transact(conn =>
             {
-                parts[i * 2] = types[i].ToString();
-                parts[i * 2 + 1] = datas[i].ToString();
-            }
-            SetKey($"vault.{accountId}.{index}", string.Join(",", parts));
+                int count = 1;
+                int.TryParse(GetKeyInTx(conn, $"vault.{acc.Id}.count"), out count);
+                if (count < 1)
+                    count = 1;
+                index = count;
+                UpsertKeyInTx(conn, $"vault.{acc.Id}.count", (count + 1).ToString());
+                UpsertKeyInTx(conn, AccountKey(acc.Id), accountXml);
+                UpsertKeyInTx(conn, CharacterKey(acc.Id, ch.Id), charXml);
+            });
+            acc.Data = System.Xml.Linq.XElement.Parse(accountXml);
+            ch.Data = System.Xml.Linq.XElement.Parse(charXml);
+            return index;
         }
     }
 }

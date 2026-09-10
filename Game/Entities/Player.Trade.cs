@@ -149,24 +149,63 @@ namespace RotMG.Game.Entities
             if (TradeAccepted)
                 return;
 
-            Trade = myOffer;
+            //The client supplies these arrays, so validate them exactly like
+            //ChangeTrade does: wrong length, equipped slots, empty slots and
+            //soulbound items must never become an offer. (ChangeTrade
+            //sanitizes the same way; AcceptTrade must not trust the client to
+            //have sent one first.)
+            if (myOffer == null || myOffer.Length != TradeSlots ||
+                yourOffer == null || yourOffer.Length != TradeSlots)
+                return;
+
+            bool[] clean = new bool[TradeSlots];
+            for (int i = 0; i < TradeSlots; i++)
+            {
+                if (!myOffer[i] || i < 4 || i >= Inventory.Length || Inventory[i] == -1)
+                    continue;
+                ItemDesc desc = null;
+                Resources.Type2Item.TryGetValue((ushort)Inventory[i], out desc);
+                if (desc != null && desc.Soulbound)
+                    continue;
+                clean[i] = true;
+            }
+
+            Trade = clean;
             if (TradeTarget.Trade.SequenceEqual(yourOffer))
             {
                 TradeAccepted = true;
-                TradeTarget.Client.Send(GameServer.TradeAccepted(TradeTarget.Trade, Trade));
+                //Identity-check the peer's client: Client objects are pooled,
+                //so a bare null check could deliver this to the peer's next
+                //login session after a disconnect.
+                if (TradeTarget.Client != null && TradeTarget.Client.Player == TradeTarget)
+                    TradeTarget.Client.Send(GameServer.TradeAccepted(TradeTarget.Trade, Trade));
 
                 if (TradeAccepted && TradeTarget.TradeAccepted)
                     DoTrade(this);
             }
         }
 
+        private static bool TradePeerUsable(Player player, Player target)
+        {
+            if (target == null || target.Trade == null)
+                return false;
+            //Disposed (disconnected) players have Parent == null; the dead
+            //cannot trade their grave goods away.
+            if (player.Parent == null || target.Parent == null || player.Parent != target.Parent)
+                return false;
+            if (player.Dead || target.Dead)
+                return false;
+            if (player.Client == null || target.Client == null)
+                return false;
+            return true;
+        }
+
         private static void DoTrade(Player player)
         {
             const string failedMsg = "Error while trading. Trade unsuccessful.";
-            string msg = "Trade Successful!";
 
             Player target = player.TradeTarget;
-            if (target == null || player.Parent == null || target.Parent == null || player.Parent != target.Parent)
+            if (!TradePeerUsable(player, target))
             {
                 FinishTrade(player, target, failedMsg);
                 return;
@@ -184,17 +223,39 @@ namespace RotMG.Game.Entities
                 if (target.Trade[i] && target.Inventory[i] != -1)
                     yourSlots.Add(i);
 
-            //Validate soulbound again at execution time.
-            foreach (int s in mySlots.Concat(yourSlots).ToArray())
+            //Validate soulbound again at execution time, per owning side
+            //(slot indices overlap between the two sides, so each list is
+            //checked against its own owner's inventory).
+            foreach (int s in mySlots)
             {
-                Player owner = mySlots.Contains(s) ? player : target;
                 ItemDesc desc = null;
-                Resources.Type2Item.TryGetValue((ushort)owner.Inventory[s], out desc);
+                Resources.Type2Item.TryGetValue((ushort)player.Inventory[s], out desc);
                 if (desc != null && desc.Soulbound)
                 {
                     FinishTrade(player, target, failedMsg);
                     return;
                 }
+            }
+            foreach (int s in yourSlots)
+            {
+                ItemDesc desc = null;
+                Resources.Type2Item.TryGetValue((ushort)target.Inventory[s], out desc);
+                if (desc != null && desc.Soulbound)
+                {
+                    FinishTrade(player, target, failedMsg);
+                    return;
+                }
+            }
+
+            //Never destroy items: if either side cannot fit what it is about
+            //to receive, abort with everything still in place. The vanilla
+            //client already blocks the button in this case; a hacked client
+            //used to be able to burn the counterparty's items.
+            if (mySlots.Count > target.CountFreeInventorySlots() ||
+                yourSlots.Count > player.CountFreeInventorySlots())
+            {
+                FinishTrade(player, target, failedMsg);
+                return;
             }
 
             List<int> myItems = mySlots.Select(s => player.Inventory[s]).ToList();
@@ -215,15 +276,9 @@ namespace RotMG.Game.Entities
                 target.UpdateInventorySlot(s);
             }
 
-            bool lost = false;
             for (int i = 0; i < myItems.Count; i++)
             {
                 int slot = target.GetFreeInventorySlot();
-                if (slot == -1)
-                {
-                    lost = true;
-                    continue;
-                }
                 target.Inventory[slot] = myItems[i];
                 target.ItemDatas[slot] = myDatas[i];
                 target.UpdateInventorySlot(slot);
@@ -231,11 +286,6 @@ namespace RotMG.Game.Entities
             for (int i = 0; i < yourItems.Count; i++)
             {
                 int slot = player.GetFreeInventorySlot();
-                if (slot == -1)
-                {
-                    lost = true;
-                    continue;
-                }
                 player.Inventory[slot] = yourItems[i];
                 player.ItemDatas[slot] = yourDatas[i];
                 player.UpdateInventorySlot(slot);
@@ -244,15 +294,33 @@ namespace RotMG.Game.Entities
             player.RecalculateEquipBonuses();
             target.RecalculateEquipBonuses();
 
-            if (lost)
-                msg = "An error occured while trading! Some items were lost!";
-            FinishTrade(player, target, msg);
+            //Both sides commit in ONE transaction (see SaveTradePair): with
+            //two separate saves, a crash after the first one duplicates every
+            //traded item. If the commit itself throws, both in-memory states
+            //are already swapped, so report success of the swap but keep the
+            //trade window closed; the next autosave/disconnect will persist.
+            try
+            {
+                player.SaveToCharacter();
+                target.SaveToCharacter();
+                Database.SaveTradePair(player.Client.Account, player.Client.Character,
+                    target.Client.Account, target.Client.Character);
+            }
+            catch
+            {
+            }
+
+            FinishTrade(player, target, "Trade Successful!");
         }
 
         private static void FinishTrade(Player player, Player target, string msg)
         {
-            player.Client.Send(GameServer.TradeDone(1, msg));
-            if (target != null && target.Client != null)
+            //Identity-check both clients: Client objects are pooled and
+            //reused by later sessions, so never queue packets onto a client
+            //that no longer belongs to this player.
+            if (player.Client != null && player.Client.Player == player)
+                player.Client.Send(GameServer.TradeDone(1, msg));
+            if (target != null && target.Client != null && target.Client.Player == target)
                 target.Client.Send(GameServer.TradeDone(1, msg));
             player.ResetTrade();
         }

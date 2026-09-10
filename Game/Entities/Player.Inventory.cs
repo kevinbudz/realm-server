@@ -106,6 +106,16 @@ namespace RotMG.Game.Entities
             return -1;
         }
 
+        public int CountFreeInventorySlots()
+        {
+            int maxSlots = HasBackpack ? MaxSlotsWithBackpack : MaxSlotsWithoutBackpack;
+            int free = 0;
+            for (int i = 4; i < maxSlots; i++)
+                if (Inventory[i] == -1)
+                    free++;
+            return free;
+        }
+
         public void DropItem(byte slot)
         {
             CancelTradeIfTrading();
@@ -139,6 +149,15 @@ namespace RotMG.Game.Entities
             container.UpdateInventorySlot(0);
 
             RecalculateEquipBonuses();
+            //The dropped bag is ephemeral, but the removal from this player's
+            //inventory is durable: persist before the drop is visible, or a
+            //crash resurrects the item while someone else already looted it.
+            try
+            {
+                SaveToCharacter();
+                Database.SaveAccountAndCharacter(Client.Account, Client.Character);
+            }
+            catch { }
             Parent.AddEntity(container, Position + MathUtils.Position(.2f, .2f));
         }
 
@@ -286,7 +305,40 @@ namespace RotMG.Game.Entities
             con1.UpdateInventorySlot(slot1.SlotId);
             con2.UpdateInventorySlot(slot2.SlotId);
             RecalculateEquipBonuses();
+            PersistInventoryMutation(en1 as Container, en2 as Container);
             Client.Send(ValidInvSwap);
+        }
+
+        //Persists this swap before acknowledging it. Ground bags are
+        //ephemeral (a crash simply undoes the move), but vault chests and the
+        //player row are durable: they must commit in ONE transaction or a
+        //crash between them duplicates vaulted items. InvResult(0) is only
+        //sent after the commit, so the client never believes a swap survived
+        //that did not.
+        private void PersistInventoryMutation(Container c1, Container c2)
+        {
+            try
+            {
+                SaveToCharacter();
+                string accountXml = Client.Account.Export(false).ToString();
+                string charXml = Client.Character.Export(false).ToString();
+                Dictionary<string, string> writes = new Dictionary<string, string>
+                {
+                    { Database.AccountKey(Client.Account.Id), accountXml },
+                    { Database.CharacterKey(Client.Account.Id, Client.Character.Id), charXml }
+                };
+                foreach (Container c in new[] { c1, c2 })
+                {
+                    if (c == null || c.VaultOwnerId == -1 || c.VaultIndex < 0)
+                        continue;
+                    writes[Database.VaultItemsKey(c.VaultOwnerId, c.VaultIndex)] =
+                        Database.VaultValue(c.Inventory, c.ItemDatas);
+                }
+                Database.WriteAtomically(writes);
+                Client.Account.Data = System.Xml.Linq.XElement.Parse(accountXml);
+                Client.Character.Data = System.Xml.Linq.XElement.Parse(charXml);
+            }
+            catch { }
         }
 
         public bool ValidSlot(int slot)

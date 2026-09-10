@@ -13,6 +13,38 @@ namespace RotMG.Game.Logic.Database
     {
         public void Init(BehaviorDb db)
         {
+            db.Init("Treasure Flame Trap 1.2 Sec",
+                new ConditionalEffect(ConditionEffectIndex.Invincible, true),
+                new State("Wait",
+                    new SetAltTexture(0, 0),
+                    new TimedTransition(500, "Start")
+                ),
+                new State("Start",
+                    new Shoot(100, 1, index: 0, cooldown: 200),
+                    new SetAltTexture(1, 1),
+                    new TimedTransition(140, "Start 2")
+                ),
+                new State("Start 2",
+                    new Shoot(100, 1, index: 0, cooldown: 200),
+                    new SetAltTexture(2, 2),
+                    new TimedTransition(140, "Start 3")
+                ),
+                new State("Start 3",
+                    new Shoot(100, 1, index: 0, cooldown: 200),
+                    new SetAltTexture(3, 3),
+                    new TimedTransition(140, "Start 4")
+                ),
+                new State("Start 4",
+                    new Shoot(100, 1, index: 0, cooldown: 200),
+                    new SetAltTexture(4, 4),
+                    new TimedTransition(140, "Start 5")
+                ),
+                new State("Start 5",
+                    new Shoot(100, 1, index: 0, cooldown: 200),
+                    new SetAltTexture(5, 5),
+                    new TimedTransition(140, "Wait")
+                )
+            );
             db.Init("Treasure Flame Trap 1.7 Sec",
                 new ConditionalEffect(ConditionEffectIndex.Invincible, true),
                 new State("Wait",
@@ -89,7 +121,7 @@ namespace RotMG.Game.Logic.Database
                 new ConditionalEffect(ConditionEffectIndex.Invincible, true),
                 new State("Move",
                     new Shoot(20, 1, index: 0, cooldown: 200),
-                    new MoveLine(3, 90),
+                    new MoveLine(2, 90),
                     new GroundTransition("Tunnel Ground M", "Suicide")
                 ),
                 new State("Suicide",

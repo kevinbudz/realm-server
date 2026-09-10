@@ -73,7 +73,13 @@ namespace RotMG.Networking
                 Program.Print(PrintType.Error, ex.ToString());
             }
 #endif
-            //Save what's needed. DB writes go to the worker queue so the tick thread never blocks.
+            //Save synchronously before the socket closes. These used to be
+            //queued onto the main loop's work queue, so a crash (or the
+            //shutdown path, which stops that loop first) silently dropped
+            //them and rolled the character back to its previous save while
+            //trade/vault counterparties kept their copies: a duplication
+            //machine. A disconnect-time write is two small rows; the tick it
+            //costs is worth the durability.
             if (Account != null)
             {
                 Account.Connected = false;
@@ -86,24 +92,21 @@ namespace RotMG.Networking
                     Player.SaveToCharacter();
                     Player.Parent.RemoveEntity(Player);
                     bool dead = ch == null || ch.Dead; //Already saved during death.
-                    Program.PushWork(() =>
+                    try
                     {
-                        try
-                        {
+                        if (dead)
                             acc.Save();
-                            if (!dead)
-                                Database.SaveCharacter(ch);
-                        }
-                        catch { }
-                    });
+                        else if (ch != null)
+                            Database.SaveAccountAndCharacter(acc, ch);
+                        else
+                            acc.Save();
+                    }
+                    catch { }
                 }
                 else
                 {
-                    Program.PushWork(() =>
-                    {
-                        try { acc.Save(); }
-                        catch { }
-                    });
+                    try { acc.Save(); }
+                    catch { }
                 }
             }
 

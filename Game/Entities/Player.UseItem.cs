@@ -715,6 +715,30 @@ namespace RotMG.Game.Entities
             }
 
             callback?.Invoke();
+
+            //The mutated slot may live in a vault chest: persist it with the
+            //player row atomically, like swaps do. Runs after the callback
+            //because the callback can mutate the slot as well.
+            if (desc.Consumable || callback != null)
+                PersistUsedContainer(con);
+        }
+
+        //Persists a container mutation made by UseItem (consumed item or
+        //backpack-vendor writeback). Vault rows commit with the player row in
+        //one transaction; the container write-through is gone, so without
+        //this a crash would resurrect the consumed item.
+        private void PersistUsedContainer(IContainer con)
+        {
+            try
+            {
+                SaveToCharacter();
+                if (con is Container c && c.VaultOwnerId != -1 && c.VaultIndex >= 0)
+                    Database.SaveClientAndVault(Client.Account, Client.Character,
+                        c.VaultOwnerId, c.VaultIndex, c.Inventory, c.ItemDatas);
+                else
+                    Database.SaveAccountAndCharacter(Client.Account, Client.Character);
+            }
+            catch { }
         }
 
         //Dungeon key portal creation, mirroring realm-src-master

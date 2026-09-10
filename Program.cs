@@ -85,8 +85,14 @@ namespace RotMG
             Terminate(null, null);
         }
 
+        private static int _terminateRan;
+
         public static void Terminate(object sender, EventArgs e)
         {
+            //Runs once: ProcessExit fires this on one thread while Main calls
+            //it again after the loop exits.
+            if (Interlocked.Exchange(ref _terminateRan, 1) == 1)
+                return;
             StartTerminating();
             Thread.Sleep(200);
             foreach (Client c in Manager.Clients.Values.ToArray())
@@ -94,6 +100,12 @@ namespace RotMG
                 try { c.Disconnect(); }
                 catch { }
             }
+            //Disconnects used to queue their saves onto PendingWork, which
+            //the main loop above no longer drains once Terminating is set, so
+            //every graceful shutdown silently lost all session progress.
+            //Disconnect now saves synchronously, but AppServer callbacks and
+            //any other queued work still need a drain before the checkpoint.
+            DrainWork();
             Thread.Sleep(200);
             try
             {
@@ -106,6 +118,36 @@ namespace RotMG
                 Database.Shutdown();
             }
             catch { }
+        }
+
+        //Executes everything still queued, inline, with the same exception
+        //semantics as the main loop.
+        public static void DrainWork()
+        {
+            while (PendingWork.TryDequeue(out Work work))
+            {
+                try
+                {
+                    work.Request();
+                    work.Callback?.Invoke();
+                }
+#if DEBUG
+                catch (Exception e1)
+#endif
+#if RELEASE
+                catch
+#endif
+                {
+#if DEBUG
+                    try { Console.WriteLine($"<Work drain error> {e1}"); } catch { }
+#endif
+                    try
+                    {
+                        work.Callback?.Invoke();
+                    }
+                    catch { }
+                }
+            }
         }
 
         public static void StartTerminating()

@@ -141,12 +141,12 @@ namespace RotMG.Game.Entities
                     break;
             }
 
-            //Persist personal vault chests on every mutation.
-            if (VaultOwnerId != -1 && VaultIndex >= 0)
-            {
-                try { Database.SetVaultItems(VaultOwnerId, VaultIndex, Inventory, ItemDatas); }
-                catch { }
-            }
+            //No database write here by design. Vault chests used to write
+            //through on every slot mutation while the swapping player's
+            //inventory only saved on disconnect, so a crash in between
+            //duplicated vaulted items. Vault rows now commit atomically with
+            //the player row at the mutation sites (see
+            //Player.PersistInventoryMutation and Player.UseItem).
         }
     }
 }

@@ -95,15 +95,21 @@ namespace RotMG.Networking
                 return;
             }
 
+            //Deduct before creating: CreateGuild commits the account row, so
+            //the charge lands in the same transaction as the guild keys. On
+            //any validation failure the deduct is refunded (a crash between
+            //the in-memory deduct and the commit persists nothing, which is
+            //consistent: no charge, no guild).
+            acc.Stats.Fame -= Database.GuildCreationFameCost;
             Database.GuildResult result = Database.CreateGuild(name, acc);
             if (result != Database.GuildResult.OK)
             {
+                acc.Stats.Fame += Database.GuildCreationFameCost;
+                try { acc.Save(); } catch { }
                 client.Send(GuildResult(false, "Guild Creation Error: " + result));
                 return;
             }
 
-            acc.Stats.Fame -= Database.GuildCreationFameCost;
-            acc.Save();
             player.Fame = acc.Stats.Fame;
             player.GuildName = acc.GuildName;
             player.GuildRank = acc.GuildRank;

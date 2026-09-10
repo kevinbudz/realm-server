@@ -176,7 +176,7 @@
 
     <Object type="0x5e1e" id="Treasure Flame Trap 1.2 Sec">
         <DisplayId>Flame Trap</DisplayId>
-        <Class>GameObject</Class>
+        <Class>Character</Class>
         <Enemy/>
         <DrawOnGround/>
         <Texture><File>invisible</File><Index>0</Index></Texture>
@@ -218,7 +218,7 @@
 
     <Object type="0x5e3b" id="Treasure Flame Trap 1.7 Sec">
         <DisplayId>Flame Trap</DisplayId>
-        <Class>GameObject</Class>
+        <Class>Character</Class>
         <Enemy/>
         <DrawOnGround/>
         <Texture><File>invisible</File><Index>0</Index></Texture>

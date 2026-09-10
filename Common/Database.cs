@@ -1,6 +1,7 @@
 ﻿using Microsoft.Data.Sqlite;
 using RotMG.Game;
 using RotMG.Game.Entities;
+using RotMG.Networking;
 using RotMG.Utils;
 using System;
 using System.Collections.Generic;
@@ -46,6 +47,15 @@ namespace RotMG.Common
         private const int CharSlotPrice = 2000; //Fame
         private const int SkinPrice = 1000; //Credits
 
+        //Bounds crash-loss and WAL growth. Autosave persists every connected
+        //player (account + character, atomically per player); the checkpoint
+        //sweep keeps the WAL file from growing without bound when the server
+        //never shuts down cleanly (kill -9 never runs Shutdown).
+        private const int AutosaveIntervalMS = 60000;
+        private const int CheckpointIntervalMS = 60000;
+        private static int _lastAutosave;
+        private static int _lastCheckpoint;
+
         //Serializes all database access. This is what makes the single-writer
         //limit of SQLite a non-issue: writes queue here instead of hitting SQLITE_BUSY.
         private static readonly object _lock = new object();
@@ -81,7 +91,27 @@ namespace RotMG.Common
                     }
                     using (SqliteCommand cmd = conn.CreateCommand())
                     {
-                        cmd.CommandText = "PRAGMA synchronous=NORMAL;";
+                        //FULL: every committed transaction survives a power
+                        //loss, not just an app crash. NORMAL only guarantees
+                        //the latter, which is exactly the outage this server
+                        //must ride through. Write volume here is tiny (a few
+                        //small rows per player action), so the extra fsync
+                        //cost is negligible.
+                        cmd.CommandText = "PRAGMA synchronous=FULL;";
+                        cmd.ExecuteNonQuery();
+                    }
+                    using (SqliteCommand cmd = conn.CreateCommand())
+                    {
+                        //Checkpoint roughly every 1000 WAL pages even if the
+                        //periodic PASSIVE sweep below never runs.
+                        cmd.CommandText = "PRAGMA wal_autocheckpoint=1000;";
+                        cmd.ExecuteNonQuery();
+                    }
+                    using (SqliteCommand cmd = conn.CreateCommand())
+                    {
+                        //Bound the WAL file size so a long-lived server that
+                        //never shuts down cleanly cannot fill the disk.
+                        cmd.CommandText = "PRAGMA journal_size_limit=33554432;";
                         cmd.ExecuteNonQuery();
                     }
                 }
@@ -119,12 +149,107 @@ namespace RotMG.Common
         {
             SqliteConnection conn = new SqliteConnection(_connectionString);
             conn.Open();
+            //Per-connection pragmas: every helper below opens a fresh
+            //connection, so anything that is not persisted in the DB header
+            //must be set here. (journal_mode and journal_size_limit persist;
+            //synchronous persists too, but re-asserting it is free.)
             using (SqliteCommand cmd = conn.CreateCommand())
             {
-                cmd.CommandText = "PRAGMA busy_timeout = 5000;";
+                cmd.CommandText = "PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL; PRAGMA wal_autocheckpoint = 1000;";
                 cmd.ExecuteNonQuery();
             }
             return conn;
+        }
+
+        private static string GetKeyInTx(SqliteConnection conn, string combinedKey)
+        {
+            using (SqliteCommand cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT value FROM kv WHERE path = @p;";
+                cmd.Parameters.AddWithValue("@p", combinedKey);
+                object result = cmd.ExecuteScalar();
+                return result == null || result == DBNull.Value ? null : (string)result;
+            }
+        }
+
+        private static void UpsertKeyInTx(SqliteConnection conn, string combinedKey, string value)
+        {
+            using (SqliteCommand cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "INSERT INTO kv(path, value) VALUES(@p, @v) ON CONFLICT(path) DO UPDATE SET value = excluded.value;";
+                cmd.Parameters.AddWithValue("@p", combinedKey);
+                cmd.Parameters.AddWithValue("@v", value ?? "");
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        private static void DeleteKeyInTx(SqliteConnection conn, string combinedKey)
+        {
+            using (SqliteCommand cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "DELETE FROM kv WHERE path = @p;";
+                cmd.Parameters.AddWithValue("@p", combinedKey);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        //Runs work inside one IMMEDIATE transaction on a single connection.
+        //IMMEDIATE takes the RESERVED lock up front, so a read-modify-write
+        //done through GetKeyInTx below cannot lose a commit to a concurrent
+        //HTTP-thread writer. Crash rule: once the commit returns, everything
+        //is durable; if the process dies first, none of it is.
+        private static void Transact(Action<SqliteConnection> work)
+        {
+            lock (_lock)
+            {
+                using (SqliteConnection conn = OpenConnection())
+                using (SqliteCommand begin = conn.CreateCommand())
+                {
+                    begin.CommandText = "BEGIN IMMEDIATE;";
+                    begin.ExecuteNonQuery();
+                    try
+                    {
+                        work(conn);
+                        using (SqliteCommand commit = conn.CreateCommand())
+                        {
+                            commit.CommandText = "COMMIT;";
+                            commit.ExecuteNonQuery();
+                        }
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            using (SqliteCommand rollback = conn.CreateCommand())
+                            {
+                                rollback.CommandText = "ROLLBACK;";
+                                rollback.ExecuteNonQuery();
+                            }
+                        }
+                        catch { }
+                        throw;
+                    }
+                }
+            }
+        }
+
+        //Commits a group of key writes (and optional deletes) as ONE SQLite
+        //transaction. Keys must already be combined (see CombineKeyPath).
+        //Callers must build the value strings first (pure in-memory work) and
+        //pass only strings in.
+        public static void WriteAtomically(Dictionary<string, string> writes, IEnumerable<string> deletes = null)
+        {
+            if ((writes == null || writes.Count == 0) && deletes == null)
+                return;
+            Transact(conn =>
+            {
+                if (writes != null)
+                    foreach (KeyValuePair<string, string> kv in writes)
+                        UpsertKeyInTx(conn, kv.Key, kv.Value);
+                if (deletes != null)
+                    foreach (string key in deletes)
+                        DeleteKeyInTx(conn, key);
+            });
         }
 
         //Imports pre-existing `*.file` keys once. Originals are left in place as backup.
@@ -171,6 +296,87 @@ namespace RotMG.Common
 #endif
         }
 
+        public static string AccountKey(int accountId) => $"account.{accountId}";
+        public static string CharacterKey(int accountId, int charId) => $"char.{accountId}.{charId}";
+        public static string VaultItemsKey(int accountId, int index) => $"vault.{accountId}.{index}";
+
+        public static string VaultValue(int[] types, int[] datas)
+        {
+            string[] parts = new string[types.Length * 2];
+            for (int i = 0; i < types.Length; i++)
+            {
+                parts[i * 2] = types[i].ToString();
+                parts[i * 2 + 1] = datas[i].ToString();
+            }
+            return string.Join(",", parts);
+        }
+
+        //Persists one player's account + character rows atomically. Every
+        //in-memory mutation of gold/fame/inventory must end here (or in one
+        //of the wider helpers below), otherwise a crash between two separate
+        //saves resurrects spent currency or duplicates moved items.
+        public static void SaveAccountAndCharacter(AccountModel acc, CharacterModel ch)
+        {
+            string accountXml = acc.Export(false).ToString();
+            string charXml = ch.Export(false).ToString();
+            WriteAtomically(new Dictionary<string, string>
+            {
+                { AccountKey(acc.Id), accountXml },
+                { CharacterKey(acc.Id, ch.Id), charXml }
+            });
+            acc.Data = XElement.Parse(accountXml);
+            ch.Data = XElement.Parse(charXml);
+        }
+
+        //Persists both sides of a completed trade in ONE transaction. Two
+        //separate saves would let a crash duplicate every traded item (side
+        //A saved without the item, side B never saved with it, or vice
+        //versa); one transaction makes the swap all-or-nothing.
+        public static void SaveTradePair(AccountModel acc1, CharacterModel ch1, AccountModel acc2, CharacterModel ch2)
+        {
+            string a1 = acc1.Export(false).ToString();
+            string c1 = ch1.Export(false).ToString();
+            string a2 = acc2.Export(false).ToString();
+            string c2 = ch2.Export(false).ToString();
+            WriteAtomically(new Dictionary<string, string>
+            {
+                { AccountKey(acc1.Id), a1 },
+                { CharacterKey(acc1.Id, ch1.Id), c1 },
+                { AccountKey(acc2.Id), a2 },
+                { CharacterKey(acc2.Id, ch2.Id), c2 }
+            });
+            acc1.Data = XElement.Parse(a1);
+            ch1.Data = XElement.Parse(c1);
+            acc2.Data = XElement.Parse(a2);
+            ch2.Data = XElement.Parse(c2);
+        }
+
+        //Persists a player together with the vault chest it just swapped
+        //with, atomically. The vault used to write through on every slot
+        //mutation while the player inventory only saved on disconnect, so a
+        //crash in between duplicated vaulted items; this closes that window.
+        //Extra writes (e.g. a vault-count bump when buying a chest) join the
+        //same transaction via extraWrites.
+        public static void SaveClientAndVault(AccountModel acc, CharacterModel ch,
+            int vaultOwnerId, int vaultIndex, int[] vaultTypes, int[] vaultDatas,
+            Dictionary<string, string> extraWrites = null)
+        {
+            string a = acc.Export(false).ToString();
+            string c = ch.Export(false).ToString();
+            Dictionary<string, string> writes = new Dictionary<string, string>
+            {
+                { AccountKey(acc.Id), a },
+                { CharacterKey(acc.Id, ch.Id), c },
+                { VaultItemsKey(vaultOwnerId, vaultIndex), VaultValue(vaultTypes, vaultDatas) }
+            };
+            if (extraWrites != null)
+                foreach (KeyValuePair<string, string> kv in extraWrites)
+                    writes[kv.Key] = kv.Value;
+            WriteAtomically(writes);
+            acc.Data = XElement.Parse(a);
+            ch.Data = XElement.Parse(c);
+        }
+
         public static void Tick()
         {
             if (Environment.TickCount - ResetTime >= ResetCooldown)
@@ -182,6 +388,58 @@ namespace RotMG.Common
                 InvalidLoginAttempts.Clear();
                 FlushLegends();
                 ResetTime = Environment.TickCount;
+            }
+
+            //Non-blocking checkpoint so the WAL cannot grow without bound on
+            //a server that is never shut down cleanly.
+            if (Environment.TickCount - _lastCheckpoint >= CheckpointIntervalMS)
+            {
+                _lastCheckpoint = Environment.TickCount;
+                try
+                {
+                    lock (_lock)
+                    {
+                        using (SqliteConnection conn = OpenConnection())
+                        using (SqliteCommand cmd = conn.CreateCommand())
+                        {
+                            cmd.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            //Bound crash-loss to ~one interval: without this, everything a
+            //player earns between login and disconnect lives only in memory
+            //and a crash wipes hours of progress (and, worse, resurrects
+            //already-traded away items while their new owners keep them).
+            if (Environment.TickCount - _lastAutosave >= AutosaveIntervalMS)
+            {
+                _lastAutosave = Environment.TickCount;
+                AutosaveConnectedPlayers();
+            }
+        }
+
+        private static void AutosaveConnectedPlayers()
+        {
+            Client[] snapshot;
+            try { snapshot = Manager.Clients.Values.ToArray(); }
+            catch { return; }
+            foreach (Client client in snapshot)
+            {
+                try
+                {
+                    if (client == null || client.Account == null || client.Character == null)
+                        continue;
+                    if (client.Player != null && client.Player.Parent != null)
+                        client.Player.SaveToCharacter();
+                    if (client.Character.Dead)
+                        client.Account.Save();
+                    else
+                        SaveAccountAndCharacter(client.Account, client.Character);
+                }
+                catch { }
             }
         }
 
@@ -359,58 +617,70 @@ namespace RotMG.Common
             if (!IsValidPassword(password))
                 return RegisterStatus.InvalidPassword;
 
+            //Fast-path pre-check; re-verified inside the transaction below.
             if (IdFromUsername(username) != -1)
                 return RegisterStatus.UsernameTaken;
 
-            //Account id allocation plus its login keys must be atomic so two
-            //concurrent registers can never receive the same id.
-            int id;
             string salt = MathUtils.GenerateSalt();
-            lock (_lock)
+            //Account id allocation, login keys and the account row commit as
+            //ONE transaction: a crash in between used to leave login keys
+            //pointing at a nonexistent account (or burn an id), and two
+            //concurrent registers could claim the same username.
+            RegisterStatus usernameTaken = RegisterStatus.Success;
+            Transact(conn =>
             {
-                id = int.Parse(GetKey("nextAccId", true));
-                SetKey("nextAccId", (id + 1).ToString(), true);
-
-                SetKey($"login.username.{username}", id.ToString());
-                SetKey($"login.id.{id}", username);
-                SetKey($"login.hash.{id}", (password + salt).ToSHA1());
-                SetKey($"login.salt.{id}", salt);
-            }
-
-            AccountModel acc = new AccountModel(id)
-            {
-                Stats = new StatsInfo
+                if (!string.IsNullOrWhiteSpace(GetKeyInTx(conn, $"login.username.{username}")))
                 {
-                    BestCharFame = 0,
-                    TotalFame = 0,
-                    Fame = 0,
-                    TotalCredits = 0,
-                    Credits = 0,
-                    ClassStats = CreateClassStats()
-                },
+                    usernameTaken = RegisterStatus.UsernameTaken;
+                    return;
+                }
 
-                MaxNumChars = 1,
-                NextCharId = 0,
-                AliveChars = new List<int>(),
-                DeadChars = new List<int>(),
-                OwnedSkins = new List<int>(),
-                Ranked = false,
-                Muted = false,
-                Banned = false,
-                GuildName = null,
-                GuildRank = 0,
-                Connected = false,
-                LockedIds = new List<int>(),
-                IgnoredIds = new List<int>(),
-                AllyDamage = true,
-                AllyShots = true,
-                Effects = true,
-                Sounds = true,
-                Notifications = true,
-                RegisterTime = UnixTime()
-            };
+                int id = int.Parse(GetKeyInTx(conn, CombineKeyPath("nextAccId", true)) ?? "0");
+                UpsertKeyInTx(conn, CombineKeyPath("nextAccId", true), (id + 1).ToString());
+                UpsertKeyInTx(conn, $"login.username.{username}", id.ToString());
+                UpsertKeyInTx(conn, $"login.id.{id}", username);
+                UpsertKeyInTx(conn, $"login.hash.{id}", (password + salt).ToSHA1());
+                UpsertKeyInTx(conn, $"login.salt.{id}", salt);
 
-            acc.Save();
+                AccountModel acc = new AccountModel(id)
+                {
+                    Stats = new StatsInfo
+                    {
+                        BestCharFame = 0,
+                        TotalFame = 0,
+                        Fame = 0,
+                        TotalCredits = 0,
+                        Credits = 0,
+                        ClassStats = CreateClassStats()
+                    },
+
+                    MaxNumChars = 1,
+                    NextCharId = 0,
+                    AliveChars = new List<int>(),
+                    DeadChars = new List<int>(),
+                    OwnedSkins = new List<int>(),
+                    Ranked = false,
+                    Muted = false,
+                    Banned = false,
+                    GuildName = null,
+                    GuildRank = 0,
+                    Connected = false,
+                    LockedIds = new List<int>(),
+                    IgnoredIds = new List<int>(),
+                    AllyDamage = true,
+                    AllyShots = true,
+                    Effects = true,
+                    Sounds = true,
+                    Notifications = true,
+                    RegisterTime = UnixTime()
+                };
+                string accountXml = acc.Export(false).ToString();
+                UpsertKeyInTx(conn, AccountKey(id), accountXml);
+                acc.Data = XElement.Parse(accountXml);
+            });
+            if (usernameTaken != RegisterStatus.Success)
+                return usernameTaken;
+
             AddRegisteredAccount(ip);
             return RegisterStatus.Success;
         }
@@ -443,6 +713,14 @@ namespace RotMG.Common
             if (id == -1) return null;
 
             string hash = GetKey($"login.hash.{id}");
+            //A half-written registration (pre-atomic era) or a deleted key
+            //could leave a login name with no hash; that must fail closed,
+            //not throw NullReferenceException onto the HTTP thread.
+            if (string.IsNullOrWhiteSpace(hash))
+            {
+                AddInvalidLoginAttempt(ip);
+                return null;
+            }
             string match = (password + GetKey($"login.salt.{id}")).ToSHA1();
 
             AccountModel acc = hash.Equals(match) ? new AccountModel(id) : null;
@@ -459,12 +737,38 @@ namespace RotMG.Common
             CharacterModel character = new CharacterModel(acc.Id, charId);
             character.Load();
 
+            //One transaction: a crash between the two saves used to leave a
+            //character flagged Deleted while still listed as alive (or the
+            //reverse), stranding or resurrecting it on next login.
             character.Deleted = true;
-            character.Save();
-
             acc.AliveChars.Remove(charId);
-            acc.Save();
+            string charXml = character.Export(false).ToString();
+            string accountXml = acc.Export(false).ToString();
+            WriteAtomically(new Dictionary<string, string>
+            {
+                { CharacterKey(acc.Id, charId), charXml },
+                { AccountKey(acc.Id), accountXml }
+            });
+            character.Data = XElement.Parse(charXml);
+            acc.Data = XElement.Parse(accountXml);
             return true;
+        }
+
+        //Web rename (ChooseName): the old login key must disappear in the
+        //same transaction the new keys and the account row appear, otherwise
+        //a crash leaves two names for one account or none at all.
+        public static void RenameAccountKeys(int accId, string oldName, string newName, AccountModel acc)
+        {
+            string accountXml = acc.Export(false).ToString();
+            WriteAtomically(
+                new Dictionary<string, string>
+                {
+                    { $"login.username.{newName}", accId.ToString() },
+                    { $"login.id.{accId}", newName },
+                    { AccountKey(accId), accountXml }
+                },
+                new[] { $"login.username.{oldName}" });
+            acc.Data = XElement.Parse(accountXml);
         }
 
         public static bool ChangePassword(AccountModel acc, string newPassword) 
@@ -477,8 +781,13 @@ namespace RotMG.Common
                 return false;
 
             string salt = MathUtils.GenerateSalt();
-            SetKey($"login.hash.{acc.Id}", (newPassword + salt).ToSHA1());
-            SetKey($"login.salt.{acc.Id}", salt);
+            //Both halves commit together: a crash between them would lock
+            //the account out (new hash, old salt).
+            WriteAtomically(new Dictionary<string, string>
+            {
+                { $"login.hash.{acc.Id}", (newPassword + salt).ToSHA1() },
+                { $"login.salt.{acc.Id}", salt }
+            });
             return true;
         }
 
@@ -596,20 +905,63 @@ namespace RotMG.Common
             character.Dead = true;
             character.DeathTime = UnixTime();
             character.DeathFame = totalFame;
-            character.Save();
 
             acc.Stats.Fame += totalFame;
             acc.Stats.TotalCredits += totalFame;
-            acc.Save();
 
-            //Death fame accrues to the guild pool, as upstream.
-            if (!string.IsNullOrWhiteSpace(acc.GuildName))
-                AddGuildFame(acc.GuildName, totalFame);
+            //Everything death persists (character + account + guild pool +
+            //legends + death record) commits as ONE transaction. The old code
+            //saved each key separately, so a crash could leave a dead
+            //character listed as alive, double-credit fame on retry, or take
+            //guild fame without recording the death.
+            string charXml = character.Export(false).ToString();
+            string accountXml = acc.Export(false).ToString();
+            string fameXml = fame.ToString();
+            string guildName = acc.GuildName;
+            int accId = acc.Id;
+            int charId = character.Id;
+            int charFame = character.Fame;
+            Transact(conn =>
+            {
+                UpsertKeyInTx(conn, CharacterKey(accId, charId), charXml);
+                UpsertKeyInTx(conn, AccountKey(accId), accountXml);
+                UpsertKeyInTx(conn, $"death.{accId}.{charId}", fameXml);
 
-            if (character.Fame >= MinFameRequiredToEnterLegends)
-                PushLegend(acc.Id, character.Id, totalFame, deathTime);
+                //Death fame accrues to the guild pool, as upstream.
+                if (!string.IsNullOrWhiteSpace(guildName) &&
+                    !string.IsNullOrWhiteSpace(GetKeyInTx(conn, GuildKey(guildName))))
+                {
+                    int famePool = 0;
+                    int.TryParse(GetKeyInTx(conn, GuildKey(guildName) + ".fame"), out famePool);
+                    UpsertKeyInTx(conn, GuildKey(guildName) + ".fame", (famePool + totalFame).ToString());
+                    if (totalFame > 0)
+                    {
+                        int totalPool = 0;
+                        int.TryParse(GetKeyInTx(conn, GuildKey(guildName) + ".totalFame"), out totalPool);
+                        UpsertKeyInTx(conn, GuildKey(guildName) + ".totalFame", (totalPool + totalFame).ToString());
+                    }
+                }
 
-            CreateKey($"death.{acc.Id}.{character.Id}", fame.ToString());
+                if (charFame >= MinFameRequiredToEnterLegends)
+                    foreach (var span in TimeSpans)
+                    {
+                        string key = CombineKeyPath($"legends.{span.Key}", true);
+                        string raw = GetKeyInTx(conn, key);
+                        List<string> legends = new List<string>();
+                        if (!string.IsNullOrEmpty(raw))
+                            legends.AddRange(raw.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None));
+                        legends.Add($"{accId}:{charId}:{totalFame}:{deathTime}");
+                        legends = legends.OrderByDescending(k => int.Parse(k.Split(':')[2])).ToList();
+                        if (span.Key == "all")
+                            legends = legends.Take(MaxLegends).ToList();
+                        UpsertKeyInTx(conn, key, string.Join("\n", legends.ToArray()));
+                    }
+            });
+            character.Data = XElement.Parse(charXml);
+            acc.Data = XElement.Parse(accountXml);
+
+            //Refresh the in-memory legends board from the committed state.
+            FlushLegends();
         }
 
         public static FameStats CalculateStats(AccountModel acc, CharacterModel character, string killer = "")
@@ -1011,10 +1363,13 @@ namespace RotMG.Common
                     return null;
             }
 
+            //The account row (which lists this character as alive and bumps
+            //NextCharId) and the character row commit together: a crash
+            //between them used to leave the account pointing at a character
+            //that was never written.
             int newId = acc.NextCharId;
             acc.NextCharId++;
             acc.AliveChars.Add(newId);
-            acc.Save();
 
             CharacterModel character = new CharacterModel(acc.Id, newId)
             {
@@ -1042,7 +1397,15 @@ namespace RotMG.Common
                 PetId = -1
             };
 
-            character.Save();
+            string accountXml = acc.Export(false).ToString();
+            string charXml = character.Export(false).ToString();
+            WriteAtomically(new Dictionary<string, string>
+            {
+                { AccountKey(acc.Id), accountXml },
+                { CharacterKey(acc.Id, newId), charXml }
+            });
+            acc.Data = XElement.Parse(accountXml);
+            character.Data = XElement.Parse(charXml);
             return character;
         }
 
