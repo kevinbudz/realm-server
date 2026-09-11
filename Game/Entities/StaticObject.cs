@@ -21,6 +21,14 @@ namespace RotMG.Game.Entities
                 throw new Exception("Projectile owner is undefined");
 #endif
 
+            //GameObject enemies with behaviors (e.g. Dr Terrible Bubble)
+            //rely on Invincible like any other enemy. TryHitEnemy usually
+            //filters these via Projectile.CanHit, but the guard belongs here
+            //too so direct hits can never damage an invincible static.
+            if (HasConditionEffect(ConditionEffectIndex.Invincible) ||
+                HasConditionEffect(ConditionEffectIndex.Stasis))
+                return false;
+
             if (Desc.Enemy)
             {
                 int damageWithDefense = this.GetDefenseDamage(projectile.Damage, Desc.Defense, projectile.Desc.ArmorPiercing);

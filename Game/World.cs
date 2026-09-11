@@ -500,6 +500,12 @@ namespace RotMG.Game
                     Tiles[(int)at.X, (int)at.Y].UpdateCount++;
                     UpdateCount++;
                 }
+                //Statics with behaviors (e.g. Dr Terrible Bubble, Monster
+                //Cage, Oryx's Living Floor) need InitStates just like any
+                //other entity: without this their Behavior is never resolved,
+                //ConditionalEffect never applies, and Order transitions miss.
+                //Mirrors realm-src-master World.EnterWorld, which inits statics.
+                en.Init();
                 return en.Id;
             }
 
