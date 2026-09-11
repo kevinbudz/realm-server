@@ -541,7 +541,6 @@ namespace RotMG.Networking
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
                 client.Send(CreateSuccess(world.AddEntity(client.Player, PickSpawnPosition(world)), client.Character.Id));
-                (world as RealmWorld)?.Overseer?.OnPlayerEntered(client.Player);
             }
         }
 
@@ -582,7 +581,6 @@ namespace RotMG.Networking
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
                 client.Send(CreateSuccess(world.AddEntity(client.Player, PickSpawnPosition(world)), client.Character.Id));
-                (world as RealmWorld)?.Overseer?.OnPlayerEntered(client.Player);
             }
         }
 

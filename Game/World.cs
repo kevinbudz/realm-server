@@ -533,6 +533,8 @@ namespace RotMG.Game
             }
 
             en.Init();
+            if (en is Player entered)
+                OnPlayerEntered(entered);
             return en.Id;
         }
 
@@ -660,6 +662,10 @@ namespace RotMG.Game
         }
 
         protected virtual void OnTick()
+        {
+        }
+
+        protected virtual void OnPlayerEntered(Player player)
         {
         }
 

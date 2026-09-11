@@ -283,41 +283,39 @@ namespace RotMG.Game.Logic.Database
                     new TierLoot(tier: 4, type: TierLoot.LootType.Ability, chance: 0.03f)
                 )
             );
-            db.Init("Candyland Boss Spawner",
-                new ConditionalEffect(ConditionEffectIndex.Invincible),
-                new State("Ini",
-                    new NoPlayerWithinTransition(dist: 16, targetState: "Ini2")
-                ),
-                new State("Ini2",
-                    new TimedRandomTransition(0, false, "Creampuff", "Unicorn", "Troll", "Rototo", "Fairy", "Gumball Machine")
-                ),
-                new State("Ini3",
-                    new EntitiesNotExistsTransition(16, "Ini", "Spoiled Creampuff", "Gigacorn", "Desire Troll", "MegaRototo", "Swoll Fairy", "Gumball Machine")
-                ),
-                new State("Creampuff",
-                    new Spawn(children: "Spoiled Creampuff", maxChildren: 1, initialSpawn: 0),
-                    new TimedTransition(time: 3000, targetState: "Ini3")
-                ),
-                new State("Unicorn",
-                    new Spawn(children: "Gigacorn", maxChildren: 1, initialSpawn: 0),
-                    new TimedTransition(time: 3000, targetState: "Ini3")
-                ),
-                new State("Troll",
-                    new Spawn(children: "Desire Troll", maxChildren: 1, initialSpawn: 0),
-                    new TimedTransition(time: 3000, targetState: "Ini3")
-                ),
-                new State("Rototo",
-                    new Spawn(children: "MegaRototo", maxChildren: 1, initialSpawn: 0),
-                    new TimedTransition(time: 3000, targetState: "Ini3")
-                ),
-                new State("Fairy",
-                    new Spawn(children: "Swoll Fairy", maxChildren: 1, initialSpawn: 0),
-                    new TimedTransition(time: 3000, targetState: "Ini3")
-                ),
-                new State("Gumball Machine",
-                    new Spawn(children: "Gumball Machine", maxChildren: 1, initialSpawn: 0),
-                    new TimedTransition(time: 3000, targetState: "Ini3")
+            //Final boss. No attacks and no movement; shares Gigacorn's
+            //drops. Spawned once by the Overseer in the starting room
+            //after one of each boss type has been defeated.
+            db.Init("Cupcake",
+                new Threshold(0.01f,
+                    new ItemLoot(item: "Potion of Attack", chance: 0.05f),
+                    new ItemLoot(item: "Potion of Wisdom", chance: 0.05f),
+                    new ItemLoot(item: "Ring Pop", chance: 0.015f),
+                    new ItemLoot(item: "Wine Cellar Incantation", chance: 0.02f),
+                    new ItemLoot(item: "Rock Candy", chance: 0.08f),
+                    new ItemLoot(item: "Candy-Coated Armor", chance: 0.01f),
+                    new ItemLoot(item: "Red Gumball", chance: 0.15f),
+                    new ItemLoot(item: "Purple Gumball", chance: 0.15f),
+                    new ItemLoot(item: "Blue Gumball", chance: 0.15f),
+                    new ItemLoot(item: "Green Gumball", chance: 0.15f),
+                    new ItemLoot(item: "Yellow Gumball", chance: 0.15f),
+                    new TierLoot(tier: 7, type: TierLoot.LootType.Weapon, chance: 0.04f),
+                    new TierLoot(tier: 6, type: TierLoot.LootType.Weapon, chance: 0.06f),
+                    new TierLoot(tier: 8, type: TierLoot.LootType.Armor, chance: 0.04f),
+                    new TierLoot(tier: 7, type: TierLoot.LootType.Armor, chance: 0.06f),
+                    new TierLoot(tier: 3, type: TierLoot.LootType.Ability, chance: 0.05f),
+                    new TierLoot(tier: 4, type: TierLoot.LootType.Ability, chance: 0.03f),
+                    new TierLoot(tier: 3, type: TierLoot.LootType.Ring, chance: 0.05f),
+                    new TierLoot(tier: 4, type: TierLoot.LootType.Ability, chance: 0.03f)
                 )
+            );
+            //Invisible map markers. Boss/trash population is owned by
+            //Candyland.Overseer (kill rolls + slot refill), not these enemies.
+            db.Init("Candyland Boss Spawner",
+                new ConditionalEffect(ConditionEffectIndex.Invincible, perm: true)
+            );
+            db.Init("Candyland Spawner",
+                new ConditionalEffect(ConditionEffectIndex.Invincible, perm: true)
             );
             db.Init("Gumball Machine",
                 new Threshold(0.01f,
@@ -341,7 +339,7 @@ namespace RotMG.Game.Logic.Database
                 new Shoot(range: 10, count: 1, index: 0, predictive: 1, cooldown: 2000, cooldownOffset: 1000)
             );
             db.Init("Big Creampuff",
-                new Spawn(children: "Small Creampuff", maxChildren: 4, initialSpawn: 0),
+                new SpawnOnce(children: "Small Creampuff", maxChildren: 3),
                 new Shoot(range: 10, count: 1, index: 0, predictive: 1, cooldown: 1400),
                 new Shoot(range: 4.4f, count: 5, shootAngle: 12, index: 1, predictive: 0.6f, cooldown: 800),
                 new Prioritize(
@@ -360,6 +358,15 @@ namespace RotMG.Game.Logic.Database
                     new Protect(speed: 0.8f, protectee: "Big Creampuff", acquireRange: 15, protectionRange: 7, reprotectRange: 6)
                 ),
                 new Wander(speed: 0.6f)
+            );
+            db.Init("Rototo",
+                new SpawnOnce(children: "Tiny Rototo", maxChildren: 3),
+                new Shoot(range: 10, count: 2, shootAngle: 20, index: 0, predictive: 0.6f, cooldown: 1400),
+                new Prioritize(
+                    new Follow(speed: 0.8f, acquireRange: 8, range: 4),
+                    new Wander(speed: 0.4f)
+                ),
+                new StayCloseToSpawn(speed: 1, range: 13)
             );
             db.Init("Tiny Rototo",
                 new Prioritize(
@@ -412,7 +419,7 @@ namespace RotMG.Game.Logic.Database
                                         new TimedRandomTransition(3800, false, "Run", "Attack")
                               ),
                               new State("Run",
-                                        new StayBack(1.1f, 10),
+                                        new StayBack(0.86f, 10),
                                         new TimedTransition(1200, "Choose")
                               ),
                               new State("Attack",
@@ -430,7 +437,7 @@ namespace RotMG.Game.Logic.Database
                                         new TimedRandomTransition(3800, false, "Run2", "Attack2")
                               ),
                               new State("Run2",
-                                        new StayBack(1.5f, 10),
+                                        new StayBack(1.22f, 10),
                                         new TimedTransition(1500, "Choose2"),
                                         new PlayerWithinTransition(3.5, "Boom")
                               ),
@@ -444,16 +451,16 @@ namespace RotMG.Game.Logic.Database
                                         new TimedTransition(200, "Choose2")
                               )
                     ),
-                    new StayCloseToSpawn(1.5f, 15),
+                    new StayCloseToSpawn(1.22f, 15),
                     new Prioritize(
-                        new Follow(1, 11, 5)
+                        new Follow(0.77f, 11, 5)
                     ),
-                    new Wander(0.4f)
+                    new Wander(0.23f)
             );
             db.Init("Unicorn",
                     new Prioritize(
                         new Charge(1.4f, 11, 3800),
-                                   new StayBack(0.8f, 6)
+                                   new StayBack(0.59f, 6)
                     ),
                     new State("Start",
                               new State("Shoot",
@@ -471,7 +478,7 @@ namespace RotMG.Game.Logic.Database
             db.Init("Spilled IceCream",
                     new Prioritize(
                         new Charge(1.4f, 11, 3800),
-                                   new StayBack(0.8f, 6)
+                                   new StayBack(0.59f, 6)
                     ),
                     new State("Start",
                               new State("Shoot",
@@ -487,23 +494,24 @@ namespace RotMG.Game.Logic.Database
                     )
             );
             db.Init("Beefy Fairy",
-                    new StayCloseToSpawn(1, 13),
+                    new SpawnOnce(children: "Fairy", maxChildren: 3),
+                    new StayCloseToSpawn(0.77f, 13),
                     new Prioritize(
-                        new Protect(1.2f, "Beefy Fairy", 15, 8, 6),
+                        new Protect(0.95f, "Beefy Fairy", 15, 8, 6),
                                    new Orbit(1.2f, 4, 7)
                     ),
-                    new Wander(0.6f),
+                    new Wander(0.41f),
                     new Shoot(10, 2, 30, 0, predictive: 1, cooldown: 2000),
                     new Shoot(10, 1, index: 0, predictive: 1, cooldownOffset: 1000, cooldown: 2000)
             );
             db.Init("Hard Candy",
                     new Shoot(5, 3, 12, 0, predictive: 0.6f, cooldown: 1000),
-                    new StayCloseToSpawn(1.3f, 13),
+                    new StayCloseToSpawn(1.04f, 13),
                     new Prioritize(
                         new Charge(1.3f, 13, 2500),
-                                   new Protect(0.8f, "Big Creampuff", 15, 7, 6)
+                                   new Protect(0.59f, "Big Creampuff", 15, 7, 6)
                     ),
-                    new Wander(0.6f)
+                    new Wander(0.41f)
             );
         }
     }

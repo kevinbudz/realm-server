@@ -1,5 +1,6 @@
 ﻿using RotMG.Common;
 using RotMG.Game.Logic;
+using Candyland = RotMG.Game.Dungeons.Candyland;
 using RotMG.Networking;
 using RotMG.Utils;
 using System;
@@ -151,6 +152,7 @@ namespace RotMG.Game.Entities
             }
 
             (Parent as RealmWorld)?.Overseer?.OnEnemyKilled(this, killer);
+            (Parent as Candyland.World)?.Overseer?.OnEnemyKilled(this, killer);
 
             Dead = true;
             Parent.RemoveEntity(this);

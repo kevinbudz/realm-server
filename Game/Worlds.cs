@@ -1,4 +1,5 @@
 ﻿using RotMG.Common;
+using RotMG.Game.Entities;
 using RotMG.Networking;
 using System.Collections.Generic;
 using System.Linq;
@@ -46,6 +47,11 @@ namespace RotMG.Game
         protected override void OnTick()
         {
             Overseer.Tick();
+        }
+
+        protected override void OnPlayerEntered(Player player)
+        {
+            Overseer.OnPlayerEntered(player);
         }
     }
 

@@ -203,7 +203,10 @@ namespace RotMG.Game
         //once empty.
         public static World CreateDungeonWorld(WorldDesc desc)
         {
-            World world = new Dungeons.DungeonWorld(desc, Guid.NewGuid().GetHashCode());
+            int seed = Guid.NewGuid().GetHashCode();
+            World world = desc.Id == "Candyland Hunting Grounds"
+                ? new Dungeons.Candyland.World(desc, seed)
+                : new Dungeons.DungeonWorld(desc, seed);
             AddWorld(world);
             return world;
         }
