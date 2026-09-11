@@ -9,6 +9,10 @@ namespace RotMG.Game.Entities
     public partial class Player
     {
         public const int SightRadius = 15;
+        //realm-src-master parity (Player.Update StaticBoundingBox):
+        //revealed tile statics persist to twice the sight radius instead
+        //of dropping the moment the sight circle breaks.
+        private const int StaticRetentionRadius = SightRadius * 2;
         private const float StartAngle = 0;
         private const float EndAngle = (float)(2 * Math.PI);
         private const float RayStepSize = .05f;
@@ -250,6 +254,18 @@ namespace RotMG.Game.Entities
                     if (en.Parent != null)
                         continue;
                 }
+                else if (en is StaticObject staticObj)
+                {
+                    //Sticky retention like realm-src-master
+                    //GetRemovedStatics: a revealed tile static (wall,
+                    //portal, deco) stays known while its tile still hosts
+                    //it and it remains within the retention box, even when
+                    //occluded or outside the sight circle. Without this,
+                    //rooms revealed by breaking destructible walls vanish
+                    //as soon as the sight line breaks.
+                    if (en.Parent != null && IsRetainedStatic(staticObj))
+                        continue;
+                }
                 else
                 {
                     //The live quest target is never dropped (mirrors
@@ -283,6 +299,19 @@ namespace RotMG.Game.Entities
                 Client.Send(GameServer.Update(_tilesScratch, _addsScratch, _dropsScratch));
                 FameStats.TilesUncovered += _tilesScratch.Count;
             }
+        }
+
+        //Retention box is symmetric on both axes. realm-src-master's
+        //equivalent check is accidentally one-sided (no Abs on one path);
+        //squaring it here so statics drop at the same distance in every
+        //direction instead of lingering east/south.
+        private bool IsRetainedStatic(StaticObject staticObj)
+        {
+            if (Math.Abs(staticObj.Position.X - Position.X) > StaticRetentionRadius ||
+                Math.Abs(staticObj.Position.Y - Position.Y) > StaticRetentionRadius)
+                return false;
+            Tile? tile = Parent.GetTileF(staticObj.Position.X, staticObj.Position.Y);
+            return tile != null && ReferenceEquals(tile.Value.StaticObject, staticObj);
         }
 
         IntPoint _p; int _w;

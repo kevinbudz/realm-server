@@ -64,7 +64,6 @@ namespace RotMG.Game.Logic.Database
                     new PlayerWithinTransition(14, "Start")
                 ),
                 new State("Start",
-                    new Order(30, "Oryx Stone Guardian Right", "Start"),
                     new ConditionalEffect(ConditionEffectIndex.Invulnerable),
                     new Flash(0xC0C0C0, 0.5, 3),
                     new TimedTransition(1500, "Attack")
@@ -166,7 +165,7 @@ namespace RotMG.Game.Logic.Database
             db.Init("Oryx Insect Commander",
                 new State("swarm",
                     new Wander(0.2f),
-                    new Reproduce("Oryx Insect Minion", 10, 20, cooldown: 50),
+                    new Reproduce("Oryx Insect Minion", 10, 20, cooldown: 2000),
                     new Shoot(10, count: 1, index: 0, cooldown: 900)
                 )
             );
