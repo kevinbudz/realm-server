@@ -471,7 +471,21 @@ namespace RotMG.Game
                             timerBudgetExceeded = true;
                             break;
                         }
-                        next.Value.Dequeue()();
+                        //One bad timer must not kill the server: isolate it
+                        //like MainThreadQueue work below (log in DEBUG,
+                        //swallow in release) and continue the tick.
+                        try
+                        {
+                            next.Value.Dequeue()();
+                        }
+#if DEBUG
+                        catch (Exception e)
+                        {
+                            Program.Print(PrintType.Error, e.ToString());
+                        }
+#else
+                        catch { }
+#endif
                     }
                     if (timerBudgetExceeded)
                         break;

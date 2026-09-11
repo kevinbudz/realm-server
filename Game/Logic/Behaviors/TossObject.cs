@@ -123,9 +123,11 @@ namespace RotMG.Game.Logic.Behaviors
             World world = host.Parent;
             Manager.AddTimedAction(TravelTime, () =>
             {
-                if (world == null)
-                    return;
-                BehaviorHelpers.SpawnChild(host, type, at);
+                //Spawn into the captured world, not via host.Parent: the
+                //host may have died and been removed (Parent == null) during
+                //the travel time, but the toss still lands (see reference
+                //TossObject, which spawns from the timer's world).
+                BehaviorHelpers.SpawnChild(world, type, at);
             });
             return true;
         }

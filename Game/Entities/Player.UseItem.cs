@@ -364,7 +364,10 @@ namespace RotMG.Game.Entities
                                 HashSet<Entity> targets = new HashSet<Entity>();
                                 List<byte[]> pkts = new List<byte[]>();
                                 targets.Add(current);
-                                (current as Enemy).Damage(this, eff.TotalDamage, eff.Effects, false, true);
+                                if (current is Enemy currentEnemy &&
+                                    !currentEnemy.HasConditionEffect(ConditionEffectIndex.Invincible) &&
+                                    !currentEnemy.HasConditionEffect(ConditionEffectIndex.Stasis))
+                                    currentEnemy.Damage(this, eff.TotalDamage, eff.Effects, false, true);
                                 for (int i = 1; i < eff.MaxTargets + 1; i++)
                                 {
                                     pkts.Add(GameServer.ShowEffect(ShowEffectIndex.Lightning, prev.Id, 0xffff0088,
@@ -379,7 +382,10 @@ namespace RotMG.Game.Entities
                                         break;
 
                                     targets.Add(next);
-                                    (next as Enemy).Damage(this, eff.TotalDamage, eff.Effects, false, true);
+                                    if (next is Enemy nextEnemy &&
+                                        !nextEnemy.HasConditionEffect(ConditionEffectIndex.Invincible) &&
+                                        !nextEnemy.HasConditionEffect(ConditionEffectIndex.Stasis))
+                                        nextEnemy.Damage(this, eff.TotalDamage, eff.Effects, false, true);
                                     prev = current;
                                     current = next;
                                 }

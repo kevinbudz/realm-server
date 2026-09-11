@@ -97,6 +97,21 @@ namespace RotMG.Game.Entities
         {
             for (int k = 0; k < MaxSlots; k++)
                 UpdateInventorySlot(k);
+            UpdateVaultCountName();
+        }
+
+        //Vault chests show their fill level ("0/8".."8/8") as an overhead
+        //name, mirroring realm-portal occupancy counts. Non-vault
+        //containers are untouched.
+        public void UpdateVaultCountName()
+        {
+            if (Desc == null || Desc.DisplayId != "Vault Chest")
+                return;
+            int filled = 0;
+            for (int i = 0; i < MaxSlots; i++)
+                if (Inventory[i] != -1)
+                    filled++;
+            TrySetSV(StatType.Name, filled + "/" + MaxSlots);
         }
 
         public void UpdateInventorySlot(int slot)
@@ -140,6 +155,8 @@ namespace RotMG.Game.Entities
                     SetSV(StatType.ItemData_7, ItemDatas[7]);
                     break;
             }
+
+            UpdateVaultCountName();
 
             //No database write here by design. Vault chests used to write
             //through on every slot mutation while the swapping player's

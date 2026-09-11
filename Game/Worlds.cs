@@ -98,6 +98,9 @@ namespace RotMG.Game
                         VaultIndex = i
                     };
                     Database.GetVaultItems(AccountId, i, chest.Inventory, chest.ItemDatas);
+                    //Push inventory + "x/8" name into SVs before first sight
+                    //so a joining client sees contents and fill level at once.
+                    chest.UpdateInventory();
                     AddEntity(chest, at);
                 }
                 else

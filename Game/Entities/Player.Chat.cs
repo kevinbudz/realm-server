@@ -696,7 +696,7 @@ namespace RotMG.Game.Entities
                                 SendError("Player does not have a quest!");
                                 return;
                             }
-                            if (!Teleport(Manager.TotalTimeUnsynced, Quest.Position))
+                            if (!Teleport(Manager.TotalTimeUnsynced, Quest.Position, ignoreSeen: true))
                                 SendError("Cannot teleport to quest.");
                             else
                                 SendInfo("Teleported to Quest Location: (" + (int)Quest.Position.X + ", " + (int)Quest.Position.Y + ")");

@@ -48,7 +48,7 @@ namespace RotMG.Game
             if (TryGetPortalSpot(out int x, out int y))
             {
                 //Indexed directly for the link: Tile is a struct (see World).
-                Portal portal = new Portal(Resources.Id2Object["Realm Portal"].Type) { WorldInstance = world };
+                Portal portal = new Portal(Resources.Id2Object["Nexus Portal"].Type) { WorldInstance = world };
                 if (_nexus.GetTile(x, y) != null && _nexus.AddEntity(portal, new Position(x + 0.5f, y + 0.5f)) != -1)
                 {
                     _nexus.Tiles[x, y].StaticObject = portal;
@@ -57,7 +57,7 @@ namespace RotMG.Game
                     return portal;
                 }
             }
-            return Manager.PlacePortal(_nexus, "Realm Portal", world);
+            return Manager.PlacePortal(_nexus, "Nexus Portal", world);
         }
 
         //Registers a portal for a world. An already-placed portal (e.g.

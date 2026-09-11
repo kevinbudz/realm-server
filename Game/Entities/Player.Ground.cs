@@ -39,9 +39,14 @@ namespace RotMG.Game.Entities
 
         //Green pools hex until cleansed (infinite duration, like
         //production) and strip Speedy to prevent green-pool speed abuse;
-        //blue pools remove the hex.
-        private void ApplyVatPoolEffects(TileDesc desc)
+        //blue pools remove the hex. Catwalks and other covers flagged
+        //ProtectFromGroundDamage shield the player from both pools, so a
+        //catwalk over a vat neither hexes nor cleanses.
+        private void ApplyVatPoolEffects(Tile tile)
         {
+            if (tile.StaticObject?.Desc.ProtectFromGroundDamage ?? false)
+                return;
+            TileDesc desc = Resources.Type2Tile[tile.Type];
             if (IsHexPoolTile(desc.Type))
             {
                 ApplyConditionEffect(ConditionEffectIndex.Hexed, -1);
@@ -166,7 +171,7 @@ namespace RotMG.Game.Entities
                 if (!(tile.Value.StaticObject?.Desc.ProtectFromGroundDamage ?? false) && Damage(desc.Id, desc.Damage, new ConditionEffectDesc[0], true))
                     return;
             }
-            ApplyVatPoolEffects(desc);
+            ApplyVatPoolEffects(tile.Value);
 
             Parent.MoveEntity(this, pos);
             //Verify-don't-punish-grazes: server never deals bullet damage
@@ -206,7 +211,7 @@ namespace RotMG.Game.Entities
             if (desc.Damage > 0 && !HasConditionEffect(ConditionEffectIndex.Invincible))
                 if (!(tile.Value.StaticObject?.Desc.ProtectFromGroundDamage ?? false))
                     Damage(desc.Id, desc.Damage, new ConditionEffectDesc[0], true);
-            ApplyVatPoolEffects(desc);
+            ApplyVatPoolEffects(tile.Value);
         }
 
         public void TryGotoAck(int time)
@@ -230,13 +235,18 @@ namespace RotMG.Game.Entities
             }
         }
 
-        public bool Teleport(int time, Position pos)
+        //Admin teleports (/tq) target entities the player has often never
+        //seen: every unseen tile mismatches the client's last-seen
+        //UpdateCount, so those callers bypass the seen check. The client's
+        //update loop streams the destination tiles on the following ticks,
+        //exactly as on dungeon entry. RegionUnblocked still applies.
+        public bool Teleport(int time, Position pos, bool ignoreSeen = false)
         {
             if (!RegionUnblocked(pos.X, pos.Y))
                 return false;
 
             Tile? tile = Parent.GetTileF((int)pos.X, (int)pos.Y);
-            if (tile == null || GetSeenTileUpdate((int)pos.X, (int)pos.Y) != tile.Value.UpdateCount)
+            if (tile == null || (!ignoreSeen && GetSeenTileUpdate((int)pos.X, (int)pos.Y) != tile.Value.UpdateCount))
                 return false;
 
             Parent.MoveEntity(this, pos);
