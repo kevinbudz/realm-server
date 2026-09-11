@@ -116,6 +116,10 @@ namespace RotMG.Game
         public ushort Type;
         public ObjectDesc Desc;
         public Position Position;
+        //Where this entity was placed by World.AddEntity. ReturnToSpawn
+        //walks back here; mirrors realm-src-master Enemy.SpawnPoint
+        //(captured at spawn, not on state enter).
+        public Position SpawnPoint;
         public Chunk CurrentChunk;
         public World Parent;
 

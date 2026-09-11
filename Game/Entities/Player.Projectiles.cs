@@ -27,6 +27,12 @@ namespace RotMG.Game.Entities
 
         public Projectile Projectile;
         public int Time;
+        //Sweep cursor: last swept bullet age (client-clock ms since ack)
+        //and the server tick it was taken at. Move sweeps anchor elapsed
+        //to the client clock; tick sweeps advance it by server ms, so
+        //standing players stay covered with no gaps or double-scans.
+        public int Checked;
+        public int LastSweep;
 
         public override bool Equals(object obj)
         {
@@ -52,15 +58,18 @@ namespace RotMG.Game.Entities
         private const float EnemyHitTrackPrecision = 8;
         private const int EnemyHitHistoryBacktrack = 2;
 
-        //Verify-don't-punish-grazes: the sweep below records enemy bullets
-        //that pass all but certainly through the player without the client
-        //ever reporting a hit. The box must stay TIGHTER than any real
-        //hitbox (server 0.4, client 0.5): a wider box flags honest grazes
-        //the client correctly never reports. Each bullet is recorded once
-        //and only counted if it lives out its full lifetime unreported, so
-        //in-flight PlayerHit packets always win the race and one slow
-        //bullet can never pile on many points. Sustained definite misses
-        //mean a suppressing client.
+        //Server-authoritative player hits: the sweep below both DEALS
+        //damage and records suspicion. Client PlayerHit is the fast path;
+        //the sweep is the backstop, so suppressed or dropped reports can
+        //no longer grant godmode. Damage uses the full client-size box so
+        //the server never misses what the player sees; suspicion keeps a
+        //TIGHTER box (below any real hitbox: server 0.4, client 0.5) so
+        //honest grazes the client correctly never reports don't flag.
+        //Each bullet is recorded once and only counted if it lives out
+        //its full lifetime unreported, so in-flight PlayerHit packets
+        //always win the race and one slow bullet can never pile on many
+        //points. Sustained definite misses mean a suppressing client.
+        private const float ServerHitHalfBox = 0.5f;
         private const float VerifyHalfBox = 0.3f;
         private const float TryHitRangeAllowance = 2.0f;
         private const int SuspicionThreshold = 15;
@@ -118,25 +127,9 @@ namespace RotMG.Game.Entities
                 }
             }
 
-            //Movement-independent expiry: VerifyProjectiles only runs on Move,
-            //so standing players would otherwise accumulate acked bullets.
-            //Conservative bound mixes server/client clocks the same way the
-            //awaiting check above does; no damage is ever dealt here.
-            _ackVerifyScratch.Clear();
-            _ackVerifyScratch.AddRange(AckedProjectiles);
-            foreach (KeyValuePair<int, ProjectileAck> p in _ackVerifyScratch)
-            {
-                Projectile projectile = p.Value.Projectile;
-                if (projectile?.Desc == null)
-                {
-                    AckedProjectiles.Remove(p.Key);
-                    _contactBullets.Remove(p.Key);
-                    continue;
-                }
-                int elapsed = Manager.TotalTime - p.Value.Time;
-                if (elapsed > projectile.Desc.LifetimeMS + MaxLatencyMS)
-                    ExpireAckedBullet(p.Key, projectile, elapsed);
-            }
+            //Acked-bullet expiry and damage for standing players live in
+            //SweepAckedProjectilesTick (every tick, unified clock cursor),
+            //not here: this only runs when TotalTime % 2000 == 0.
         }
 
         public int GetNextDamageSeeded(int min, int max, int data)
@@ -380,13 +373,15 @@ namespace RotMG.Game.Entities
             AwaitingAoes.Enqueue(aoe);
         }
 
-        //Verify-don't-punish-grazes: records enemy bullets that pass through
-        //a tight swept box around the player without the client ever
-        //reporting a hit. Never deals damage, never consumes CanHit, so it
-        //cannot kill or eat a legit hit. Counting happens only at expiry
-        //(see ExpireAckedBullet); sustained definite misses mean a
-        //suppressing client.
-        public void VerifyProjectiles(int time)
+        //Server-authoritative sweep, move-driven half: tests every live
+        //enemy bullet over the exact interval since it was last swept
+        //(bullet segment vs. the player's validated movement segment, so
+        //fast bullets can't tunnel and lagged moves still cover the whole
+        //travelled path). Deals real damage through TryApplyBulletHit and
+        //records unreported deep contacts for counting at expiry (see
+        //ExpireAckedBullet). prevPlayerPos is the server position before
+        //this move was applied.
+        public void VerifyProjectiles(int time, Position prevPlayerPos)
         {
             if (Parent == null)
                 return;
@@ -422,39 +417,102 @@ namespace RotMG.Game.Entities
                     _contactBullets.Remove(p.Key);
                     continue;
                 }
-                int elapsed = Math.Max(0, time - p.Value.Time);
+                ProjectileAck ack = p.Value;
+                int elapsed = Math.Max(0, time - ack.Time);
                 if (elapsed > projectile.Desc.LifetimeMS)
                 {
                     ExpireAckedBullet(p.Key, projectile, elapsed);
                     continue;
                 }
 
-                //Wall/cover-adjacent bullets diverge client vs server by design
-                //(the client deletes on walls); never record those or honest
-                //wall-huggers look like cheaters. Sampling the midpoint as
-                //well catches segments that cross a wall between two open
-                //endpoints.
-                int prevElapsed = Math.Max(0, MoveTime - p.Value.Time);
-                float startElapsed = Math.Min(prevElapsed, elapsed);
-                Position prev = projectile.PositionAt(startElapsed);
-                Position pos = projectile.PositionAt(elapsed);
-                Position mid = projectile.PositionAt((startElapsed + elapsed) / 2f);
-                if (ProjectileBlockedAt(projectile, prev) || ProjectileBlockedAt(projectile, mid) || ProjectileBlockedAt(projectile, pos))
+                int start = Math.Min(Math.Max(0, ack.Checked), elapsed);
+                SweepAckedInterval(p.Key, projectile, start, elapsed, prevPlayerPos);
+
+                if (AckedProjectiles.ContainsKey(p.Key))
                 {
-                    //A bullet the client may have deleted on a wall must not
-                    //linger as a pending contact: withdrawing here favours
-                    //false negatives over false positives.
+                    ack.Checked = elapsed;
+                    ack.LastSweep = Manager.TotalTime;
+                    AckedProjectiles[p.Key] = ack;
+                }
+            }
+        }
+
+        //Tick-driven twin of VerifyProjectiles for players who stand
+        //still (no Move packets): advances each bullet by server ms since
+        //its last sweep, so coverage and expiry have no gaps. Skips the
+        //same windows the move path skips (teleport, immunity).
+        public void SweepAckedProjectilesTick()
+        {
+            if (Parent == null || AckedProjectiles.Count == 0)
+                return;
+            if (AwaitingGoto.Count > 0)
+                return;
+            if (HasConditionEffect(ConditionEffectIndex.Invincible) ||
+                HasConditionEffect(ConditionEffectIndex.Stasis))
+                return;
+
+            _ackVerifyScratch.Clear();
+            _ackVerifyScratch.AddRange(AckedProjectiles);
+            foreach (KeyValuePair<int, ProjectileAck> p in _ackVerifyScratch)
+            {
+                Projectile projectile = p.Value.Projectile;
+                if (projectile?.Desc == null)
+                {
+                    AckedProjectiles.Remove(p.Key);
                     _contactBullets.Remove(p.Key);
                     continue;
                 }
+                ProjectileAck ack = p.Value;
+                int elapsed = Math.Max(0, ack.Checked + (Manager.TotalTime - ack.LastSweep));
+                if (elapsed > projectile.Desc.LifetimeMS)
+                {
+                    ExpireAckedBullet(p.Key, projectile, elapsed);
+                    continue;
+                }
 
-                //Record, don't punish: the bullet only counts if it lives out
-                //its full lifetime without ever being reported (see
-                //ExpireAckedBullet), so legit in-flight hits never register
-                //and each bullet counts at most once.
-                if (SegmentDistSquared(prev, pos, Position) <= VerifyHalfBox * VerifyHalfBox)
-                    _contactBullets.Add(p.Key);
+                SweepAckedInterval(p.Key, projectile, ack.Checked, elapsed, Position);
+
+                if (AckedProjectiles.ContainsKey(p.Key))
+                {
+                    ack.Checked = elapsed;
+                    ack.LastSweep = Manager.TotalTime;
+                    AckedProjectiles[p.Key] = ack;
+                }
             }
+        }
+
+        //Tests one bullet over [startElapsed, elapsed] and either deals
+        //damage (full client-size box), records suspicion (tight box,
+        //counted only at expiry), or drops a wall-killed bullet. Favours
+        //false negatives everywhere except certain damage: wall-grazes
+        //are never recorded, so honest wall-huggers look clean.
+        private void SweepAckedInterval(int bulletId, Projectile projectile, int startElapsed, int elapsed, Position prevPlayerPos)
+        {
+            Position prev = projectile.PositionAt(startElapsed);
+            Position pos = projectile.PositionAt(elapsed);
+            Position mid = projectile.PositionAt((startElapsed + elapsed) / 2f);
+            if (ProjectileBlockedAt(projectile, pos))
+            {
+                //Died in a wall: clients delete these too. No damage, no
+                //suspicion, bullet is gone.
+                AckedProjectiles.Remove(bulletId);
+                _contactBullets.Remove(bulletId);
+                return;
+            }
+            if (ProjectileBlockedAt(projectile, prev) || ProjectileBlockedAt(projectile, mid))
+            {
+                //Wall/cover-adjacent segment diverges client vs server by
+                //design (the client deletes on walls); withdrawing here
+                //favours false negatives over false positives. Bullet stays
+                //live for the next interval.
+                _contactBullets.Remove(bulletId);
+                return;
+            }
+
+            if (SegmentSegmentDistSquared(prev, pos, prevPlayerPos, Position) <= ServerHitHalfBox * ServerHitHalfBox)
+                TryApplyBulletHit(bulletId);
+            else if (SegmentDistSquared(prev, pos, Position) <= VerifyHalfBox * VerifyHalfBox)
+                _contactBullets.Add(bulletId);
         }
 
         //A bullet's reporting window closes when it expires: a PlayerHit for
@@ -495,6 +553,47 @@ namespace RotMG.Game.Entities
             return cx * cx + cy * cy;
         }
 
+        //Squared distance between segments ab and cd. Degenerate (zero
+        //length) segments fall back to point tests, so stationary
+        //players and slow ticks cost nothing special.
+        private static float SegmentSegmentDistSquared(Position a, Position b, Position c, Position d)
+        {
+            if (SegmentsIntersect(a, b, c, d))
+                return 0;
+            float m = SegmentDistSquared(a, b, c);
+            m = Math.Min(m, SegmentDistSquared(a, b, d));
+            m = Math.Min(m, SegmentDistSquared(c, d, a));
+            m = Math.Min(m, SegmentDistSquared(c, d, b));
+            return m;
+        }
+
+        private static float Cross(Position o, Position u, Position v)
+        {
+            return (u.X - o.X) * (v.Y - o.Y) - (u.Y - o.Y) * (v.X - o.X);
+        }
+
+        private static bool OnSegment(Position a, Position b, Position p)
+        {
+            return Math.Min(a.X, b.X) <= p.X && p.X <= Math.Max(a.X, b.X) &&
+                   Math.Min(a.Y, b.Y) <= p.Y && p.Y <= Math.Max(a.Y, b.Y);
+        }
+
+        private static bool SegmentsIntersect(Position a, Position b, Position c, Position d)
+        {
+            float d1 = Cross(c, d, a);
+            float d2 = Cross(c, d, b);
+            float d3 = Cross(a, b, c);
+            float d4 = Cross(a, b, d);
+            if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+                ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)))
+                return true;
+            if (d1 == 0 && OnSegment(c, d, a)) return true;
+            if (d2 == 0 && OnSegment(c, d, b)) return true;
+            if (d3 == 0 && OnSegment(a, b, c)) return true;
+            if (d4 == 0 && OnSegment(a, b, d)) return true;
+            return false;
+        }
+
         private void FlagMissedBullet(int bulletId, int elapsed)
         {
             int now = Manager.TotalTime;
@@ -517,34 +616,55 @@ namespace RotMG.Game.Entities
 #endif
         }
 
-        public void TryHit(int bulletId)
+        //Single funnel for enemy-bullet damage: client PlayerHit (fast
+        //path) and the server sweep (backstop) both land here. The first
+        //one wins; the bullet is consumed so the other becomes a no-op
+        //and CanHit's Hit set backstops doubles.
+        public bool TryApplyBulletHit(int bulletId)
         {
             if (AckedProjectiles.TryGetValue(bulletId, out ProjectileAck v))
             {
-                //Loose anti-forge check only: the bullet must be alive and
-                //plausibly near. Clocks may be stale (PlayerHit has no time),
-                //so skip validation rather than risk denying a legit hit.
-                int elapsed = _clientTime - v.Time;
-                if (_clientTime >= v.Time && elapsed <= v.Projectile.Desc.LifetimeMS + MaxLatencyMS)
-                {
-                    Position pos = v.Projectile.PositionAt(Math.Max(0, elapsed));
-                    float dx = Position.X - pos.X;
-                    float dy = Position.Y - pos.Y;
-                    if (dx * dx + dy * dy > TryHitRangeAllowance * TryHitRangeAllowance)
-                    {
-                        Program.Print(PrintType.Error, $"Rejected out-of-range player hit <{Name}> (bullet {bulletId})");
-                        AckedProjectiles.Remove(bulletId);
-                        _contactBullets.Remove(bulletId);
-                        return;
-                    }
-                }
-
-                if (v.Projectile.CanHit(this))
+                if (v.Projectile?.Desc != null && v.Projectile.CanHit(this))
                 {
                     HitByProjectile(v.Projectile);
                     AckedProjectiles.Remove(bulletId);
                     _contactBullets.Remove(bulletId);
+                    return true;
                 }
+                //Known bullet but not currently hittable (immune or
+                //already hit): leave it live, the sweep retries or
+                //expires it.
+            }
+            return false;
+        }
+
+        public void TryHit(int bulletId)
+        {
+            if (AckedProjectiles.TryGetValue(bulletId, out ProjectileAck v))
+            {
+                //Loose anti-forge plausibility only. PlayerHit carries no
+                //time so the clock may be stale; a failed check must NOT
+                //consume the bullet (that turned forged packets into
+                //bullet deleters) and must NOT deny a legit hit: the
+                //sweep re-tests every live bullet and lands real hits on
+                //its own.
+                if (v.Projectile?.Desc != null && _clientTime >= v.Time)
+                {
+                    int elapsed = _clientTime - v.Time;
+                    if (elapsed <= v.Projectile.Desc.LifetimeMS + MaxLatencyMS)
+                    {
+                        Position pos = v.Projectile.PositionAt(Math.Max(0, elapsed));
+                        float dx = Position.X - pos.X;
+                        float dy = Position.Y - pos.Y;
+                        if (dx * dx + dy * dy > TryHitRangeAllowance * TryHitRangeAllowance)
+                        {
+                            Program.Print(PrintType.Error, $"Out-of-range player hit left live <{Name}> (bullet {bulletId})");
+                            return;
+                        }
+                    }
+                }
+
+                TryApplyBulletHit(bulletId);
             }
 #if DEBUG
             else
@@ -668,7 +788,7 @@ namespace RotMG.Game.Entities
                             Program.Print(PrintType.Warn, "Duplicate ack key");
                         }
 #endif
-                        ProjectileAck ack = new ProjectileAck { Projectile = p, Time = time };
+                        ProjectileAck ack = new ProjectileAck { Projectile = p, Time = time, Checked = 0, LastSweep = Manager.TotalTime };
                         AckedProjectiles[p.Id] = ack;
                     }
                 }

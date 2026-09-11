@@ -427,15 +427,15 @@ namespace RotMG.Game.Logic.Database
                 //Permanent root effect: the bubble must stay invincible across
                 //"nothing change" <-> "Bubble time" orders from Dr Terrible.
                 new ConditionalEffect(ConditionEffectIndex.Invincible, true),
-                new State("nothing change"
-                    //new SetAltTexture(0)
+                new State("nothing change",
+                    new SetAltTexture(0)
                 ),
                 new State("Bubble time",
-                    //new SetAltTexture(1),
+                    new SetAltTexture(1),
                     new TimedTransition(1000, "Bubble time2")
                 ),
                 new State("Bubble time2",
-                    //new SetAltTexture(2),
+                    new SetAltTexture(2),
                     new TimedTransition(1000, "Bubble time")
                 )
             );

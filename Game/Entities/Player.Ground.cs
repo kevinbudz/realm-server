@@ -173,11 +173,13 @@ namespace RotMG.Game.Entities
             }
             ApplyVatPoolEffects(tile.Value);
 
+            Position prevPos = Position;
             Parent.MoveEntity(this, pos);
-            //Verify-don't-punish-grazes: server never deals bullet damage
-            //here, it only records unreported contacts for counting at
-            //expiry (see VerifyProjectiles). It cannot disconnect mid-loop.
-            VerifyProjectiles(time);
+            //Server-authoritative sweep: deals real bullet damage over the
+            //validated movement segment and records unreported contacts
+            //for counting at expiry (see VerifyProjectiles). Damage here
+            //cannot disconnect mid-loop; suspicion only counts at expiry.
+            VerifyProjectiles(time, prevPos);
 
             if (desc.Push)
             {

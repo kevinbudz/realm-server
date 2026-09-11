@@ -14,17 +14,15 @@ namespace RotMG.Game.Logic.Behaviors
             ReturnWithinRadius = (float)returnWithinRadius;
         }
 
-        public override void Enter(Entity host)
-        {
-            host.StateObject[Id] = host.Position;
-        }
-
         public override bool Tick(Entity host)
         {
             if (host.HasConditionEffect(ConditionEffectIndex.Paralyzed))
                 return false;
 
-            Position spawn = (Position)host.StateObject[Id];
+            //Walk back to where the entity was placed, not where it was
+            //when this state was entered (which made this a no-op).
+            //Mirrors realm-src-master ReturnToSpawn -> Enemy.SpawnPoint.
+            Position spawn = host.SpawnPoint;
             Position vect = spawn - host.Position;
             if (host.Position.Distance(spawn) > ReturnWithinRadius)
             {
@@ -35,11 +33,6 @@ namespace RotMG.Game.Logic.Behaviors
             }
 
             return false;
-        }
-
-        public override void Exit(Entity host)
-        {
-            host.StateObject.Remove(Id);
         }
     }
 }

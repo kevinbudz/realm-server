@@ -1,3 +1,4 @@
+using RotMG.Utils;
 using System;
 
 namespace RotMG.Game.Logic.Transitions
@@ -19,6 +20,13 @@ namespace RotMG.Game.Logic.Transitions
                 return false;
             foreach (Entity en in host.Parent.EntityChunks.HitTest(host.Position, Distance))
                 if (en.Desc.Group == Group)
+                    return false;
+            //Statics are not in EntityChunks (see
+            //BehaviorHelpers.NearbyEntities), but realm-src-master sees
+            //them via EnemiesCollision.
+            float r2 = Distance * Distance;
+            foreach (Entity en in host.Parent.Statics.Values)
+                if (en.Desc.Group == Group && host.Position.DistanceSquared(en.Position) < r2)
                     return false;
             return true;
         }

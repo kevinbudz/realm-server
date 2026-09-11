@@ -451,6 +451,10 @@ namespace RotMG.Game.Entities
 
             TickRegens();
             TickProjectiles();
+            //Standing players send no Moves, so the move-driven sweep
+            //would never run for them: the tick sweep covers stationary
+            //players with the same damage, suspicion, and expiry logic.
+            SweepAckedProjectilesTick();
             CheckTradeTimeout();
             base.Tick();
         }

@@ -51,6 +51,17 @@ namespace RotMG.Game.Logic.Behaviors
             foreach (Entity en in host.Parent.PlayerChunks.HitTest(host.Position, range))
                 if (!en.Equals(host))
                     yield return en;
+            //GameObject entities (e.g. Dr Terrible Bubble, Monster Cage)
+            //live in World.Statics, not EntityChunks (see
+            //World.MoveEntity), so chunk-only queries never see them.
+            //realm-src-master keeps statics in EnemiesCollision, meaning
+            //Orders and name transitions reach them there. Yield in-range
+            //statics here for parity; name/group filters downstream keep
+            //this narrow to queries that actually name a static.
+            float r2 = range * range;
+            foreach (Entity en in host.Parent.Statics.Values)
+                if (!en.Equals(host) && host.Position.DistanceSquared(en.Position) < r2)
+                    yield return en;
         }
 
         public static Entity NearestEntity(Entity host, float range, ushort? type = null)
@@ -114,6 +125,12 @@ namespace RotMG.Game.Logic.Behaviors
             int count = 0;
             foreach (Entity en in host.Parent.EntityChunks.HitTest(host.Position, radius))
                 if (en.Type == type)
+                    count++;
+            //See NearbyEntities: statics are not in EntityChunks, but
+            //realm-src-master counts them via EnemiesCollision.
+            float r2 = radius * radius;
+            foreach (Entity en in host.Parent.Statics.Values)
+                if (en.Type == type && host.Position.DistanceSquared(en.Position) < r2)
                     count++;
             return count;
         }
