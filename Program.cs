@@ -32,6 +32,7 @@ namespace RotMG
 
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, AppServer.Start);
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, GameServer.Start);
+            GameServer.StartIo();
 
             AppDomain.CurrentDomain.ProcessExit += new EventHandler(Terminate);
             AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(Terminate);

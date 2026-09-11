@@ -44,6 +44,10 @@ namespace RotMG.Game
         public ChunkController PlayerChunks;
 
         public int UpdateCount;
+        //Bumped on every player join/leave: lets SendUpdate learn the full
+        //player set only when membership actually changes instead of
+        //scanning all players per-player per-tick (O(P^2) per world).
+        public int PlayerListVersion;
         public List<string> ChatMessages;
 
         public Tile[,] Tiles;
@@ -297,6 +301,14 @@ namespace RotMG.Game
             {
                 foreach (Player player in Players.Values.ToArray())
                 {
+                    //Bots have no socket to Reconnect: carry them into the
+                    //new world so quakes keep stressing the event instead of
+                    //stranding dummies in a closed world.
+                    if (player is Bot bot)
+                    {
+                        BotManager.CarryInto(bot, newWorld);
+                        continue;
+                    }
                     Client client = player.Client;
                     if (client == null)
                         continue;
@@ -308,7 +320,7 @@ namespace RotMG.Game
             {
                 //Ensure stragglers still here leave the world.
                 foreach (Player player in Players.Values.ToArray())
-                    if (player.Parent == this && player.Client != null)
+                    if (player.Parent == this && !(player is Bot) && player.Client != null)
                         player.Client.Disconnect();
             });
         }
@@ -514,6 +526,7 @@ namespace RotMG.Game
             {
                 Players.Add(en.Id, en as Player);
                 PlayerChunks.Insert(en);
+                unchecked { PlayerListVersion++; }
                 //Davy Jones' Locker tracks collected keys in a client-side
                 //HUD (KeysView); show it on arrival, key pickups light the
                 //individual keys (see DavyJones.cs).
@@ -576,6 +589,7 @@ namespace RotMG.Game
             {
                 Players.Remove(en.Id);
                 PlayerChunks.Remove(en);
+                unchecked { PlayerListVersion++; }
                 //Owned vanity pets leave with their owner so world changes
                 //and deaths never orphan them (see SpawnPetIfAttached).
                 if (player.Pet != null)
@@ -607,6 +621,13 @@ namespace RotMG.Game
             en.Dispose();
         }
 
+        //Threading: Manager may tick worlds on pool threads (one thread per
+        //world, never two threads in the same world). Everything touched
+        //here must be this world's own state, the calling player's state,
+        //or a thread-safe sink (Client.Send queues, DB writer queue,
+        //Program/MainThread work queues, Manager under SyncRoot). Cross-world
+        //reads are limited to benign snapshots (e.g. another world's player
+        //count for portal labels); cross-world writes always defer.
         public void Tick()
         {
             OnTick();

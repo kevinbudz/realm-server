@@ -732,7 +732,8 @@ namespace RotMG.Game.Entities
         //Persists a container mutation made by UseItem (consumed item or
         //backpack-vendor writeback). Vault rows commit with the player row in
         //one transaction; the container write-through is gone, so without
-        //this a crash would resurrect the consumed item.
+        //this a crash would resurrect the consumed item. Vault writes wait
+        //for the commit (dup-sensitive); ground writes queue FIFO.
         private void PersistUsedContainer(IContainer con)
         {
             try
@@ -740,7 +741,7 @@ namespace RotMG.Game.Entities
                 SaveToCharacter();
                 if (con is Container c && c.VaultOwnerId != -1 && c.VaultIndex >= 0)
                     Database.SaveClientAndVault(Client.Account, Client.Character,
-                        c.VaultOwnerId, c.VaultIndex, c.Inventory, c.ItemDatas);
+                        c.VaultOwnerId, c.VaultIndex, c.Inventory, c.ItemDatas, null, true);
                 else
                     Database.SaveAccountAndCharacter(Client.Account, Client.Character);
             }
@@ -843,7 +844,7 @@ namespace RotMG.Game.Entities
                     host.UpdateCount++;
                 }
                 host.RemoveEntity(portalRef);
-                Manager.PortalDungeons.Remove(portalRef.Id);
+                Manager.RemovePortalDungeon(portalRef.Id);
             });
         }
 

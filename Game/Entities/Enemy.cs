@@ -75,6 +75,11 @@ namespace RotMG.Game.Entities
                 Entity en = Parent.GetEntity(i.Key);
                 if (en == null) continue;
                 Player player = en as Player;
+                //Stress bots deal real damage but take no share: their hits
+                //must not consume Min-slot guaranteed drops, award potions
+                //to a dummy, or flood the world with uncollectable bags.
+                if (player is Bot)
+                    continue;
 
                 if (Desc.Quest)
                 {

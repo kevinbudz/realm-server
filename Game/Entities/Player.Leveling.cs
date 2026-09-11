@@ -48,7 +48,7 @@ namespace RotMG.Game.Entities
             GainEXP(0);
         }
 
-        public bool GainEXP(int exp)
+        public virtual bool GainEXP(int exp)
         {
             EXP += exp;
 

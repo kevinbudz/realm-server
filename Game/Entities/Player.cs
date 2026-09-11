@@ -192,6 +192,15 @@ namespace RotMG.Game.Entities
         public int PetId;
         public Pet Pet;
 
+        //Subclass entry for server-side players without an account (see
+        //Bot): initializes only the client-independent plumbing. The
+        //subclass sets stats, inventory and the stub Client itself before
+        //AddEntity/Init.
+        protected Player(ushort type) : base(type)
+        {
+            PrivateSVs = new Dictionary<StatType, object>();
+        }
+
         public Player(Client client) : base((ushort)client.Character.ClassType)
         {
             PrivateSVs = new Dictionary<StatType, object>();
@@ -234,7 +243,7 @@ namespace RotMG.Game.Entities
             RecalculateEquipBonuses();
         }
 
-        public void SaveToCharacter()
+        public virtual void SaveToCharacter()
         {
             Client.Character.HP = HP;
             Client.Character.MP = MP;
@@ -338,7 +347,7 @@ namespace RotMG.Game.Entities
             }
         }
 
-        public void Death(string killer)
+        public virtual void Death(string killer)
         {
 #if DEBUG
             if (Parent.Name.Equals("Dreamland"))
@@ -453,7 +462,7 @@ namespace RotMG.Game.Entities
             TickProjectiles();
             //Standing players send no Moves, so the move-driven sweep
             //would never run for them: the tick sweep covers stationary
-            //players with the same damage, suspicion, and expiry logic.
+            //players with the same recording and expiry logic.
             SweepAckedProjectilesTick();
             CheckTradeTimeout();
             base.Tick();

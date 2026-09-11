@@ -1305,6 +1305,102 @@ namespace RotMG.Game.Entities
                                     player.Client.Send(local);
                             break;
                         }
+                    case "/bot":
+                        {
+                            if (!Client.Account.Ranked)
+                            {
+                                SendError("Not ranked");
+                                return;
+                            }
+                            string[] args = input.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                            if (args.Length == 0)
+                            {
+                                SendHelp("/bot spawn|clear|clearall|follow|stay|wander|come|send|shoot|list");
+                                return;
+                            }
+                            switch (args[0].ToLower())
+                            {
+                                case "spawn":
+                                    {
+                                        if (Parent == null)
+                                        {
+                                            SendError("You are not in a world.");
+                                            return;
+                                        }
+                                        if (args.Length < 2 || !int.TryParse(args[1], out int count))
+                                        {
+                                            SendHelp("/bot spawn <count> [class]");
+                                            return;
+                                        }
+                                        ushort? classType = null;
+                                        if (args.Length >= 3)
+                                        {
+                                            if (!Resources.IdLower2Object.TryGetValue(args[2].ToLower(), out ObjectDesc classDesc) ||
+                                                !classDesc.Player || !Resources.Type2Player.ContainsKey(classDesc.Type))
+                                            {
+                                                SendError($"Unknown player class <{args[2]}>");
+                                                return;
+                                            }
+                                            classType = classDesc.Type;
+                                        }
+                                        SendInfo(BotManager.Spawn(this, count, classType));
+                                        break;
+                                    }
+                                case "clear":
+                                    {
+                                        int count = int.MaxValue;
+                                        if (args.Length >= 2 && !int.TryParse(args[1], out count))
+                                        {
+                                            SendHelp("/bot clear [count]");
+                                            return;
+                                        }
+                                        SendInfo(BotManager.Remove(this, count));
+                                        break;
+                                    }
+                                case "clearall":
+                                    SendInfo(BotManager.ClearAll());
+                                    break;
+                                case "follow":
+                                    SendInfo(BotManager.SetMode(this, BotMode.Follow));
+                                    break;
+                                case "stay":
+                                    SendInfo(BotManager.SetMode(this, BotMode.Stay));
+                                    break;
+                                case "wander":
+                                    SendInfo(BotManager.SetMode(this, BotMode.Wander));
+                                    break;
+                                case "come":
+                                    SendInfo(BotManager.Recall(this));
+                                    break;
+                                case "send":
+                                    {
+                                        if (args.Length < 2)
+                                        {
+                                            SendHelp("/bot send <player|world|id>");
+                                            return;
+                                        }
+                                        SendInfo(BotManager.Send(this, BotManager.ResolveWorld(string.Join(' ', args.Skip(1)))));
+                                        break;
+                                    }
+                                case "shoot":
+                                    {
+                                        if (args.Length < 2 || (args[1].ToLower() != "on" && args[1].ToLower() != "off"))
+                                        {
+                                            SendHelp("/bot shoot on|off");
+                                            return;
+                                        }
+                                        SendInfo(BotManager.SetShoot(this, args[1].ToLower() == "on"));
+                                        break;
+                                    }
+                                case "list":
+                                    SendInfo(BotManager.List(this));
+                                    break;
+                                default:
+                                    SendHelp("/bot spawn|clear|clearall|follow|stay|wander|come|send|shoot|list");
+                                    break;
+                            }
+                            break;
+                        }
                     case "/commands":
                         {
                             SendInfo("Available commands: /tell, /l, /g, /trade, /who, /online, /where, /server, /pos, /position, " +
@@ -1314,7 +1410,8 @@ namespace RotMG.Game.Entities
                                 "/getquest, /setpiece, /killall, /ka, /clearspawn, /cs, /cleargraves, /cgraves, /clearinv, " +
                                 "/summon, /summonall, /visit, /kick, /mute, /unmute, /ban, /banip, /unban, /grank, " +
                                 "/rename, /unname, /quake, /closerealm, /announce, /oryxsay, /osay, /reskin, /reboot, " +
-                                "/compactloh, /god, /roll, /legendary, /allyshots, /allydamage, /effects, /sounds, /notifications");
+                                "/compactloh, /god, /roll, /legendary, /allyshots, /allydamage, /effects, /sounds, /notifications, " +
+                                "/bot");
                             break;
                         }
                     case "/ignore":

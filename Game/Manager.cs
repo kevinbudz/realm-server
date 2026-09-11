@@ -41,6 +41,13 @@ namespace RotMG.Game
         //Main-thread work queue: worker-built worlds are published through
         //here so Worlds dict mutation stays single-threaded. Drained in Tick.
         private static readonly ConcurrentQueue<Action> MainThreadQueue = new ConcurrentQueue<Action>();
+        //World-tick fan-out: one worker per world, leaving a core for the
+        //tick, IO and writer threads. Worlds are independent by construction
+        //(see the Tick comment); shared registries go through SyncRoot.
+        private static readonly ParallelOptions WorldParallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
+        };
         private static readonly HashSet<int> _realmResetsInFlight = new HashSet<int>();
         private static readonly HashSet<int> _castleBuildsInFlight = new HashSet<int>();
 
@@ -111,14 +118,17 @@ namespace RotMG.Game
 
         public static void AddWorld(WorldDesc desc)
         {
-            AddWorld(desc, ++NextWorldId);
+            AddWorld(desc, Interlocked.Increment(ref NextWorldId));
         }
 
         public static World AddWorld(WorldDesc desc, int id)
         {
             World world = CreateWorld(desc);
             world.Id = id;
-            Worlds[world.Id] = world;
+            lock (SyncRoot)
+            {
+                Worlds[world.Id] = world;
+            }
 #if DEBUG
             Program.Print(PrintType.Debug, $"Added World ID <{world.Id}> <{desc.Id}:{desc.DisplayName}>");
 #endif
@@ -127,8 +137,11 @@ namespace RotMG.Game
 
         public static int AddWorld(World world)
         {
-            world.Id = ++NextWorldId;
-            Worlds[world.Id] = world;
+            world.Id = Interlocked.Increment(ref NextWorldId);
+            lock (SyncRoot)
+            {
+                Worlds[world.Id] = world;
+            }
             return world.Id;
         }
 
@@ -167,24 +180,47 @@ namespace RotMG.Game
 
         public static World GetWorld(int id)
         {
-            if (Worlds.TryGetValue(id, out World world))
-                return world;
-            return null;
+            lock (SyncRoot)
+            {
+                if (Worlds.TryGetValue(id, out World world))
+                    return world;
+                return null;
+            }
         }
 
         //Personal vault instance per account, mirroring realm-src-master
         //wServer/realm/worlds/logic/Vault.cs.
         public static World GetVaultWorld(Client client)
         {
-            if (VaultWorlds.TryGetValue(client.Account.Id, out World world))
+            lock (SyncRoot)
+            {
+                if (VaultWorlds.TryGetValue(client.Account.Id, out World world))
+                    return world;
+                WorldDesc desc = Resources.Worlds["Vault"];
+                world = CreateWorld(desc, 0);
+                world.Id = Interlocked.Increment(ref NextWorldId);
+                Worlds[world.Id] = world;
+                if (world is VaultWorld vault)
+                    vault.PopulateVault(client);
+                VaultWorlds[client.Account.Id] = world;
                 return world;
-            WorldDesc desc = Resources.Worlds["Vault"];
-            world = CreateWorld(desc, 0);
-            AddWorld(world);
-            if (world is VaultWorld vault)
-                vault.PopulateVault(client);
-            VaultWorlds[client.Account.Id] = world;
-            return world;
+            }
+        }
+
+        public static bool TryGetPortalDungeon(int portalId, out string dungeon)
+        {
+            lock (SyncRoot)
+            {
+                return PortalDungeons.TryGetValue(portalId, out dungeon);
+            }
+        }
+
+        public static void RemovePortalDungeon(int portalId)
+        {
+            lock (SyncRoot)
+            {
+                PortalDungeons.Remove(portalId);
+            }
         }
 
         //Fresh dungeon instance per portal, mirroring the dynamic case of
@@ -194,7 +230,10 @@ namespace RotMG.Game
         {
             World world = CreateDungeonWorld(desc);
             portal.WorldInstance = world;
-            PortalDungeons[portal.Id] = desc.Id;
+            lock (SyncRoot)
+            {
+                PortalDungeons[portal.Id] = desc.Id;
+            }
             return world;
         }
 
@@ -216,25 +255,29 @@ namespace RotMG.Game
         public static World GetGuildHallWorld(string guildName)
         {
             int level = Database.GetGuildLevel(guildName);
-            if (GuildHallWorlds.TryGetValue(guildName, out World existing))
+            lock (SyncRoot)
             {
-                if (existing is GuildHallWorld hall && hall.Level == level)
-                    return existing;
-                if (existing.Players.Count > 0)
-                    return existing;
-                Worlds.Remove(existing.Id);
-                GuildHallWorlds.Remove(guildName);
+                if (GuildHallWorlds.TryGetValue(guildName, out World existing))
+                {
+                    if (existing is GuildHallWorld hall && hall.Level == level)
+                        return existing;
+                    if (existing.Players.Count > 0)
+                        return existing;
+                    Worlds.Remove(existing.Id);
+                    GuildHallWorlds.Remove(guildName);
+                }
+                WorldDesc desc = Resources.Worlds["GuildHall"];
+                World world = CreateWorld(desc, Math.Min(level, desc.Maps.Length - 1));
+                world.Id = Interlocked.Increment(ref NextWorldId);
+                Worlds[world.Id] = world;
+                if (world is GuildHallWorld hallWorld)
+                {
+                    hallWorld.GuildName = guildName;
+                    hallWorld.Level = level;
+                }
+                GuildHallWorlds[guildName] = world;
+                return world;
             }
-            WorldDesc desc = Resources.Worlds["GuildHall"];
-            World world = CreateWorld(desc, Math.Min(level, desc.Maps.Length - 1));
-            AddWorld(world);
-            if (world is GuildHallWorld hallWorld)
-            {
-                hallWorld.GuildName = guildName;
-                hallWorld.Level = level;
-            }
-            GuildHallWorlds[guildName] = world;
-            return world;
         }
 
         //Castle siege world for a quaking realm, mirroring the castle
@@ -280,11 +323,17 @@ namespace RotMG.Game
                         asyncCastle.PlayersEntering = entering;
                     RunOnMainThread(() =>
                     {
-                        _castleBuildsInFlight.Remove(realm.Id);
+                        lock (SyncRoot)
+                        {
+                            _castleBuildsInFlight.Remove(realm.Id);
+                        }
                         if (realm.Players.Count == 0)
                             return; //Everyone left mid-build: drop the castle rather than leak an empty world.
-                        castle.Id = ++NextWorldId;
-                        Worlds[castle.Id] = castle;
+                        castle.Id = Interlocked.Increment(ref NextWorldId);
+                        lock (SyncRoot)
+                        {
+                            Worlds[castle.Id] = castle;
+                        }
                         realm.QuakeToWorld(castle);
                     });
                 }
@@ -307,7 +356,7 @@ namespace RotMG.Game
         //the overseer). Instance-keyed: every realm has its own cycle.
         public static void ResetRealm()
         {
-            if (Worlds.TryGetValue(RealmId, out World world) && world is RealmWorld realm)
+            if (GetWorld(RealmId) is RealmWorld realm)
                 ResetRealmInstance(realm);
         }
 
@@ -317,15 +366,22 @@ namespace RotMG.Game
                 return;
             if (!Settings.AsyncWorldCreation)
             {
+                //Runs on the realm's own worker thread during parallel ticks:
+                //construction touches only the fresh world, and the publish
+                //below takes SyncRoot (see PublishResetRealm).
                 PublishResetRealm(realm, CreateWorld(Resources.Worlds["Realm"]));
                 return;
             }
             //Same off-thread treatment as the castle path above. The old
             //closed realm stays published during the build (it is empty
             //and closed, so nothing can enter); a failed build just clears
-            //the flag and the next Overseer tick retries.
-            if (!_realmResetsInFlight.Add(realm.Id))
-                return;
+            //the flag and the next Overseer tick retries. The set is shared
+            //across realm worker threads, so guard it.
+            lock (SyncRoot)
+            {
+                if (!_realmResetsInFlight.Add(realm.Id))
+                    return;
+            }
             Task.Run(() =>
             {
                 try
@@ -334,7 +390,10 @@ namespace RotMG.Game
                     fresh.Id = realm.Id;
                     RunOnMainThread(() =>
                     {
-                        _realmResetsInFlight.Remove(realm.Id);
+                        lock (SyncRoot)
+                        {
+                            _realmResetsInFlight.Remove(realm.Id);
+                        }
                         PublishResetRealm(realm, fresh);
                     });
                 }
@@ -342,43 +401,61 @@ namespace RotMG.Game
                 {
                     RunOnMainThread(() =>
                     {
-                        _realmResetsInFlight.Remove(realm.Id);
+                        lock (SyncRoot)
+                        {
+                            _realmResetsInFlight.Remove(realm.Id);
+                        }
                         Program.Print(PrintType.Error, "Async realm reset failed: " + e.Message);
                     });
                 }
             });
         }
 
-        //Swaps the fresh realm in under its stable id. Main thread only.
-        //Re-checks the preconditions: the world may have been replaced
-        //while a worker build was in flight.
+        //Swaps the fresh realm in under its stable id. Re-checks the
+        //preconditions: the world may have been replaced while a worker
+        //build was in flight. The Nexus statics scan is safe here: Nexus
+        //statics only change on single-threaded phases (portal place/remove
+        //from handlers and timer actions), never on a world tick.
         private static void PublishResetRealm(RealmWorld old, World fresh)
         {
-            if (!(Worlds.TryGetValue(old.Id, out World current) && current == old))
-                return;
-            if (old.Players.Count > 0)
-                return;
-            Worlds.Remove(old.Id);
-            fresh.Id = old.Id;
-            Worlds[old.Id] = fresh;
-            if (Worlds.TryGetValue(NexusId, out World nexus))
+            lock (SyncRoot)
             {
-                foreach (StaticObject stat in nexus.Statics.Values.ToArray())
-                    if (stat is Portal portal && portal.WorldInstance == old)
-                        portal.WorldInstance = fresh;
-                if (nexus is NexusWorld nexusWorld)
-                    nexusWorld.Monitor.UpdateWorldInstance(old.Id, fresh);
+                if (!(Worlds.TryGetValue(old.Id, out World current) && current == old))
+                    return;
+                if (old.Players.Count > 0)
+                    return;
+                Worlds.Remove(old.Id);
+                fresh.Id = old.Id;
+                Worlds[old.Id] = fresh;
+                if (Worlds.TryGetValue(NexusId, out World nexus))
+                {
+                    foreach (StaticObject stat in nexus.Statics.Values.ToArray())
+                        if (stat is Portal portal && portal.WorldInstance == old)
+                            portal.WorldInstance = fresh;
+                    if (nexus is NexusWorld nexusWorld)
+                        nexusWorld.Monitor.UpdateWorldInstance(old.Id, fresh);
+                }
             }
         }
 
         public static Player GetPlayer(string name)
         {
-            foreach (Client client in Clients.Values)
-                if (client.Player != null)
-                    if (client.Player.Name.Equals(name, StringComparison.InvariantCultureIgnoreCase))
-                        return client.Player;
-            return null;
+            lock (SyncRoot)
+            {
+                foreach (Client client in Clients.Values)
+                    if (client.Player != null)
+                        if (client.Player.Name.Equals(name, StringComparison.InvariantCultureIgnoreCase))
+                            return client.Player;
+                return null;
+            }
         }
+
+        //Guards all cross-world registries (Clients/AccountIdToClientId,
+        //Worlds/VaultWorlds/GuildHallWorlds/PortalDungeons/Timers, id
+        //counters): world worker threads, the socket IO thread and the tick
+        //thread share them. Single lock, leaf-only: holders never block on
+        //the DB writer or on sockets while holding it.
+        public static readonly object SyncRoot = new object();
 
         public static void AddClient(Client client)
         {
@@ -386,8 +463,11 @@ namespace RotMG.Game
             if (client == null)
                 throw new Exception("Client is null.");
 #endif
-            client.Id = ++NextClientId;
-            Clients[client.Id] = client;
+            lock (SyncRoot)
+            {
+                client.Id = ++NextClientId;
+                Clients[client.Id] = client;
+            }
         }
 
         public static void RemoveClient(Client client)
@@ -396,25 +476,65 @@ namespace RotMG.Game
             if (client == null)
                 throw new Exception("Client is null.");
 #endif
-            Clients.Remove(client.Id);
+            lock (SyncRoot)
+            {
+                Clients.Remove(client.Id);
+            }
         }
 
         public static Client GetClient(int accountId)
         {
-            if (AccountIdToClientId.TryGetValue(accountId, out int clientId))
-                return Clients[clientId];
-            return null;
+            lock (SyncRoot)
+            {
+                if (AccountIdToClientId.TryGetValue(accountId, out int clientId) &&
+                    Clients.TryGetValue(clientId, out Client client))
+                    return client;
+                return null;
+            }
         }
 
+        public static void LinkClient(int accountId, int clientId)
+        {
+            lock (SyncRoot)
+            {
+                AccountIdToClientId[accountId] = clientId;
+            }
+        }
+
+        public static void UnlinkClient(int accountId)
+        {
+            lock (SyncRoot)
+            {
+                AccountIdToClientId.Remove(accountId);
+            }
+        }
+
+        //Point-in-time copy for the socket IO thread: enumerating the live
+        //dict concurrently with Add/Remove would throw.
+        public static Client[] SnapshotClients()
+        {
+            lock (SyncRoot)
+            {
+                Client[] snapshot = new Client[Clients.Count];
+                Clients.Values.CopyTo(snapshot, 0);
+                return snapshot;
+            }
+        }
+
+        //World worker threads schedule timers mid-tick (enemy deaths,
+        //grenades, poison); the drain below runs single-threaded pre-phase.
         public static void AddTimedAction(int time, Action action)
         {
             int due = TotalTicks + TicksFromTime(time);
-            if (!Timers.TryGetValue(due, out Queue<Action> queue))
+            lock (SyncRoot)
             {
-                queue = new Queue<Action>();
-                Timers[due] = queue;
+                if (!Timers.TryGetValue(due, out Queue<Action> queue))
+                {
+                    queue = new Queue<Action>();
+                    Timers[due] = queue;
+                }
+                queue.Enqueue(action);
             }
-            queue.Enqueue(action);
         }
 
         public static int TicksFromTime(int time)
@@ -443,52 +563,57 @@ namespace RotMG.Game
                 //itself for the current tick must wait for the next tick,
                 //otherwise one misbehaving behavior hangs the main thread here.
                 //The action cap is a backstop so a timer flood can only stall
-                //one tick, never the server.
+                //one tick, never the server. Drained under SyncRoot: worker
+                //threads only ever Add (briefly blocked here), and actions
+                //re-entering AddTimedAction take the same thread's lock.
                 int timerTick = TotalTicks;
                 int timerActions = 0;
                 bool timerBudgetExceeded = false;
                 const int MaxTimerActionsPerTick = 10000;
-                while (Timers.Count > 0)
+                lock (SyncRoot)
                 {
-                    //First entry without LINQ: foreach over the concrete
-                    //SortedDictionary type uses its struct enumerator, so
-                    //this allocates nothing per tick.
-                    KeyValuePair<int, Queue<Action>> next = default;
-                    foreach (KeyValuePair<int, Queue<Action>> first in Timers)
+                    while (Timers.Count > 0)
                     {
-                        next = first;
-                        break;
-                    }
-                    if (next.Key > timerTick)
-                        break;
-                    Timers.Remove(next.Key);
-                    while (next.Value.Count > 0)
-                    {
-                        if (++timerActions > MaxTimerActionsPerTick)
+                        //First entry without LINQ: foreach over the concrete
+                        //SortedDictionary type uses its struct enumerator, so
+                        //this allocates nothing per tick.
+                        KeyValuePair<int, Queue<Action>> next = default;
+                        foreach (KeyValuePair<int, Queue<Action>> first in Timers)
                         {
-                            Program.Print(PrintType.Error, "Timer action budget exceeded, deferring remainder");
-                            Timers[next.Key] = next.Value;
-                            timerBudgetExceeded = true;
+                            next = first;
                             break;
                         }
-                        //One bad timer must not kill the server: isolate it
-                        //like MainThreadQueue work below (log in DEBUG,
-                        //swallow in release) and continue the tick.
-                        try
+                        if (next.Key > timerTick)
+                            break;
+                        Timers.Remove(next.Key);
+                        while (next.Value.Count > 0)
                         {
-                            next.Value.Dequeue()();
-                        }
+                            if (++timerActions > MaxTimerActionsPerTick)
+                            {
+                                Program.Print(PrintType.Error, "Timer action budget exceeded, deferring remainder");
+                                Timers[next.Key] = next.Value;
+                                timerBudgetExceeded = true;
+                                break;
+                            }
+                            //One bad timer must not kill the server: isolate it
+                            //like MainThreadQueue work below (log in DEBUG,
+                            //swallow in release) and continue the tick.
+                            try
+                            {
+                                next.Value.Dequeue()();
+                            }
 #if DEBUG
-                        catch (Exception e)
-                        {
-                            Program.Print(PrintType.Error, e.ToString());
-                        }
+                            catch (Exception e)
+                            {
+                                Program.Print(PrintType.Error, e.ToString());
+                            }
 #else
-                        catch { }
+                            catch { }
 #endif
+                        }
+                        if (timerBudgetExceeded)
+                            break;
                     }
-                    if (timerBudgetExceeded)
-                        break;
                 }
 
                 //Publish worker-finished work (async world builds) before
@@ -509,18 +634,48 @@ namespace RotMG.Game
 #endif
                 }
 
-                WorldSnapshot.Clear();
-                WorldSnapshot.AddRange(Worlds.Values);
-                foreach (World world in WorldSnapshot)
-                    world.Tick();
+                //Worlds tick in parallel: each world touches only its own
+                //entities/chunks/tiles on its worker thread, while cross-world
+                //state (Worlds/Timers/Clients dicts, ids) goes through
+                //SyncRoot and persistence through the DB writer. Broadcasts
+                //stay parallel inside each world as before. Single-world
+                //servers skip the pool entirely.
+                lock (SyncRoot)
+                {
+                    WorldSnapshot.Clear();
+                    WorldSnapshot.AddRange(Worlds.Values);
+                }
+                if (WorldSnapshot.Count > 1)
+                {
+                    try
+                    {
+                        Parallel.ForEach(WorldSnapshot, WorldParallelOptions, world => world.Tick());
+                    }
+#if DEBUG
+                    catch (Exception e)
+                    {
+                        Program.Print(PrintType.Error, e.ToString());
+                    }
+#else
+                    catch { }
+#endif
+                }
+                else
+                {
+                    foreach (World world in WorldSnapshot)
+                        world.Tick();
+                }
 
                 //Reclaim empty generated dungeons (personal vaults, guild
                 //halls and static worlds are cached separately and kept).
                 if (TotalTicks % (Settings.TicksPerSecond * 30) == 0)
                 {
-                    foreach (World world in WorldSnapshot)
-                        if (world is Dungeons.DungeonWorld && world.Players.Count == 0)
-                            Worlds.Remove(world.Id);
+                    lock (SyncRoot)
+                    {
+                        foreach (World world in WorldSnapshot)
+                            if (world is Dungeons.DungeonWorld && world.Players.Count == 0)
+                                Worlds.Remove(world.Id);
+                    }
                 }
 
                 TickDelta = (int)(TickWatch.ElapsedMilliseconds - LastTickTime);

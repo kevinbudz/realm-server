@@ -329,7 +329,7 @@ namespace RotMG.Networking
             }
 
             //Key-unlocked portals remember their dungeon per instance.
-            if (Manager.PortalDungeons.TryGetValue(portal.Id, out string mappedName))
+            if (Manager.TryGetPortalDungeon(portal.Id, out string mappedName))
             {
                 if (Resources.Worlds.TryGetValue(mappedName, out WorldDesc mapped) && Game.Dungeons.DungeonWorld.IsSupported(mapped))
                     return Manager.GetDungeonWorld(portal, mapped);
@@ -481,7 +481,7 @@ namespace RotMG.Networking
                 client.Account.Save();
                 client.TargetWorldId = gameId;
 
-                Manager.AccountIdToClientId[client.Account.Id] = client.Id;
+                Manager.LinkClient(client.Account.Id, client.Id);
                 World world = Manager.GetWorld(gameId);
 
 #if DEBUG

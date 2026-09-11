@@ -4,12 +4,14 @@ using RotMG.Game.Entities;
 using RotMG.Networking;
 using RotMG.Utils;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Xml.Linq;
 
 namespace RotMG.Common
@@ -60,6 +62,16 @@ namespace RotMG.Common
         //limit of SQLite a non-issue: writes queue here instead of hitting SQLITE_BUSY.
         private static readonly object _lock = new object();
         private static string _connectionString;
+
+        //Dedicated writer thread (see WriterLoop): all multi-key bundles go
+        //through _writerQueue instead of fsyncing on the tick thread. FIFO
+        //order is preserved, so causality holds (a loot commit can never
+        //persist ahead of the drop commit that created the bag). Plain key
+        //bundles merge into shared group commits; read-modify-write funcs
+        //keep their own transaction each, applied in arrival order.
+        private static BlockingCollection<DbJob> _writerQueue;
+        private static Thread _writerThread;
+        private static int _writerStarted;
 
         public static void Init()
         {
@@ -131,10 +143,12 @@ namespace RotMG.Common
                 CreateKey($"legends.{span}", "", true);
 
             FlushLegends();
+            StartWriter();
         }
 
         public static void Shutdown()
         {
+            StopWriter();
             try
             {
                 lock (_lock)
@@ -198,63 +212,396 @@ namespace RotMG.Common
             }
         }
 
-        //Runs work inside one IMMEDIATE transaction on a single connection.
-        //IMMEDIATE takes the RESERVED lock up front, so a read-modify-write
-        //done through GetKeyInTx below cannot lose a commit to a concurrent
-        //HTTP-thread writer. Crash rule: once the commit returns, everything
-        //is durable; if the process dies first, none of it is.
-        private static void Transact(Action<SqliteConnection> work)
+        //One queued unit for the writer thread. PlainJobs carry pre-built
+        //strings only (no game objects): the caller serializes first, so the
+        //writer never touches game state. FuncJobs carry a read-modify-write
+        //lambda that runs on the writer's connection inside its own
+        //transaction. Completions run on the main thread (never the writer),
+        //so they may touch game state; blocking waiters are signaled inline.
+        private abstract class DbJob
         {
-            lock (_lock)
+            public Action Completion;
+        }
+
+        private sealed class PlainJob : DbJob
+        {
+            public Dictionary<string, string> Writes;
+            public List<string> Deletes;
+        }
+
+        private sealed class FuncJob : DbJob
+        {
+            public Action<SqliteConnection> Work;
+            public ManualResetEventSlim Done;
+            public Exception Error;
+        }
+
+        private static void StartWriter()
+        {
+            if (Interlocked.Exchange(ref _writerStarted, 1) == 1)
+                return;
+            _writerQueue = new BlockingCollection<DbJob>(new ConcurrentQueue<DbJob>());
+            _writerThread = new Thread(WriterLoop)
+            {
+                IsBackground = true,
+                Name = "DatabaseWriter",
+                Priority = ThreadPriority.AboveNormal
+            };
+            _writerThread.Start();
+        }
+
+        private static void StopWriter()
+        {
+            BlockingCollection<DbJob> queue = _writerQueue;
+            Thread thread = _writerThread;
+            if (queue == null || thread == null)
+                return;
+            try { queue.CompleteAdding(); } catch { }
+            try
+            {
+                //Drain first: disconnect/death saves queued above must commit
+                //before the TRUNCATE checkpoint in Shutdown runs.
+                if (!thread.Join(15000))
+                {
+#if DEBUG
+                    try { Console.WriteLine("<Database writer did not stop in time>"); } catch { }
+#endif
+                }
+            }
+            catch { }
+        }
+
+        //Owns one persistent connection and commits jobs FIFO. Consecutive
+        //plain bundles share one IMMEDIATE transaction (group commit: N loot
+        //saves cost one fsync); func jobs keep solo transactions, applied in
+        //arrival order between the groups. A failed group rolls back and
+        //retries member-by-member so one bad bundle cannot drop the rest.
+        private static void WriterLoop()
+        {
+            try
             {
                 using (SqliteConnection conn = OpenConnection())
-                using (SqliteCommand begin = conn.CreateCommand())
                 {
-                    begin.CommandText = "BEGIN IMMEDIATE;";
-                    begin.ExecuteNonQuery();
-                    try
+                    foreach (DbJob first in _writerQueue.GetConsumingEnumerable())
                     {
-                        work(conn);
-                        using (SqliteCommand commit = conn.CreateCommand())
-                        {
-                            commit.CommandText = "COMMIT;";
-                            commit.ExecuteNonQuery();
-                        }
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            using (SqliteCommand rollback = conn.CreateCommand())
-                            {
-                                rollback.CommandText = "ROLLBACK;";
-                                rollback.ExecuteNonQuery();
-                            }
-                        }
-                        catch { }
-                        throw;
+                        List<DbJob> batch = new List<DbJob>(64);
+                        batch.Add(first);
+                        while (batch.Count < 512 && _writerQueue.TryTake(out DbJob extra))
+                            batch.Add(extra);
+                        RunBatch(conn, batch);
                     }
                 }
             }
+#if DEBUG
+            catch (Exception e)
+            {
+                try { Console.WriteLine($"<Database writer died> {e}"); } catch { }
+            }
+#else
+            catch { }
+#endif
+        }
+
+        private static void RunBatch(SqliteConnection conn, List<DbJob> batch)
+        {
+            List<Action> completions = new List<Action>();
+            int i = 0;
+            while (i < batch.Count)
+            {
+                if (batch[i] is PlainJob)
+                {
+                    int j = i;
+                    while (j < batch.Count && batch[j] is PlainJob)
+                        j++;
+                    if (!CommitPlains(conn, batch, i, j, completions))
+                        for (int k = i; k < j; k++)
+                            CommitOnePlain(conn, (PlainJob)batch[k], completions);
+                    i = j;
+                }
+                else
+                {
+                    RunFunc(conn, (FuncJob)batch[i], completions);
+                    i++;
+                }
+            }
+            //Game-state completions hop to the main thread even when the
+            //batch committed on the writer: AckedInvSwap /DelayedDrop code
+            //must run where worlds are safe to touch.
+            foreach (Action completion in completions)
+            {
+                try { Manager.RunOnMainThread(completion); }
+                catch { }
+            }
+        }
+
+        private static void BeginImmediate(SqliteConnection conn)
+        {
+            using (SqliteCommand begin = conn.CreateCommand())
+            {
+                begin.CommandText = "BEGIN IMMEDIATE;";
+                begin.ExecuteNonQuery();
+            }
+        }
+
+        private static void Commit(SqliteConnection conn)
+        {
+            using (SqliteCommand commit = conn.CreateCommand())
+            {
+                commit.CommandText = "COMMIT;";
+                commit.ExecuteNonQuery();
+            }
+        }
+
+        private static void Rollback(SqliteConnection conn)
+        {
+            try
+            {
+                using (SqliteCommand rollback = conn.CreateCommand())
+                {
+                    rollback.CommandText = "ROLLBACK;";
+                    rollback.ExecuteNonQuery();
+                }
+            }
+            catch { }
+        }
+
+        private static void ApplyPlain(SqliteConnection conn, PlainJob job)
+        {
+            if (job.Writes != null)
+                foreach (KeyValuePair<string, string> kv in job.Writes)
+                    UpsertKeyInTx(conn, kv.Key, kv.Value);
+            if (job.Deletes != null)
+                foreach (string key in job.Deletes)
+                    DeleteKeyInTx(conn, key);
+        }
+
+        private static bool CommitPlains(SqliteConnection conn, List<DbJob> batch, int from, int to, List<Action> completions)
+        {
+            BeginImmediate(conn);
+            try
+            {
+                for (int k = from; k < to; k++)
+                    ApplyPlain(conn, (PlainJob)batch[k]);
+                Commit(conn);
+            }
+            catch
+            {
+                Rollback(conn);
+                return false;
+            }
+            for (int k = from; k < to; k++)
+                if (batch[k].Completion != null)
+                    completions.Add(batch[k].Completion);
+            return true;
+        }
+
+        private static void CommitOnePlain(SqliteConnection conn, PlainJob job, List<Action> completions)
+        {
+            try
+            {
+                BeginImmediate(conn);
+                try
+                {
+                    ApplyPlain(conn, job);
+                    Commit(conn);
+                }
+                catch
+                {
+                    Rollback(conn);
+                    throw;
+                }
+                if (job.Completion != null)
+                    completions.Add(job.Completion);
+            }
+#if DEBUG
+            catch (Exception e)
+            {
+                try { Console.WriteLine($"<Database write dropped> {e.Message}"); } catch { }
+            }
+#else
+            catch { }
+#endif
+        }
+
+        private static void RunFunc(SqliteConnection conn, FuncJob job, List<Action> completions)
+        {
+            try
+            {
+                BeginImmediate(conn);
+                try
+                {
+                    job.Work(conn);
+                    Commit(conn);
+                }
+                catch (Exception e)
+                {
+                    Rollback(conn);
+                    job.Error = e;
+                    throw;
+                }
+                if (job.Completion != null)
+                    completions.Add(job.Completion);
+            }
+            catch
+            {
+                if (job.Error == null)
+                    job.Error = new Exception("Database func failed");
+            }
+            finally
+            {
+                try { job.Done?.Set(); } catch { }
+            }
+        }
+
+        //Runs work inside one IMMEDIATE transaction on the writer thread and
+        //blocks the caller until it commits. Rare paths only (register, char
+        //delete, vault-chest buy, renames): the tick thread must never wait
+        //per-action, so hot paths use WriteAtomically / TransactAsync instead.
+        //Crash rule is unchanged: once the commit returns, everything is
+        //durable; if the process dies first, none of it is.
+        private static void Transact(Action<SqliteConnection> work)
+        {
+            //Re-entrant guard: func jobs calling back in run inline instead
+            //of queueing behind themselves.
+            if (Thread.CurrentThread == _writerThread)
+            {
+                using (SqliteConnection conn = OpenConnection())
+                {
+                    BeginImmediate(conn);
+                    try
+                    {
+                        work(conn);
+                        Commit(conn);
+                    }
+                    catch
+                    {
+                        Rollback(conn);
+                        throw;
+                    }
+                }
+                return;
+            }
+            FuncJob job = new FuncJob { Work = work, Done = new ManualResetEventSlim(false) };
+            Enqueue(job);
+            job.Done.Wait();
+            if (job.Error != null)
+                throw job.Error;
+        }
+
+        //Fire-and-forget read-modify-write on the writer thread. The optional
+        //completion hops to the main thread after the commit.
+        private static void TransactAsync(Action<SqliteConnection> work, Action onCommitted = null)
+        {
+            if (Thread.CurrentThread == _writerThread)
+            {
+                RunFuncDirect(work);
+                if (onCommitted != null)
+                {
+                    try { Manager.RunOnMainThread(onCommitted); } catch { }
+                }
+                return;
+            }
+            Enqueue(new FuncJob { Work = work, Completion = onCommitted });
+        }
+
+        private static void RunFuncDirect(Action<SqliteConnection> work)
+        {
+            using (SqliteConnection conn = OpenConnection())
+            {
+                BeginImmediate(conn);
+                try
+                {
+                    work(conn);
+                    Commit(conn);
+                }
+                catch
+                {
+                    Rollback(conn);
+                    throw;
+                }
+            }
+        }
+
+        private static void Enqueue(DbJob job)
+        {
+            BlockingCollection<DbJob> queue = _writerQueue;
+            if (queue == null || queue.IsAddingCompleted)
+            {
+                //Pre-Init (tests/tools) or post-Shutdown: fall back to a
+                //direct commit so no save is silently lost.
+                if (job is PlainJob plain)
+                    RunFuncDirect(conn => ApplyPlain(conn, plain));
+                else if (job is FuncJob func)
+                {
+                    try { RunFuncDirect(func.Work); }
+                    catch (Exception e) { func.Error = e; }
+                    finally { try { func.Done?.Set(); } catch { } }
+                }
+                if (job.Completion != null)
+                {
+                    try { job.Completion(); } catch { }
+                }
+                return;
+            }
+            queue.Add(job);
         }
 
         //Commits a group of key writes (and optional deletes) as ONE SQLite
         //transaction. Keys must already be combined (see CombineKeyPath).
         //Callers must build the value strings first (pure in-memory work) and
-        //pass only strings in.
+        //pass only strings in. Fire-and-forget: the bundle commits FIFO on
+        //the writer thread, so the tick thread never pays the fsync. Bundles
+        //stay atomic (group commit only merges whole bundles), but the ack is
+        //sent before the commit: a crash in between rolls the bundle back.
+        //Paths that must not roll back after ack use WriteAtomicallyAsync
+        //(commit-gated completion) or WriteAtomicallyAndWait instead.
         public static void WriteAtomically(Dictionary<string, string> writes, IEnumerable<string> deletes = null)
         {
             if ((writes == null || writes.Count == 0) && deletes == null)
                 return;
-            Transact(conn =>
+            List<string> deleteList = deletes == null ? null : new List<string>(deletes);
+            Enqueue(new PlainJob { Writes = writes, Deletes = deleteList });
+        }
+
+        //Same bundle, but onCommitted runs on the main thread after the
+        //commit lands. Use when client-visible effects (drop bags, vault
+        //acks) must not outrun durability.
+        public static void WriteAtomicallyAsync(Dictionary<string, string> writes, IEnumerable<string> deletes, Action onCommitted)
+        {
+            if ((writes == null || writes.Count == 0) && deletes == null)
             {
-                if (writes != null)
-                    foreach (KeyValuePair<string, string> kv in writes)
-                        UpsertKeyInTx(conn, kv.Key, kv.Value);
-                if (deletes != null)
-                    foreach (string key in deletes)
-                        DeleteKeyInTx(conn, key);
-            });
+                if (onCommitted != null)
+                {
+                    try { Manager.RunOnMainThread(onCommitted); } catch { }
+                }
+                return;
+            }
+            List<string> deleteList = deletes == null ? null : new List<string>(deletes);
+            Enqueue(new PlainJob { Writes = writes, Deletes = deleteList, Completion = onCommitted });
+        }
+
+        //Blocking variant for rare paths with same-call read-after-write
+        //(name changes) or in-transaction reads (vault-chest buy). Never use
+        //on a per-action hot path: it stalls the caller for the fsync.
+        public static void WriteAtomicallyAndWait(Dictionary<string, string> writes, IEnumerable<string> deletes = null)
+        {
+            if ((writes == null || writes.Count == 0) && deletes == null)
+                return;
+            List<string> deleteList = deletes == null ? null : new List<string>(deletes);
+            PlainJob plain = new PlainJob { Writes = writes, Deletes = deleteList };
+            //One job, one transaction: the func applies the plain bundle and
+            //signals, so ordering and atomicity match WriteAtomically. The
+            //Done handle is always signaled, so this cannot hang while the
+            //writer lives; pre-Init/post-Shutdown Enqueue runs inline above.
+            FuncJob job = new FuncJob
+            {
+                Work = conn => ApplyPlain(conn, plain),
+                Done = new ManualResetEventSlim(false)
+            };
+            Enqueue(job);
+            job.Done.Wait();
+            if (job.Error != null)
+                throw job.Error;
         }
 
         //Imports pre-existing `*.file` keys once. Originals are left in place as backup.
@@ -319,7 +666,9 @@ namespace RotMG.Common
         //Persists one player's account + character rows atomically. Every
         //in-memory mutation of gold/fame/inventory must end here (or in one
         //of the wider helpers below), otherwise a crash between two separate
-        //saves resurrects spent currency or duplicates moved items.
+        //saves resurrects spent currency or duplicates moved items. Queued
+        //FIFO on the writer thread: the bundle still commits as one
+        //transaction, but the caller does not wait for the fsync.
         public static void SaveAccountAndCharacter(AccountModel acc, CharacterModel ch)
         {
             string accountXml = acc.Export(false).ToString();
@@ -336,7 +685,9 @@ namespace RotMG.Common
         //Persists both sides of a completed trade in ONE transaction. Two
         //separate saves would let a crash duplicate every traded item (side
         //A saved without the item, side B never saved with it, or vice
-        //versa); one transaction makes the swap all-or-nothing.
+        //versa); one transaction makes the swap all-or-nothing. Queued FIFO
+        //on the writer thread; TradeDone is still sent immediately (a failed
+        //commit only delays persistence to the next autosave, as before).
         public static void SaveTradePair(AccountModel acc1, CharacterModel ch1, AccountModel acc2, CharacterModel ch2)
         {
             string a1 = acc1.Export(false).ToString();
@@ -361,10 +712,11 @@ namespace RotMG.Common
         //mutation while the player inventory only saved on disconnect, so a
         //crash in between duplicated vaulted items; this closes that window.
         //Extra writes (e.g. a vault-count bump when buying a chest) join the
-        //same transaction via extraWrites.
+        //same transaction via extraWrites. Queued FIFO like the rest; vault
+        //callers that ack to the client use WriteAtomicallyAndWait instead.
         public static void SaveClientAndVault(AccountModel acc, CharacterModel ch,
             int vaultOwnerId, int vaultIndex, int[] vaultTypes, int[] vaultDatas,
-            Dictionary<string, string> extraWrites = null)
+            Dictionary<string, string> extraWrites = null, bool andWait = false)
         {
             string a = acc.Export(false).ToString();
             string c = ch.Export(false).ToString();
@@ -377,7 +729,12 @@ namespace RotMG.Common
             if (extraWrites != null)
                 foreach (KeyValuePair<string, string> kv in extraWrites)
                     writes[kv.Key] = kv.Value;
-            WriteAtomically(writes);
+            //Vault rows back dup-sensitive swaps: callers that ack to the
+            //client pass andWait so the ack cannot outrun the commit.
+            if (andWait)
+                WriteAtomicallyAndWait(writes);
+            else
+                WriteAtomically(writes);
             acc.Data = XElement.Parse(a);
             ch.Data = XElement.Parse(c);
         }
@@ -426,12 +783,13 @@ namespace RotMG.Common
             }
         }
 
-        //Serializes every connected player first (pure in-memory work),
-        //then commits all rows in ONE transaction. Per-player commits cost
-        //one fsync each, so the old loop stalled the tick thread for N
-        //sequential transactions every 60s. Crash semantics are unchanged
-        //(everything is durable once the single commit returns), and a
-        //per-player failure only drops that player from the batch.
+        //Serializes every connected player first (pure in-memory work), then
+        //queues all rows as ONE bundle. The writer usually folds it into a
+        //shared group commit, so the old N-transaction fsync stall every 60s
+        //is gone and the tick thread never blocks here at all. Crash
+        //semantics are unchanged (everything is durable once the commit
+        //returns), and a per-player failure only drops that player from the
+        //batch.
         private static void AutosaveConnectedPlayers()
         {
             Client[] snapshot;
@@ -792,7 +1150,9 @@ namespace RotMG.Common
             acc.AliveChars.Remove(charId);
             string charXml = character.Export(false).ToString();
             string accountXml = acc.Export(false).ToString();
-            WriteAtomically(new Dictionary<string, string>
+            //Blocking: the /char/delete response precedes a re-list that
+            //reads the row back. Rare admin path.
+            WriteAtomicallyAndWait(new Dictionary<string, string>
             {
                 { CharacterKey(acc.Id, charId), charXml },
                 { AccountKey(acc.Id), accountXml }
@@ -808,7 +1168,9 @@ namespace RotMG.Common
         public static void RenameAccountKeys(int accId, string oldName, string newName, AccountModel acc)
         {
             string accountXml = acc.Export(false).ToString();
-            WriteAtomically(
+            //Blocking: ChooseName reloads the row in the same call, so the
+            //rename must be committed before returning. Rare path.
+            WriteAtomicallyAndWait(
                 new Dictionary<string, string>
                 {
                     { $"login.username.{newName}", accId.ToString() },
@@ -830,8 +1192,9 @@ namespace RotMG.Common
 
             string salt = MathUtils.GenerateSalt();
             //Both halves commit together: a crash between them would lock
-            //the account out (new hash, old salt).
-            WriteAtomically(new Dictionary<string, string>
+            //the account out (new hash, old salt). Blocking: a relogin may
+            //read the hash back immediately. Rare path.
+            WriteAtomicallyAndWait(new Dictionary<string, string>
             {
                 { $"login.hash.{acc.Id}", (newPassword + salt).ToSHA1() },
                 { $"login.salt.{acc.Id}", salt }
@@ -961,7 +1324,10 @@ namespace RotMG.Common
             //legends + death record) commits as ONE transaction. The old code
             //saved each key separately, so a crash could leave a dead
             //character listed as alive, double-credit fame on retry, or take
-            //guild fame without recording the death.
+            //guild fame without recording the death. The bundle now commits
+            //FIFO on the writer thread (still one transaction, still
+            //all-or-nothing); the legends board refreshes on the main thread
+            //right after, so it always reads the committed state.
             string charXml = character.Export(false).ToString();
             string accountXml = acc.Export(false).ToString();
             string fameXml = fame.ToString();
@@ -969,7 +1335,7 @@ namespace RotMG.Common
             int accId = acc.Id;
             int charId = character.Id;
             int charFame = character.Fame;
-            Transact(conn =>
+            TransactAsync(conn =>
             {
                 UpsertKeyInTx(conn, CharacterKey(accId, charId), charXml);
                 UpsertKeyInTx(conn, AccountKey(accId), accountXml);
@@ -1004,12 +1370,9 @@ namespace RotMG.Common
                             legends = legends.Take(MaxLegends).ToList();
                         UpsertKeyInTx(conn, key, string.Join("\n", legends.ToArray()));
                     }
-            });
+            }, FlushLegends);
             character.Data = XElement.Parse(charXml);
             acc.Data = XElement.Parse(accountXml);
-
-            //Refresh the in-memory legends board from the committed state.
-            FlushLegends();
         }
 
         public static FameStats CalculateStats(AccountModel acc, CharacterModel character, string killer = "")

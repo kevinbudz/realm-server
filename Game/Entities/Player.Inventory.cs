@@ -143,22 +143,85 @@ namespace RotMG.Game.Entities
             ItemDatas[slot] = -1;
             UpdateInventorySlot(slot);
 
-            Container container = new Container(Container.PurpleBag, Id, 120000);
-            container.Inventory[0] = item;
-            container.ItemDatas[0] = data;
-            container.UpdateInventorySlot(0);
-
             RecalculateEquipBonuses();
             //The dropped bag is ephemeral, but the removal from this player's
-            //inventory is durable: persist before the drop is visible, or a
-            //crash resurrects the item while someone else already looted it.
+            //inventory is durable: the commit lands before the drop becomes
+            //visible, or a crash resurrects the item while someone else
+            //already looted it. The bag therefore spawns from the commit
+            //completion (next tick) instead of inline; the tick thread never
+            //waits for the fsync.
+            World dropWorld = Parent;
+            Position dropAt = Position + MathUtils.Position(.2f, .2f);
+            try
+            {
+                SaveToCharacter();
+                string accountXml = Client.Account.Export(false).ToString();
+                string charXml = Client.Character.Export(false).ToString();
+                Dictionary<string, string> writes = new Dictionary<string, string>
+                {
+                    { Database.AccountKey(Client.Account.Id), accountXml },
+                    { Database.CharacterKey(Client.Account.Id, Client.Character.Id), charXml }
+                };
+                Client.Account.Data = System.Xml.Linq.XElement.Parse(accountXml);
+                Client.Character.Data = System.Xml.Linq.XElement.Parse(charXml);
+                Database.WriteAtomicallyAsync(writes, null, () =>
+                    SpawnDroppedBag(dropWorld, dropAt, item, data, slot));
+            }
+            catch { }
+        }
+
+        //Commit-gated half of DropItem: runs on the main thread after the
+        //inventory removal is durable. If the world went away (or the player
+        //left/died) the bag has nowhere to land, so the item goes back into
+        //the player's inventory and re-queues instead of vanishing.
+        private void SpawnDroppedBag(World world, Position at, int item, int data, int slot)
+        {
+            try
+            {
+                if (world == null || Manager.GetWorld(world.Id) != world || Parent != world)
+                {
+                    RestoreDroppedItem(item, data, slot);
+                    return;
+                }
+                Container container = new Container(Container.PurpleBag, Id, 120000);
+                container.Inventory[0] = item;
+                container.ItemDatas[0] = data;
+                container.UpdateInventorySlot(0);
+                if (world.AddEntity(container, at) == -1)
+                    RestoreDroppedItem(item, data, slot);
+            }
+            catch
+            {
+                try { RestoreDroppedItem(item, data, slot); } catch { }
+            }
+        }
+
+        private void RestoreDroppedItem(int item, int data, int slot)
+        {
+            if (Parent == null || Client == null || Client.Character == null)
+                return;
+            if (slot >= 0 && slot < Inventory.Length && Inventory[slot] == -1)
+            {
+                Inventory[slot] = item;
+                ItemDatas[slot] = data;
+            }
+            else
+            {
+                int free = GetFreeInventorySlot();
+                if (free == -1)
+                    return;
+                Inventory[free] = item;
+                ItemDatas[free] = data;
+                slot = free;
+            }
+            UpdateInventorySlot(slot);
+            RecalculateEquipBonuses();
             try
             {
                 SaveToCharacter();
                 Database.SaveAccountAndCharacter(Client.Account, Client.Character);
             }
             catch { }
-            Parent.AddEntity(container, Position + MathUtils.Position(.2f, .2f));
         }
 
         public void SwapItem(SlotData slot1, SlotData slot2)
@@ -312,9 +375,9 @@ namespace RotMG.Game.Entities
         //Persists this swap before acknowledging it. Ground bags are
         //ephemeral (a crash simply undoes the move), but vault chests and the
         //player row are durable: they must commit in ONE transaction or a
-        //crash between them duplicates vaulted items. InvResult(0) is only
-        //sent after the commit, so the client never believes a swap survived
-        //that did not.
+        //crash between them duplicates vaulted items. Vault swaps wait for
+        //the commit before InvResult goes out, so the client never believes
+        //a swap survived that did not; ground swaps queue FIFO behind them.
         private void PersistInventoryMutation(Container c1, Container c2)
         {
             try
@@ -327,14 +390,19 @@ namespace RotMG.Game.Entities
                     { Database.AccountKey(Client.Account.Id), accountXml },
                     { Database.CharacterKey(Client.Account.Id, Client.Character.Id), charXml }
                 };
+                bool vaultInvolved = false;
                 foreach (Container c in new[] { c1, c2 })
                 {
                     if (c == null || c.VaultOwnerId == -1 || c.VaultIndex < 0)
                         continue;
+                    vaultInvolved = true;
                     writes[Database.VaultItemsKey(c.VaultOwnerId, c.VaultIndex)] =
                         Database.VaultValue(c.Inventory, c.ItemDatas);
                 }
-                Database.WriteAtomically(writes);
+                if (vaultInvolved)
+                    Database.WriteAtomicallyAndWait(writes);
+                else
+                    Database.WriteAtomically(writes);
                 Client.Account.Data = System.Xml.Linq.XElement.Parse(accountXml);
                 Client.Character.Data = System.Xml.Linq.XElement.Parse(charXml);
             }

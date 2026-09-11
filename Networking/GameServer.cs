@@ -112,7 +112,58 @@ namespace RotMG.Networking
         public static void Stop()
         {
             _terminating = true;
+            StopIo();
             Thread.Sleep(200);
+        }
+
+        private static bool _ioRunning;
+        private static Thread _ioThread;
+
+        //Dedicated socket thread: frames inbound bytes and flushes outbound
+        //queues at ~1kHz so syscalls and memcpy never run on the tick
+        //thread. Handler dispatch stays in Client.Tick (tick thread), so no
+        //game logic runs here; per-client errors only flag the client.
+        public static void StartIo()
+        {
+            if (_ioThread != null)
+                return;
+            _ioRunning = true;
+            _ioThread = new Thread(IoLoop)
+            {
+                IsBackground = true,
+                Name = "GameServerIo",
+                Priority = ThreadPriority.AboveNormal
+            };
+            _ioThread.Start();
+        }
+
+        public static void StopIo()
+        {
+            _ioRunning = false;
+            try { _ioThread?.Join(2000); } catch { }
+            _ioThread = null;
+        }
+
+        private static void IoLoop()
+        {
+            while (_ioRunning)
+            {
+                try
+                {
+                    Client[] snapshot = Manager.SnapshotClients();
+                    foreach (Client client in snapshot)
+                    {
+                        try
+                        {
+                            client.PollReceive();
+                            client.FlushSend();
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+                Thread.Sleep(1);
+            }
         }
 
         public static void Start()

@@ -105,6 +105,14 @@ namespace RotMG.Game.Entities
 
         public void TryMove(int time, Position pos)
         {
+            //Dead players' packets are meaningless (the client keeps
+            //sending for ~1500ms before the death disconnect): touching
+            //world state with them re-adds corpses to chunks and throws
+            //on disposed worlds, and the exception path disconnects with
+            //queued packets still unsent.
+            if (Dead)
+                return;
+
             if (!ValidTime(time))
             {
                 Client.Disconnect();
@@ -175,10 +183,10 @@ namespace RotMG.Game.Entities
 
             Position prevPos = Position;
             Parent.MoveEntity(this, pos);
-            //Server-authoritative sweep: deals real bullet damage over the
-            //validated movement segment and records unreported contacts
-            //for counting at expiry (see VerifyProjectiles). Damage here
-            //cannot disconnect mid-loop; suspicion only counts at expiry.
+            //Observe-only sweep over the validated movement segment:
+            //records unreported bullet contacts for counting at expiry
+            //(see VerifyProjectiles). It deals no damage and cannot
+            //disconnect mid-loop; suspicion only counts at expiry.
             VerifyProjectiles(time, prevPos);
 
             if (desc.Push)

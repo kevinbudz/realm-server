@@ -27,6 +27,15 @@ namespace RotMG.Networking
         Disconnected //Packets received will no longer be processed and the server will disconnect the client.
     }
 
+    //One framed inbound packet waiting for handler dispatch on the tick
+    //thread. The IO thread only frames; GameServer.Read stays tick-threaded
+    //so game logic never runs concurrently.
+    public struct InboundPacket
+    {
+        public int Id;
+        public byte[] Body;
+    }
+
     public class Client
     {
         public ProtocolState State;
@@ -45,9 +54,13 @@ namespace RotMG.Networking
         private const int MaxPendingDisconnect = 1024;
         private Socket _socket;
         //Concurrent: parallel world broadcast enqueues from worker threads
-        //while StartSend dequeues on the main thread.
+        //while FlushSend dequeues on the IO thread.
         private ConcurrentQueue<byte[]> _pending;
-        //Packet that fit-checked but couldn't flush; only the main thread
+        //Framed inbound packets (IO thread produces, tick thread consumes)
+        //plus a death flag set by the IO thread when the socket dies.
+        private readonly ConcurrentQueue<InboundPacket> _inbound = new ConcurrentQueue<InboundPacket>();
+        private volatile bool _socketDead;
+        //Packet that fit-checked but couldn't flush; only the IO thread
         //touches this (concurrent queues have no push-front).
         private byte[] _held;
         //Set by Send from any thread when the client stops draining; acted
@@ -83,17 +96,17 @@ namespace RotMG.Networking
                 Program.Print(PrintType.Error, ex.ToString());
             }
 #endif
-            //Save synchronously before the socket closes. These used to be
-            //queued onto the main loop's work queue, so a crash (or the
-            //shutdown path, which stops that loop first) silently dropped
-            //them and rolled the character back to its previous save while
-            //trade/vault counterparties kept their copies: a duplication
-            //machine. A disconnect-time write is two small rows; the tick it
-            //costs is worth the durability.
+            //Queue the save before the socket closes. Bundles commit FIFO on
+            //the writer thread, so a disconnect storm no longer pays one
+            //fsync per player on the tick thread; Shutdown still drains the
+            //queue before the final checkpoint, so graceful stops lose
+            //nothing. (The old main-loop work queue was dropped for the
+            //opposite reason: it was abandoned on shutdown, silently rolling
+            //characters back while counterparties kept their copies.)
             if (Account != null)
             {
                 Account.Connected = false;
-                Manager.AccountIdToClientId.Remove(Account.Id);
+                Manager.UnlinkClient(Account.Id);
 
                 AccountModel acc = Account;
                 CharacterModel ch = Character;
@@ -146,6 +159,8 @@ namespace RotMG.Networking
             _send.Reset();
             _receive.Reset();
             _pending.Clear();
+            while (_inbound.TryDequeue(out _)) { }
+            _socketDead = false;
             Account = null;
             Player = null;
             Character = null;
@@ -166,10 +181,16 @@ namespace RotMG.Networking
             IP = ip;
             Active = true;
             DCTime = -1;
+            _socketDead = false;
+            _sendOverflow = false;
+            while (_inbound.TryDequeue(out _)) { }
 
             Manager.AddClient(this);
         }
 
+        //Tick-thread half: no socket calls here. The IO thread frames
+        //inbound packets and flushes outbound ones; this only dispatches
+        //framed packets to handlers and acts on IO-thread death flags.
         public void Tick()
         {
             try
@@ -181,14 +202,13 @@ namespace RotMG.Networking
                     return;
                 }
 
-                if (!_socket.Connected)
+                if (_socketDead || !_socket.Connected)
                 {
                     Disconnect();
                     return;
                 }
 
-                StartReceive();
-                StartSend();
+                DrainInbound();
             }
 #if DEBUG
             catch (Exception ex)
@@ -205,6 +225,14 @@ namespace RotMG.Networking
 #endif
         }
 
+        private void DrainInbound()
+        {
+            //Bounded per tick so one flooding client cannot starve the rest.
+            int budget = 32;
+            while (budget-- > 0 && _inbound.TryDequeue(out InboundPacket packet))
+                GameServer.Read(this, packet.Id, packet.Body);
+        }
+
         public void Send(byte[] packet)
         {
             if (_pending.Count >= MaxPendingPackets)
@@ -219,7 +247,28 @@ namespace RotMG.Networking
             _pending.Enqueue(packet);
         }
 
-        private void StartReceive()
+        //IO-thread half: frame available bytes into inbound packets. Never
+        //touches game state and never dispatches handlers; fatal framing
+        //only raises _socketDead for the tick thread to act on.
+        public void PollReceive()
+        {
+            if (State == ProtocolState.Disconnected || _socketDead)
+                return;
+            try
+            {
+                PollReceiveInner();
+            }
+            catch (ObjectDisposedException)
+            {
+                _socketDead = true;
+            }
+            catch (SocketException)
+            {
+                _socketDead = true;
+            }
+        }
+
+        private void PollReceiveInner()
         {
             switch (_receive.State)
             {
@@ -229,7 +278,7 @@ namespace RotMG.Networking
                         _socket.Receive(_receive.PacketBytes, GameServer.PrefixLength, SocketFlags.None);
                         _receive.PacketLength = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(_receive.PacketBytes, 0));
                         _receive.State = SocketEventState.InProgress;
-                        StartReceive();
+                        PollReceiveInner();
                     }
                     break;
                 case SocketEventState.InProgress:
@@ -242,32 +291,54 @@ namespace RotMG.Networking
                     if (_receive.PacketLength < GameServer.PrefixLength ||
                         _receive.PacketLength > GameServer.BufferSize)
                     {
-                        Disconnect();
+                        _socketDead = true;
                         return;
                     }
 
                     //Only loop when a full packet was actually consumed: a
-                    //fragmented packet must wait for the next tick, otherwise
+                    //fragmented packet must wait for the next poll, otherwise
                     //this recurses with no progress until the stack overflows.
                     if ((_socket.Available + GameServer.PrefixLength) < _receive.PacketLength)
                         break;
 
                     if (_socket.Available != 0)
                         _socket.Receive(_receive.PacketBytes, GameServer.PrefixLength, _receive.PacketLength - GameServer.PrefixLength, SocketFlags.None);
-                    GameServer.Read(this, _receive.GetPacketId(), _receive.GetPacketBody());
+                    _inbound.Enqueue(new InboundPacket { Id = _receive.GetPacketId(), Body = _receive.GetPacketBody() });
                     _receive.Reset();
 
-                    StartReceive();
+                    PollReceiveInner();
                     break;
             }
         }
 
-        private void StartSend()
+        //IO-thread half of the old StartSend: coalesce everything queued
+        //into the pooled buffer and push it with socket sends. The socket is
+        //non-blocking (see BeginHandling), so a full kernel buffer just
+        //defers the remainder to a later poll instead of stalling anyone.
+        //Only the IO thread touches _send/_held.
+        public void FlushSend()
         {
-            //One coalesced flush per tick: frame everything queued into the pooled
-            //buffer and push it with a single socket send. The socket is non-blocking
-            //(see BeginHandling), so a full kernel buffer just defers the remainder
-            //to a later tick instead of stalling the tick thread.
+            if (State == ProtocolState.Disconnected)
+                return;
+            try
+            {
+                FlushSendInner();
+            }
+            catch (ObjectDisposedException)
+            {
+                _socketDead = true;
+            }
+            catch (SocketException ex)
+            {
+                //WouldBlock just means the kernel buffer is full; the
+                //remainder goes out on a later poll. Anything else kills it.
+                if (ex.SocketErrorCode != SocketError.WouldBlock)
+                    _socketDead = true;
+            }
+        }
+
+        private void FlushSendInner()
+        {
             if (_send.State == SocketEventState.Awaiting)
             {
                 if (_held == null && _pending.IsEmpty)

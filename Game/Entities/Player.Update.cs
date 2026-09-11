@@ -86,6 +86,10 @@ namespace RotMG.Game.Entities
         //there (pre-move) and read by SendNewTick (post-move); sub-tick
         //staleness is irrelevant for throttle bucketing.
         private readonly HashSet<int> _nearPlayerIds = new HashSet<int>();
+        //Far-presence watermark: which world's player roster this client
+        //already knows. Matches World.PlayerListVersion; see SendUpdate.
+        private World _knownPlayerWorld;
+        private int _knownPlayerVersion = -1;
         private readonly List<Entity> _hitTestScratch = new List<Entity>();
         private readonly List<Entity> _dropScratch = new List<Entity>();
         //Reused per-tick packet buffers: Update/NewTick serialize
@@ -95,7 +99,7 @@ namespace RotMG.Game.Entities
         private readonly List<ObjectDefinition> _addsScratch = new List<ObjectDefinition>();
         private readonly List<ObjectDrop> _dropsScratch = new List<ObjectDrop>();
 
-        public void SendNewTick()
+        public virtual void SendNewTick()
         {
             HandleQuest();
             _newTickCount++;
@@ -126,7 +130,7 @@ namespace RotMG.Game.Entities
             AwaitingMoves++;
         }
 
-        public void SendUpdate()
+        public virtual void SendUpdate()
         {
             bool nUpdate = ShouldCalculateSightCircle();
             HashSet<IntPoint> sight = Parent.BlockSight == 0 ? SightCircle :
@@ -194,21 +198,25 @@ namespace RotMG.Game.Entities
             }
 
             //Far presence: every world player stays known (realm-src parity)
-            //so minimap dots and teleport clicks work at any distance. This
-            //fires once per join, not per tick: afterwards Entities.Add hits.
-            //Near ids are topped up for players the chunk query missed.
-            foreach (Player p in Parent.Players.Values)
+            //so minimap dots and teleport clicks work at any distance. Gated
+            //on World.PlayerListVersion, which bumps on join/leave: the full
+            //roster scan runs once per membership change, not per-tick
+            //per-player. Afterwards Entities.Add is a no-op hit and drops are
+            //handled by the removal pass below, so the known set cannot leak.
+            //Near ids come from the chunk query above every tick; its radius
+            //math covers sight exactly, so no full-scan top-up is needed.
+            if (_knownPlayerWorld != Parent || _knownPlayerVersion != Parent.PlayerListVersion)
             {
-                int dx = (int)p.Position.X - (int)Position.X;
-                int dy = (int)p.Position.Y - (int)Position.Y;
-                if (dx * dx + dy * dy <= SightRadius * SightRadius && sight.Contains(new IntPoint(dx, dy)))
-                    _nearPlayerIds.Add(p.Id);
-
-                if (Entities.Add(p))
+                foreach (Player p in Parent.Players.Values)
                 {
-                    _addsScratch.Add(p.GetObjectDefinition());
-                    EntityUpdates.Add(p.Id, p.UpdateCount);
+                    if (Entities.Add(p))
+                    {
+                        _addsScratch.Add(p.GetObjectDefinition());
+                        EntityUpdates.Add(p.Id, p.UpdateCount);
+                    }
                 }
+                _knownPlayerWorld = Parent;
+                _knownPlayerVersion = Parent.PlayerListVersion;
             }
 
             //Add entities
