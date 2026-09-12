@@ -271,7 +271,7 @@ namespace RotMG.Game.Entities
             Entities = new HashSet<Entity>();
             _nearPlayerIds.Clear();
             CalculatedSightCircle = new HashSet<IntPoint>();
-            AwaitingProjectiles = new Queue<List<Projectile>>();
+            AwaitingProjectiles = new Queue<AwaitingShots>();
             AckedProjectiles = new Dictionary<int, ProjectileAck>();
             ShotProjectiles = new Dictionary<int, Projectile>();
             AwaitingAoes = new Queue<AoeAck>();

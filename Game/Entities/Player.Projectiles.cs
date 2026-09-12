@@ -49,10 +49,29 @@ namespace RotMG.Game.Entities
         }
     }
 
+    //One server-volley (or one player-nova volley) waiting for its
+    //ShootAck. The wait runs on the server clock: Projectile.Time stays
+    //on the client clock for hit math, and the two epochs differ
+    //(client getTimer vs server uptime), so the timeout must not reuse
+    //it. Forgiven tracks the one grace re-stamp a starved head gets
+    //before it is resolved without its ack.
+    public class AwaitingShots
+    {
+        public List<Projectile> Projectiles;
+        public int EnqueueTime;
+        public bool Forgiven;
+    }
+
     public partial class Player
     {
         private const int TimeUntilAckTimeout = 2000;
         private const int TickProjectilesDelay = 2000;
+        //Back-to-back starved volleys before the client is dropped for
+        //stopped acking. Isolated losses (a lost packet, a slow frame)
+        //resolve below without disconnecting; only sustained ack
+        //suppression trips this. Reset by every received ShootAck.
+        private const int MaxConsecutiveAckTimeouts = 5;
+        private int _ackTimeoutStreak;
         private const float RateOfFireThreshold = 1.1f;
         private const float EnemyHitRangeAllowance = 1.7f;
         private const float EnemyHitTrackPrecision = 8;
@@ -83,7 +102,7 @@ namespace RotMG.Game.Entities
         private readonly List<KeyValuePair<int, Projectile>> _shotVerifyScratch = new List<KeyValuePair<int, Projectile>>();
         private readonly List<KeyValuePair<int, ProjectileAck>> _ackVerifyScratch = new List<KeyValuePair<int, ProjectileAck>>();
 
-        public Queue<List<Projectile>> AwaitingProjectiles;
+        public Queue<AwaitingShots> AwaitingProjectiles;
         public Dictionary<int, ProjectileAck> AckedProjectiles;
 
         public Queue<AoeAck> AwaitingAoes; //Doesn't really belong here... But Player.Aoe.cs???
@@ -111,18 +130,45 @@ namespace RotMG.Game.Entities
                 }
             }
 
-            foreach (List<Projectile> apList in AwaitingProjectiles)
+            //Ack waits use the server clock (see AwaitingShots): the head
+            //is the oldest waiter, so a fresh head means a fresh queue.
+            //A starved head is forgiven once (a late ack still drains it
+            //in order); a twice-starved head is resolved without its ack
+            //and the streak only disconnects on sustained suppression.
+            while (AwaitingProjectiles.Count > 0 &&
+                Manager.TotalTime - AwaitingProjectiles.Peek().EnqueueTime > TimeUntilAckTimeout)
             {
-                foreach (Projectile ap in apList)
+                AwaitingShots head = AwaitingProjectiles.Peek();
+                if (!head.Forgiven)
                 {
-                    if (Manager.TotalTime - ap.Time > TimeUntilAckTimeout)
-                    {
 #if DEBUG
-                        Program.Print(PrintType.Error, "Proj ack timed out");
+                    Program.Print(PrintType.Warn, "Proj ack late, forgiven");
 #endif
-                        Client.Disconnect();
-                        return;
-                    }
+                    head.Forgiven = true;
+                    head.EnqueueTime = Manager.TotalTime;
+                    break;
+                }
+
+                AwaitingProjectiles.Dequeue();
+                foreach (Projectile p in head.Projectiles)
+                {
+                    //Own nova volleys were definitely sent, so they stay
+                    //hittable with their client fire time; enemy volleys
+                    //the client never acked were never rendered, so they
+                    //are dropped instead of made hittable.
+                    if (p.Owner.Equals(this))
+                        ShotProjectiles[p.Id] = p;
+                }
+#if DEBUG
+                Program.Print(PrintType.Error, $"Proj ack wait expired ({head.Projectiles.Count} bullets, streak {_ackTimeoutStreak + 1})");
+#endif
+                if (++_ackTimeoutStreak >= MaxConsecutiveAckTimeouts)
+                {
+#if DEBUG
+                    Program.Print(PrintType.Error, "Proj ack timed out");
+#endif
+                    Client.Disconnect();
+                    return;
                 }
             }
 
@@ -625,7 +671,7 @@ namespace RotMG.Game.Entities
 
         public void AwaitProjectiles(List<Projectile> projectiles)
         {
-            AwaitingProjectiles.Enqueue(projectiles);
+            AwaitingProjectiles.Enqueue(new AwaitingShots { Projectiles = projectiles, EnqueueTime = Manager.TotalTime });
         }
 
         public void TryHitSquare(int time, int bulletId)
@@ -715,9 +761,10 @@ namespace RotMG.Game.Entities
                 return;
             }
 
-            if (AwaitingProjectiles.TryDequeue(out List<Projectile> projectiles))
+            if (AwaitingProjectiles.TryDequeue(out AwaitingShots awaiting))
             {
-                foreach (Projectile p in projectiles)
+                _ackTimeoutStreak = 0;
+                foreach (Projectile p in awaiting.Projectiles)
                 {
                     if (p.Owner.Equals(this))
                     {
