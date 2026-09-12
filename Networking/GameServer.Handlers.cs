@@ -206,13 +206,13 @@ namespace RotMG.Networking
 
         public static void Escape(Client client, PacketReader rdr)
         {
-            client.Active = false;
+            client.BeginReconnect();
             client.Player.CancelTradeIfTrading();
             client.Player.FameStats.Escapes++;
             if (client.Player.HP <= 10)
                 client.Player.FameStats.NearDeathEscapes++;
             client.Send(Reconnect(Manager.NexusId));
-            Manager.AddTimedAction(2000, client.Disconnect);
+            client.ScheduleReconnectDisconnect();
         }
 
         public static void GotoAck(Client client, PacketReader rdr)
@@ -266,13 +266,10 @@ namespace RotMG.Networking
             //transaction: a crash between them used to orphan the account
             //under two names or none.
             Database.RenameAccountKeys(client.Account.Id, client.Account.Name, name, client.Account);
-
-            AccountModel fresh = new AccountModel(client.Account.Id);
-            fresh.Load();
-            client.Account = fresh;
+            client.Account.Name = name;
 
             player.Name = name;
-            player.Credits = fresh.Stats.Credits;
+            player.Credits = client.Account.Stats.Credits;
             player.NameChosen = true;
             client.Send(NameResult(true, ""));
         }
@@ -297,10 +294,10 @@ namespace RotMG.Networking
             if (world == null)
                 return;
 
-            client.Active = false;
+            client.BeginReconnect();
             player.CancelTradeIfTrading();
             client.Send(Reconnect(world.Id));
-            Manager.AddTimedAction(2000, client.Disconnect);
+            client.ScheduleReconnectDisconnect();
         }
 
         private static World ResolvePortalWorld(Player player, Portal portal)
@@ -446,16 +443,59 @@ namespace RotMG.Networking
 
             if (client.State == ProtocolState.Handshaked) //Only allow Hello to be processed once.
             {
-                AccountModel acc = Database.Verify(username, password, client.IP);
-                if (acc == null)
+                int accountId = Database.Authenticate(username, password, client.IP);
+                if (accountId == -1)
                 {
                     client.Send(Failure(0, "Invalid account."));
                     Manager.AddTimedAction(1000, client.Disconnect);
                     return;
                 }
 
+                //Kick the live session before any account Load so the
+                //authoritative models land in the handoff (or a waited
+                //SQLite commit) instead of racing a stale Verify snapshot.
+                Client previous = Manager.GetClient(accountId);
+                if (previous != null)
+                {
+                    if (previous.Reconnecting)
+                        previous.Disconnect();
+                    else
+                        previous.DisconnectWaitingForSave();
+                }
+
+                AccountModel acc;
+                CharacterModel handedCharacter = null;
+                bool fromHandoff = Manager.TryTakeHandoff(accountId, out Manager.SessionHandoff handoff);
+                if (fromHandoff)
+                {
+                    acc = handoff.Account;
+                    handedCharacter = handoff.Character;
+                }
+                else
+                {
+                    acc = new AccountModel(accountId);
+                    if (acc.IsNull)
+                    {
+                        client.Send(Failure(0, "Invalid account."));
+                        Manager.AddTimedAction(1000, client.Disconnect);
+                        return;
+                    }
+                    acc.Load();
+                }
+
                 if (acc.Banned)
                 {
+                    if (fromHandoff)
+                    {
+                        try
+                        {
+                            if (handedCharacter != null && !handedCharacter.Dead)
+                                Database.SaveAccountAndCharacter(acc, handedCharacter);
+                            else
+                                acc.Save();
+                        }
+                        catch { }
+                    }
                     client.Send(Failure(0, "Banned."));
                     Manager.AddTimedAction(1000, client.Disconnect);
                     return;
@@ -467,16 +507,17 @@ namespace RotMG.Networking
                     Manager.AddTimedAction(1000, client.Disconnect);
                 }
 
-                Manager.GetClient(acc.Id)?.Disconnect();
-
                 if (Database.IsAccountInUse(acc))
                 {
+                    if (fromHandoff)
+                        Manager.StoreHandoff(acc, handedCharacter);
                     client.Send(Failure(0, "Account in use!"));
                     Manager.AddTimedAction(1000, client.Disconnect);
                     return;
                 }
 
                 client.Account = acc;
+                client.HandoffCharacter = handedCharacter;
                 client.Account.Connected = true;
                 client.Account.Save();
                 client.TargetWorldId = gameId;
@@ -537,6 +578,7 @@ namespace RotMG.Networking
                     Manager.AddTimedAction(1000, client.Disconnect);
                     return;
                 }
+                client.HandoffCharacter = null;
                 client.Character = character;
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
@@ -562,8 +604,20 @@ namespace RotMG.Networking
 
             if (client.State == ProtocolState.Awaiting)
             {
-                CharacterModel character = Database.LoadCharacter(client.Account, charId);
-                if (character.IsNull || character.Dead || character.Deleted)
+                CharacterModel character = null;
+                if (client.HandoffCharacter != null && client.HandoffCharacter.Id == charId)
+                    character = client.HandoffCharacter;
+                else
+                {
+                    if (client.HandoffCharacter != null)
+                    {
+                        try { Database.SaveAccountAndCharacter(client.Account, client.HandoffCharacter); }
+                        catch { }
+                    }
+                    character = Database.LoadCharacter(client.Account, charId);
+                }
+                client.HandoffCharacter = null;
+                if (character == null || character.IsNull || character.Dead || character.Deleted)
                 {
                     client.Send(Failure(0, "Failed to load character."));
                     client.Disconnect();

@@ -45,9 +45,11 @@ namespace RotMG.Networking
 
         public AccountModel Account;
         public CharacterModel Character;
+        public CharacterModel HandoffCharacter;
         public Player Player;
         public wRandom Random;
         public bool Active; //Used in escape to stop incoming packets (so you don't die)
+        public bool Reconnecting; //Set by Escape/UsePortal/Quake/chat before Reconnect
         public int DCTime;
 
         private const int MaxPendingPackets = 256;
@@ -77,15 +79,30 @@ namespace RotMG.Networking
             _receive = receive;
         }
 
-        public void Disconnect() //Disconnects, clears all individual client data and pushes the instance back to the server queue.
+        public void BeginReconnect()
+        {
+            Reconnecting = true;
+            Active = false;
+        }
+
+        public void ScheduleReconnectDisconnect()
+        {
+            int id = Id;
+            Manager.AddTimedAction(2000, () =>
+            {
+                if (Id == id && State != ProtocolState.Disconnected)
+                    Disconnect();
+            });
+        }
+
+        public void Disconnect() => FinishDisconnect(false);
+
+        public void DisconnectWaitingForSave() => FinishDisconnect(true);
+
+        private void FinishDisconnect(bool waitForSave) //Disconnects, clears all individual client data and pushes the instance back to the server queue.
         {
             if (State == ProtocolState.Disconnected)
-            {
-#if DEBUG
-                Program.Print(PrintType.Error, "Already dcd");
-#endif
                 return;
-            }
 #if DEBUG
             try
             {
@@ -109,28 +126,35 @@ namespace RotMG.Networking
                 Manager.UnlinkClient(Account.Id);
 
                 AccountModel acc = Account;
-                CharacterModel ch = Character;
-                if (Player != null && Player.Parent != null)
+                CharacterModel ch = Character ?? HandoffCharacter;
+                bool reconnecting = Reconnecting;
+                if (Player != null && Character != null)
                 {
                     Player.SaveToCharacter();
-                    Player.Parent.RemoveEntity(Player);
-                    bool dead = ch == null || ch.Dead; //Already saved during death.
-                    try
+                    if (Player.Parent != null)
+                        Player.Parent.RemoveEntity(Player);
+                    ch = Character;
+                }
+
+                bool dead = ch == null || ch.Dead; //Already saved during death.
+                try
+                {
+                    if (reconnecting && !dead)
                     {
-                        if (dead)
-                            acc.Save();
-                        else if (ch != null)
+                        Manager.StoreHandoff(acc, ch);
+                        if (ch != null)
                             Database.SaveAccountAndCharacter(acc, ch);
                         else
                             acc.Save();
                     }
-                    catch { }
+                    else if (dead)
+                        acc.Save();
+                    else if (ch != null)
+                        Database.SaveAccountAndCharacter(acc, ch, waitForSave);
+                    else
+                        acc.Save();
                 }
-                else
-                {
-                    try { acc.Save(); }
-                    catch { }
-                }
+                catch { }
             }
 
             //Shutdown socket
@@ -156,6 +180,7 @@ namespace RotMG.Networking
 
             //Clear data 
             Active = false;
+            Reconnecting = false;
             _send.Reset();
             _receive.Reset();
             _pending.Clear();
@@ -164,6 +189,7 @@ namespace RotMG.Networking
             Account = null;
             Player = null;
             Character = null;
+            HandoffCharacter = null;
             Random = null;
             TargetWorldId = -1;
 
@@ -180,6 +206,8 @@ namespace RotMG.Networking
             State = ProtocolState.Handshaked;
             IP = ip;
             Active = true;
+            Reconnecting = false;
+            HandoffCharacter = null;
             DCTime = -1;
             _socketDead = false;
             _sendOverflow = false;

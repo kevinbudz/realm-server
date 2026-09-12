@@ -31,6 +31,10 @@ namespace RotMG.Game
         public static readonly List<int> RealmIds = new List<int>();
         public static Dictionary<int, int> AccountIdToClientId;
         public static Dictionary<int, Client> Clients;
+        //Live Account/Character kept across Reconnect so Hello/Load do not
+        //round-trip SQLite (the async writer can still be committing).
+        public const int SessionHandoffTtlMs = 15000;
+        private static Dictionary<int, SessionHandoff> SessionHandoffs;
         public static Dictionary<int, World> Worlds;
         public static Dictionary<int, World> VaultWorlds;
         public static Dictionary<string, World> GuildHallWorlds;
@@ -72,6 +76,7 @@ namespace RotMG.Game
             TickWatch = Stopwatch.StartNew();
             AccountIdToClientId = new Dictionary<int, int>();
             Clients = new Dictionary<int, Client>();
+            SessionHandoffs = new Dictionary<int, SessionHandoff>();
             Worlds = new Dictionary<int, World>();
             VaultWorlds = new Dictionary<int, World>();
             GuildHallWorlds = new Dictionary<string, World>(StringComparer.OrdinalIgnoreCase);
@@ -509,6 +514,110 @@ namespace RotMG.Game
             }
         }
 
+        //Authoritative in-memory models for one account during a world
+        //transfer. Hello/Load consume this instead of re-reading SQLite.
+        public class SessionHandoff
+        {
+            public AccountModel Account;
+            public CharacterModel Character;
+            public int ExpiresAt;
+        }
+
+        public static void StoreHandoff(AccountModel account, CharacterModel character)
+        {
+            if (account == null)
+                return;
+            lock (SyncRoot)
+            {
+                SessionHandoffs[account.Id] = new SessionHandoff
+                {
+                    Account = account,
+                    Character = character,
+                    ExpiresAt = TotalTimeUnsynced + SessionHandoffTtlMs
+                };
+            }
+#if DEBUG
+            Program.Print(PrintType.Debug, $"Handoff stored for account {account.Id}");
+#endif
+        }
+
+        public static bool TryTakeHandoff(int accountId, out SessionHandoff handoff)
+        {
+            lock (SyncRoot)
+            {
+                if (SessionHandoffs.TryGetValue(accountId, out handoff))
+                {
+                    SessionHandoffs.Remove(accountId);
+#if DEBUG
+                    Program.Print(PrintType.Debug, $"Handoff consumed for account {accountId}");
+#endif
+                    return true;
+                }
+            }
+            handoff = null;
+            return false;
+        }
+
+        public static bool HasHandoff(int accountId)
+        {
+            lock (SyncRoot)
+            {
+                return SessionHandoffs.ContainsKey(accountId);
+            }
+        }
+
+        //Live session, in-flight reconnect handoff, or a fresh DB load. Admin
+        //commands must mutate this instance so a second AccountModel cannot
+        //overwrite gold/fame/locks with a stale SQLite snapshot.
+        public static AccountModel GetAuthoritativeAccount(int accountId)
+        {
+            Client live = GetClient(accountId);
+            if (live?.Account != null)
+                return live.Account;
+            lock (SyncRoot)
+            {
+                if (SessionHandoffs.TryGetValue(accountId, out SessionHandoff handoff))
+                    return handoff.Account;
+            }
+            AccountModel acc = new AccountModel(accountId);
+            if (acc.IsNull)
+                return null;
+            acc.Load();
+            return acc;
+        }
+
+        private static void SweepExpiredHandoffs()
+        {
+            List<SessionHandoff> expired = null;
+            lock (SyncRoot)
+            {
+                foreach (KeyValuePair<int, SessionHandoff> kv in SessionHandoffs)
+                {
+                    if (kv.Value.ExpiresAt >= TotalTimeUnsynced)
+                        continue;
+                    if (expired == null)
+                        expired = new List<SessionHandoff>();
+                    expired.Add(kv.Value);
+                }
+                if (expired == null)
+                    return;
+                for (int i = 0; i < expired.Count; i++)
+                    SessionHandoffs.Remove(expired[i].Account.Id);
+            }
+            for (int i = 0; i < expired.Count; i++)
+            {
+                SessionHandoff handoff = expired[i];
+                try
+                {
+                    if (handoff.Character != null && !handoff.Character.Dead)
+                        Database.SaveAccountAndCharacter(handoff.Account, handoff.Character, andWait: true);
+                    else
+                        handoff.Account.Save();
+                }
+                catch { }
+            }
+        }
+
         //Point-in-time copy for the socket IO thread: enumerating the live
         //dict concurrently with Add/Remove would throw.
         public static Client[] SnapshotClients()
@@ -665,6 +774,9 @@ namespace RotMG.Game
                     foreach (World world in WorldSnapshot)
                         world.Tick();
                 }
+
+                if (TotalTicks % Settings.TicksPerSecond == 0)
+                    SweepExpiredHandoffs();
 
                 //Reclaim empty generated dungeons (personal vaults, guild
                 //halls and static worlds are cached separately and kept).

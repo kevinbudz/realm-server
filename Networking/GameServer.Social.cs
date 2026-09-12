@@ -179,9 +179,12 @@ namespace RotMG.Networking
             }
 
             Client targetClient = Manager.GetClient(targetId);
-            AccountModel targetAcc = targetClient != null ? targetClient.Account : new AccountModel(targetId);
-            if (targetClient == null)
-                targetAcc.Load();
+            AccountModel targetAcc = Manager.GetAuthoritativeAccount(targetId);
+            if (targetAcc == null)
+            {
+                player.SendError("Player not found");
+                return;
+            }
 
             if (client.Account.GuildRank >= 20 &&
                 string.Equals(client.Account.GuildName, targetAcc.GuildName, System.StringComparison.Ordinal) &&
@@ -257,9 +260,12 @@ namespace RotMG.Networking
             }
 
             Client targetClient = Manager.GetClient(targetId);
-            AccountModel targetAcc = targetClient != null ? targetClient.Account : new AccountModel(targetId);
-            if (targetClient == null)
-                targetAcc.Load();
+            AccountModel targetAcc = Manager.GetAuthoritativeAccount(targetId);
+            if (targetAcc == null)
+            {
+                player.SendError("A player with that name does not exist.");
+                return;
+            }
 
             AccountModel src = client.Account;
             if (string.IsNullOrWhiteSpace(src.GuildName) ||

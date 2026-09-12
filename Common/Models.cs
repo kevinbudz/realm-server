@@ -337,7 +337,7 @@ namespace RotMG.Common
         public const int MaxDeadCharsStored = 20;
 
         public readonly int Id; //Taken from database.
-        public readonly string Name; //Taken from database.
+        public string Name { get; set; } //Taken from login.id; settable on rename.
 
         public int NextCharId;
         public int MaxNumChars;

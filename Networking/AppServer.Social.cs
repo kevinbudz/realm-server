@@ -1,4 +1,5 @@
 ﻿using RotMG.Common;
+using RotMG.Game;
 using System.Collections.Specialized;
 using System.Linq;
 using System.Net;
@@ -175,8 +176,9 @@ namespace RotMG.Networking
                         new XElement("GuildLevel", Database.GetGuildLevel(acc.GuildName)));
                     foreach (int id in Database.GetGuildMemberIds(acc.GuildName))
                     {
-                        AccountModel member = new AccountModel(id);
-                        member.Load();
+                        AccountModel member = Manager.GetAuthoritativeAccount(id);
+                        if (member == null)
+                            continue;
                         root.Add(new XElement("Member",
                             new XElement("Name", member.Name ?? ""),
                             new XElement("Rank", member.GuildRank),

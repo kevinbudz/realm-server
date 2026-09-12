@@ -669,15 +669,21 @@ namespace RotMG.Common
         //saves resurrects spent currency or duplicates moved items. Queued
         //FIFO on the writer thread: the bundle still commits as one
         //transaction, but the caller does not wait for the fsync.
-        public static void SaveAccountAndCharacter(AccountModel acc, CharacterModel ch)
+        public static void SaveAccountAndCharacter(AccountModel acc, CharacterModel ch, bool andWait = false)
         {
             string accountXml = acc.Export(false).ToString();
             string charXml = ch.Export(false).ToString();
-            WriteAtomically(new Dictionary<string, string>
+            Dictionary<string, string> writes = new Dictionary<string, string>
             {
                 { AccountKey(acc.Id), accountXml },
                 { CharacterKey(acc.Id, ch.Id), charXml }
-            });
+            };
+            //andWait is the Hello fallback: a non-reconnect kick must land
+            //before the new connection LoadCharacter can read SQLite.
+            if (andWait)
+                WriteAtomicallyAndWait(writes);
+            else
+                WriteAtomically(writes);
             acc.Data = XElement.Parse(accountXml);
             ch.Data = XElement.Parse(charXml);
         }
@@ -1098,25 +1104,30 @@ namespace RotMG.Common
 
         public static bool IsAccountInUse(AccountModel acc)
         {
-            bool accountInUse = acc.Connected && Manager.GetClient(acc.Id) != null;
-            if (!accountInUse && acc.Connected)
-            {
+            //GetClient / in-flight handoff are the source of truth. Never
+            //acc.Save() here: the model may be a stale SQLite snapshot from
+            //Verify, and writing it would roll back gold/fame/locks.
+            if (Manager.GetClient(acc.Id) != null)
+                return true;
+            if (Manager.HasHandoff(acc.Id))
+                return true;
+            if (acc.Connected)
                 acc.Connected = false;
-                acc.Save();
-            }
-            return accountInUse;
+            return false;
         }
 
-        public static AccountModel Verify(string username, string password, string ip)
+        //Password check without constructing an AccountModel, so Hello can
+        //kick the live session before any SQLite account Load.
+        public static int Authenticate(string username, string password, string ip)
         {
             if (!CanAttemptLogin(ip))
-                return null;
+                return -1;
 
             if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
-                return null;
+                return -1;
 
             int id = IdFromUsername(username);
-            if (id == -1) return null;
+            if (id == -1) return -1;
 
             string hash = GetKey($"login.hash.{id}");
             //A half-written registration (pre-atomic era) or a deleted key
@@ -1125,13 +1136,23 @@ namespace RotMG.Common
             if (string.IsNullOrWhiteSpace(hash))
             {
                 AddInvalidLoginAttempt(ip);
-                return null;
+                return -1;
             }
             string match = (password + GetKey($"login.salt.{id}")).ToSHA1();
+            if (!hash.Equals(match))
+            {
+                AddInvalidLoginAttempt(ip);
+                return -1;
+            }
+            return id;
+        }
 
-            AccountModel acc = hash.Equals(match) ? new AccountModel(id) : null;
-            if (acc == null) AddInvalidLoginAttempt(ip);
-            else acc.Load();
+        public static AccountModel Verify(string username, string password, string ip)
+        {
+            int id = Authenticate(username, password, ip);
+            if (id == -1) return null;
+            AccountModel acc = new AccountModel(id);
+            acc.Load();
             return acc;
         }
 

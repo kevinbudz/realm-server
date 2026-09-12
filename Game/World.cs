@@ -312,7 +312,8 @@ namespace RotMG.Game
                     Client client = player.Client;
                     if (client == null)
                         continue;
-                    client.Active = false;
+                    client.BeginReconnect();
+                    player.CancelTradeIfTrading();
                     client.Send(GameServer.Reconnect(newWorld.Id));
                 }
             });

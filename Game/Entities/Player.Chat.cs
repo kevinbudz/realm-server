@@ -23,6 +23,14 @@ namespace RotMG.Game.Entities
         public void SendClientText(string text) => Client.Send(GameServer.Text("*Client*", 0, -1, 0, "", text));
         public void SendEnemy(string name, string text) => Client.Send(GameServer.Text(name, 0, -1, 0, "", text));
 
+        private void TransferToWorld(int worldId)
+        {
+            Client.BeginReconnect();
+            CancelTradeIfTrading();
+            Client.Send(GameServer.Reconnect(worldId));
+            Client.ScheduleReconnectDisconnect();
+        }
+
         public void Chat(string text)
         {
             if (text.Length <= 0 || text.Length > 128)
@@ -412,8 +420,12 @@ namespace RotMG.Game.Entities
                                 SendError("Account not found!");
                                 return;
                             }
-                            AccountModel rankAcc = new AccountModel(rankId);
-                            rankAcc.Load();
+                            AccountModel rankAcc = Manager.GetAuthoritativeAccount(rankId);
+                            if (rankAcc == null)
+                            {
+                                SendError("Account not found!");
+                                return;
+                            }
                             if (Database.ChangeGuildRank(rankAcc, rank) != Database.GuildResult.OK)
                             {
                                 SendError("Could not change rank (not in a guild?).");
@@ -728,8 +740,12 @@ namespace RotMG.Game.Entities
                                 SendError("Account not found!");
                                 return;
                             }
-                            AccountModel muteAcc = new AccountModel(muteId);
-                            muteAcc.Load();
+                            AccountModel muteAcc = Manager.GetAuthoritativeAccount(muteId);
+                            if (muteAcc == null)
+                            {
+                                SendError("Account not found!");
+                                return;
+                            }
                             if (muteAcc.Ranked)
                             {
                                 SendError("Cannot mute other admins.");
@@ -737,22 +753,17 @@ namespace RotMG.Game.Entities
                             }
                             muteAcc.Muted = true;
                             muteAcc.Save();
-                            foreach (Client c in Manager.Clients.Values.ToArray())
-                                if (c.Account != null && c.Account.Id == muteId)
-                                    c.Account.Muted = true;
                             if (muteMinutes > 0)
                             {
                                 int unmuteId = muteId;
                                 string unmuteName = muteArgs[0];
                                 Manager.AddTimedAction(muteMinutes * 60000, () =>
                                 {
-                                    AccountModel timed = new AccountModel(unmuteId);
-                                    timed.Load();
+                                    AccountModel timed = Manager.GetAuthoritativeAccount(unmuteId);
+                                    if (timed == null)
+                                        return;
                                     timed.Muted = false;
                                     timed.Save();
-                                    Client live = Manager.GetClient(unmuteId);
-                                    if (live != null)
-                                        live.Account.Muted = false;
                                 });
                                 SendInfo(unmuteName + " successfully muted for " + muteMinutes + " minutes.");
                             }
@@ -778,8 +789,12 @@ namespace RotMG.Game.Entities
                                 SendError("Account not found!");
                                 return;
                             }
-                            AccountModel unmuteAcc = new AccountModel(unmuteId);
-                            unmuteAcc.Load();
+                            AccountModel unmuteAcc = Manager.GetAuthoritativeAccount(unmuteId);
+                            if (unmuteAcc == null)
+                            {
+                                SendError("Account not found!");
+                                return;
+                            }
                             if (!unmuteAcc.Muted)
                                 SendInfo(input.Trim() + " wasn't muted...");
                             else
@@ -788,9 +803,6 @@ namespace RotMG.Game.Entities
                                 unmuteAcc.Save();
                                 SendInfo(input.Trim() + " successfully unmuted.");
                             }
-                            Client liveUnmuted = Manager.GetClient(unmuteId);
-                            if (liveUnmuted != null)
-                                liveUnmuted.Account.Muted = false;
                             break;
                         }
                     case "/ban":
@@ -819,8 +831,12 @@ namespace RotMG.Game.Entities
                                 SendError("Account not found...");
                                 return;
                             }
-                            AccountModel banAcc = new AccountModel(banId);
-                            banAcc.Load();
+                            AccountModel banAcc = Manager.GetAuthoritativeAccount(banId);
+                            if (banAcc == null)
+                            {
+                                SendError("Account not found...");
+                                return;
+                            }
                             banAcc.Banned = true;
                             banAcc.Save();
                             Client liveBanned = Manager.GetClient(banId);
@@ -855,8 +871,12 @@ namespace RotMG.Game.Entities
                                 SendError("Account not found...");
                                 return;
                             }
-                            AccountModel banIpAcc = new AccountModel(banIpId);
-                            banIpAcc.Load();
+                            AccountModel banIpAcc = Manager.GetAuthoritativeAccount(banIpId);
+                            if (banIpAcc == null)
+                            {
+                                SendError("Account not found...");
+                                return;
+                            }
                             banIpAcc.Banned = true;
                             banIpAcc.Save();
                             //No persistent IP-ban list in this build: ban the
@@ -903,8 +923,12 @@ namespace RotMG.Game.Entities
                                 SendError("Account doesn't exist...");
                                 return;
                             }
-                            AccountModel unbanAcc = new AccountModel(unbanId);
-                            unbanAcc.Load();
+                            AccountModel unbanAcc = Manager.GetAuthoritativeAccount(unbanId);
+                            if (unbanAcc == null)
+                            {
+                                SendError("Account doesn't exist...");
+                                return;
+                            }
                             if (!unbanAcc.Banned)
                                 SendInfo($"{unbanAcc.Name} wasn't banned...");
                             else
@@ -1006,10 +1030,7 @@ namespace RotMG.Game.Entities
                                 SendError("Player not found!");
                                 return;
                             }
-                            Client.Active = false;
-                            CancelTradeIfTrading();
-                            Client.Send(GameServer.Reconnect(visitTarget.Parent.Id));
-                            Manager.AddTimedAction(2000, Client.Disconnect);
+                            TransferToWorld(visitTarget.Parent.Id);
                             break;
                         }
                     case "/link":
@@ -1067,20 +1088,19 @@ namespace RotMG.Game.Entities
                                 SendError("New name is invalid or taken.");
                                 return;
                             }
-                            AccountModel renameAcc = new AccountModel(renameId);
-                            renameAcc.Load();
-                            Database.RenameAccountKeys(renameId, oldName, newName, renameAcc);
-                            Client liveRenamed = Manager.GetClient(renameId);
-                            if (liveRenamed != null)
+                            AccountModel renameAcc = Manager.GetAuthoritativeAccount(renameId);
+                            if (renameAcc == null)
                             {
-                                AccountModel fresh = new AccountModel(renameId);
-                                fresh.Load();
-                                liveRenamed.Account = fresh;
-                                if (liveRenamed.Player != null)
-                                {
-                                    liveRenamed.Player.Name = newName;
-                                    liveRenamed.Player.Credits = fresh.Stats.Credits;
-                                }
+                                SendError("Player account not found!");
+                                return;
+                            }
+                            Database.RenameAccountKeys(renameId, oldName, newName, renameAcc);
+                            renameAcc.Name = newName;
+                            Client liveRenamed = Manager.GetClient(renameId);
+                            if (liveRenamed?.Player != null)
+                            {
+                                liveRenamed.Player.Name = newName;
+                                liveRenamed.Player.Credits = renameAcc.Stats.Credits;
                             }
                             SendInfo("Rename successful.");
                             break;
@@ -1110,20 +1130,19 @@ namespace RotMG.Game.Entities
                                 SendError("Could not free the name (guest slot taken).");
                                 return;
                             }
-                            AccountModel unnameAcc = new AccountModel(unnameId);
-                            unnameAcc.Load();
-                            Database.RenameAccountKeys(unnameId, unnameOld, guestName, unnameAcc);
-                            Client liveUnnamed = Manager.GetClient(unnameId);
-                            if (liveUnnamed != null)
+                            AccountModel unnameAcc = Manager.GetAuthoritativeAccount(unnameId);
+                            if (unnameAcc == null)
                             {
-                                AccountModel fresh = new AccountModel(unnameId);
-                                fresh.Load();
-                                liveUnnamed.Account = fresh;
-                                if (liveUnnamed.Player != null)
-                                {
-                                    liveUnnamed.Player.Name = guestName;
-                                    liveUnnamed.Player.NameChosen = false;
-                                }
+                                SendError("Player account not found!");
+                                return;
+                            }
+                            Database.RenameAccountKeys(unnameId, unnameOld, guestName, unnameAcc);
+                            unnameAcc.Name = guestName;
+                            Client liveUnnamed = Manager.GetClient(unnameId);
+                            if (liveUnnamed?.Player != null)
+                            {
+                                liveUnnamed.Player.Name = guestName;
+                                liveUnnamed.Player.NameChosen = false;
                             }
                             SendInfo("Account successfully unnamed.");
                             break;
@@ -1187,10 +1206,7 @@ namespace RotMG.Game.Entities
                         }
                     case "/tutorial":
                         {
-                            Client.Active = false;
-                            CancelTradeIfTrading();
-                            Client.Send(GameServer.Reconnect(Manager.TutorialId));
-                            Manager.AddTimedAction(2000, Client.Disconnect);
+                            TransferToWorld(Manager.TutorialId);
                             break;
                         }
                     case "/world":
@@ -1524,27 +1540,18 @@ namespace RotMG.Game.Entities
                         }
                     case "/realm":
                         {
-                            Client.Active = false;
-                            CancelTradeIfTrading();
-                            Client.Send(GameServer.Reconnect(Manager.RealmId));
-                            Manager.AddTimedAction(2000, Client.Disconnect);
+                            TransferToWorld(Manager.RealmId);
                             break;
                         }
                     case "/nexus":
                         {
-                            Client.Active = false;
-                            CancelTradeIfTrading();
-                            Client.Send(GameServer.Reconnect(Manager.NexusId));
-                            Manager.AddTimedAction(2000, Client.Disconnect);
+                            TransferToWorld(Manager.NexusId);
                             break;
                         }
                     case "/vault":
                         {
                             World vault = Manager.GetVaultWorld(Client);
-                            Client.Active = false;
-                            CancelTradeIfTrading();
-                            Client.Send(GameServer.Reconnect(vault.Id));
-                            Manager.AddTimedAction(2000, Client.Disconnect);
+                            TransferToWorld(vault.Id);
                             break;
                         }
                     case "/ghall":
@@ -1555,10 +1562,7 @@ namespace RotMG.Game.Entities
                                 return;
                             }
                             World hall = Manager.GetGuildHallWorld(GuildName);
-                            Client.Active = false;
-                            CancelTradeIfTrading();
-                            Client.Send(GameServer.Reconnect(hall.Id));
-                            Manager.AddTimedAction(2000, Client.Disconnect);
+                            TransferToWorld(hall.Id);
                             break;
                         }
                     case "/lefttomax":
@@ -1605,13 +1609,12 @@ namespace RotMG.Game.Entities
                                 return;
                             }
                             Client gkickClient = Manager.GetClient(gkickId);
-                            AccountModel gkickAcc = gkickClient?.Account;
-                            bool gkickOnline = true;
+                            AccountModel gkickAcc = Manager.GetAuthoritativeAccount(gkickId);
+                            bool gkickOnline = gkickClient != null;
                             if (gkickAcc == null)
                             {
-                                gkickAcc = new AccountModel(gkickId);
-                                gkickAcc.Load();
-                                gkickOnline = false;
+                                SendError("Player not found");
+                                return;
                             }
                             if (Client.Account.GuildRank < 20 || Client.Account.GuildName != gkickAcc.GuildName ||
                                 Client.Account.GuildRank <= gkickAcc.GuildRank)
