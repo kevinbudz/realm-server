@@ -30,6 +30,14 @@ namespace RotMG
             GameServer.Init();
             Manager.Init();
 
+            if (args != null && args.Length > 0 && args[0] == "--p2-verify")
+            {
+                bool ok = Manager.VerifyDungeonLifecycle();
+                DrainWork();
+                Console.WriteLine(ok ? "P2 verify: PASS" : "P2 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, AppServer.Start);
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, GameServer.Start);
             GameServer.StartIo();

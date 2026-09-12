@@ -34,7 +34,9 @@ namespace RotMG.Game
         //Live Account/Character kept across Reconnect so Hello/Load do not
         //round-trip SQLite (the async writer can still be committing).
         public const int SessionHandoffTtlMs = 15000;
+        public const int DungeonEmptyGraceMs = 60000;
         private static Dictionary<int, SessionHandoff> SessionHandoffs;
+        private static Dictionary<int, PendingTransfer> PendingTransfers;
         public static Dictionary<int, World> Worlds;
         public static Dictionary<int, World> VaultWorlds;
         public static Dictionary<string, World> GuildHallWorlds;
@@ -77,6 +79,7 @@ namespace RotMG.Game
             AccountIdToClientId = new Dictionary<int, int>();
             Clients = new Dictionary<int, Client>();
             SessionHandoffs = new Dictionary<int, SessionHandoff>();
+            PendingTransfers = new Dictionary<int, PendingTransfer>();
             Worlds = new Dictionary<int, World>();
             VaultWorlds = new Dictionary<int, World>();
             GuildHallWorlds = new Dictionary<string, World>(StringComparer.OrdinalIgnoreCase);
@@ -586,6 +589,205 @@ namespace RotMG.Game
             return acc;
         }
 
+        //In-flight reconnect to a dynamic world (Id > 0). Static negative
+        //ids (Nexus/Realm/Tutorial) are never reclaimed, so Escape and
+        ///nexus skip registration. Expires after the same 15s window as
+        //SessionHandoff so a dropped Hello cannot pin a dungeon.
+        public class PendingTransfer
+        {
+            public int AccountId;
+            public int WorldId;
+            public int ExpiresAt;
+        }
+
+        public static void RegisterPendingTransfer(int accountId, World world)
+        {
+            if (world == null || world.Id <= 0)
+                return;
+            lock (SyncRoot)
+            {
+                if (PendingTransfers.TryGetValue(accountId, out PendingTransfer existing))
+                    ReleasePendingEntrant(existing.WorldId);
+                PendingTransfers[accountId] = new PendingTransfer
+                {
+                    AccountId = accountId,
+                    WorldId = world.Id,
+                    ExpiresAt = TotalTimeUnsynced + SessionHandoffTtlMs
+                };
+                world.PendingEntrants++;
+            }
+        }
+
+        public static void CompletePendingTransfer(int accountId)
+        {
+            lock (SyncRoot)
+            {
+                if (!PendingTransfers.TryGetValue(accountId, out PendingTransfer existing))
+                    return;
+                PendingTransfers.Remove(accountId);
+                ReleasePendingEntrant(existing.WorldId);
+            }
+        }
+
+        private static void ReleasePendingEntrant(int worldId)
+        {
+            if (Worlds.TryGetValue(worldId, out World world) && world.PendingEntrants > 0)
+                world.PendingEntrants--;
+        }
+
+        private static void SweepExpiredPendingTransfers()
+        {
+            List<PendingTransfer> expired = null;
+            lock (SyncRoot)
+            {
+                foreach (KeyValuePair<int, PendingTransfer> kv in PendingTransfers)
+                {
+                    if (kv.Value.ExpiresAt >= TotalTimeUnsynced)
+                        continue;
+                    if (expired == null)
+                        expired = new List<PendingTransfer>();
+                    expired.Add(kv.Value);
+                }
+                if (expired == null)
+                    return;
+                for (int i = 0; i < expired.Count; i++)
+                {
+                    PendingTransfers.Remove(expired[i].AccountId);
+                    ReleasePendingEntrant(expired[i].WorldId);
+                }
+            }
+        }
+
+        public static bool ShouldReclaimEmptyDungeon(World world, int now)
+        {
+            return world is Dungeons.DungeonWorld
+                && world.Players.Count == 0
+                && world.PendingEntrants == 0
+                && now - Math.Max(world.CreatedAt, world.LastEmptyAt) > DungeonEmptyGraceMs;
+        }
+
+        public static void SweepEmptyDungeons(IList<World> snapshot)
+        {
+            int removed = 0;
+            int remaining = 0;
+            lock (SyncRoot)
+            {
+                int now = TotalTimeUnsynced;
+                for (int i = 0; i < snapshot.Count; i++)
+                {
+                    World world = snapshot[i];
+                    if (!ShouldReclaimEmptyDungeon(world, now))
+                        continue;
+                    Worlds.Remove(world.Id);
+                    removed++;
+                }
+                remaining = Worlds.Count;
+            }
+            if (removed > 0)
+                Program.Print(PrintType.Info, $"Reclaimed {removed} empty dungeon(s); {remaining} worlds remain");
+        }
+
+        //Headless stand-in for "enter 50 dungeons from Nexus while the
+        //sweep runs every tick": create instances, mark reconnects in
+        //flight, sweep aggressively, then confirm empty reclaim after
+        //grace with no pending.
+        public static bool VerifyDungeonLifecycle()
+        {
+            if (!Resources.Worlds.TryGetValue("Spider Den", out WorldDesc desc)
+                || !Dungeons.DungeonWorld.IsSupported(desc))
+            {
+                Program.Print(PrintType.Error, "P2 verify: Spider Den world desc missing");
+                return false;
+            }
+
+            TotalTimeUnsynced = Math.Max(TotalTimeUnsynced, 1000);
+            int baseline;
+            lock (SyncRoot)
+                baseline = Worlds.Count;
+            Program.Print(PrintType.Info, $"P2 verify: baseline world count {baseline}");
+
+            List<World> created = new List<World>(50);
+            for (int i = 0; i < 50; i++)
+            {
+                World world = CreateDungeonWorld(desc);
+                //Past grace so only PendingEntrants can keep the instance.
+                world.CreatedAt = TotalTimeUnsynced - DungeonEmptyGraceMs - 1;
+                world.LastEmptyAt = world.CreatedAt;
+                RegisterPendingTransfer(900000 + i, world);
+                created.Add(world);
+            }
+            Program.Print(PrintType.Info, $"P2 verify: opened 50 dungeons, world count {Worlds.Count}");
+
+            for (int s = 0; s < 50; s++)
+            {
+                List<World> snap;
+                lock (SyncRoot)
+                    snap = new List<World>(Worlds.Values);
+                SweepEmptyDungeons(snap);
+            }
+
+            int missing = 0;
+            for (int i = 0; i < created.Count; i++)
+                if (GetWorld(created[i].Id) == null)
+                    missing++;
+            if (missing != 0)
+            {
+                Program.Print(PrintType.Error,
+                    $"P2 verify FAIL: {missing}/50 in-flight dungeons reclaimed under every-tick sweep");
+                return false;
+            }
+            Program.Print(PrintType.Info,
+                $"P2 verify: 50/50 in-flight dungeons survived every-tick sweep; world count {Worlds.Count}");
+
+            for (int i = 0; i < created.Count; i++)
+                CompletePendingTransfer(900000 + i);
+
+            List<World> after;
+            lock (SyncRoot)
+                after = new List<World>(Worlds.Values);
+            SweepEmptyDungeons(after);
+
+            int leftover = 0;
+            for (int i = 0; i < created.Count; i++)
+                if (GetWorld(created[i].Id) != null)
+                    leftover++;
+            if (leftover != 0)
+            {
+                Program.Print(PrintType.Error,
+                    $"P2 verify FAIL: {leftover}/50 empty dungeons not reclaimed after grace");
+                return false;
+            }
+
+            int remaining;
+            lock (SyncRoot)
+                remaining = Worlds.Count;
+            Program.Print(PrintType.Info,
+                $"P2 verify: reclaimed all 50 after grace; world count {remaining} (baseline {baseline})");
+            if (remaining != baseline)
+                return false;
+
+            World expiryWorld = CreateDungeonWorld(desc);
+            expiryWorld.CreatedAt = TotalTimeUnsynced - DungeonEmptyGraceMs - 1;
+            expiryWorld.LastEmptyAt = expiryWorld.CreatedAt;
+            RegisterPendingTransfer(800000, expiryWorld);
+            TotalTimeUnsynced += SessionHandoffTtlMs + 1;
+            SweepExpiredPendingTransfers();
+            List<World> expirySnap;
+            lock (SyncRoot)
+                expirySnap = new List<World>(Worlds.Values);
+            SweepEmptyDungeons(expirySnap);
+            if (GetWorld(expiryWorld.Id) != null)
+            {
+                Program.Print(PrintType.Error, "P2 verify FAIL: dungeon survived after pending-transfer expiry");
+                return false;
+            }
+            lock (SyncRoot)
+                remaining = Worlds.Count;
+            Program.Print(PrintType.Info,
+                $"P2 verify: expired reconnect released the dungeon; world count {remaining}");
+            return remaining == baseline;
+        }
+
         private static void SweepExpiredHandoffs()
         {
             List<SessionHandoff> expired = null;
@@ -776,19 +978,18 @@ namespace RotMG.Game
                 }
 
                 if (TotalTicks % Settings.TicksPerSecond == 0)
+                {
                     SweepExpiredHandoffs();
+                    SweepExpiredPendingTransfers();
+                }
 
                 //Reclaim empty generated dungeons (personal vaults, guild
                 //halls and static worlds are cached separately and kept).
+                //Grace + PendingEntrants cover the Reconnect/Hello gap:
+                //the instance is created with 0 players, then the old
+                //socket dies, then the new Hello looks up the world.
                 if (TotalTicks % (Settings.TicksPerSecond * 30) == 0)
-                {
-                    lock (SyncRoot)
-                    {
-                        foreach (World world in WorldSnapshot)
-                            if (world is Dungeons.DungeonWorld && world.Players.Count == 0)
-                                Worlds.Remove(world.Id);
-                    }
-                }
+                    SweepEmptyDungeons(WorldSnapshot);
 
                 TickDelta = (int)(TickWatch.ElapsedMilliseconds - LastTickTime);
                 TotalTime += Settings.MillisecondsPerTick;

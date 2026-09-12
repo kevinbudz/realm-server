@@ -27,6 +27,9 @@ namespace RotMG.Game.Entities
         {
             Client.BeginReconnect();
             CancelTradeIfTrading();
+            World world = Manager.GetWorld(worldId);
+            if (world != null && Client.Account != null)
+                Manager.RegisterPendingTransfer(Client.Account.Id, world);
             Client.Send(GameServer.Reconnect(worldId));
             Client.ScheduleReconnectDisconnect();
         }

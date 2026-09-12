@@ -296,6 +296,8 @@ namespace RotMG.Networking
 
             client.BeginReconnect();
             player.CancelTradeIfTrading();
+            if (client.Account != null)
+                Manager.RegisterPendingTransfer(client.Account.Id, world);
             client.Send(Reconnect(world.Id));
             client.ScheduleReconnectDisconnect();
         }
@@ -583,6 +585,8 @@ namespace RotMG.Networking
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
                 client.Send(CreateSuccess(world.AddEntity(client.Player, PickSpawnPosition(world)), client.Character.Id));
+                if (client.Account != null)
+                    Manager.CompletePendingTransfer(client.Account.Id);
             }
         }
 
@@ -635,6 +639,8 @@ namespace RotMG.Networking
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
                 client.Send(CreateSuccess(world.AddEntity(client.Player, PickSpawnPosition(world)), client.Character.Id));
+                if (client.Account != null)
+                    Manager.CompletePendingTransfer(client.Account.Id);
             }
         }
 

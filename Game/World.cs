@@ -33,6 +33,13 @@ namespace RotMG.Game
         public int Id;
         public int NextObjectId;
         public int NextProjectileId;
+        //Empty-dungeon reclaim: a freshly created or just-emptied instance
+        //must survive the reconnect gap (UsePortal/Quake send Reconnect,
+        //then Hello/Load on a new socket). PendingEntrants counts in-flight
+        //arrivals; CreatedAt/LastEmptyAt gate the 60s grace period.
+        public int CreatedAt;
+        public int LastEmptyAt;
+        public int PendingEntrants;
 
         public Dictionary<int, Entity> Entities;
         public Dictionary<int, Entity> Quests;
@@ -108,6 +115,10 @@ namespace RotMG.Game
             _activeEntities = new HashSet<Entity>(256);
 
             ChatMessages = new List<string>();
+
+            CreatedAt = Manager.TotalTimeUnsynced;
+            LastEmptyAt = CreatedAt;
+            PendingEntrants = 0;
 
             Tiles = new Tile[Width, Height];
 
@@ -314,6 +325,8 @@ namespace RotMG.Game
                         continue;
                     client.BeginReconnect();
                     player.CancelTradeIfTrading();
+                    if (client.Account != null)
+                        Manager.RegisterPendingTransfer(client.Account.Id, newWorld);
                     client.Send(GameServer.Reconnect(newWorld.Id));
                 }
             });
@@ -591,6 +604,8 @@ namespace RotMG.Game
                 Players.Remove(en.Id);
                 PlayerChunks.Remove(en);
                 unchecked { PlayerListVersion++; }
+                if (Players.Count == 0)
+                    LastEmptyAt = Manager.TotalTimeUnsynced;
                 //Owned vanity pets leave with their owner so world changes
                 //and deaths never orphan them (see SpawnPetIfAttached).
                 if (player.Pet != null)
