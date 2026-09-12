@@ -868,6 +868,7 @@ namespace RotMG.Common
 
         private static void CreateKey(string path, string contents, bool global = false)
         {
+            Program.AssertMainThread("Database.CreateKey");
             string key = CombineKeyPath(path, global);
             lock (_lock)
             {
@@ -884,6 +885,7 @@ namespace RotMG.Common
 
         public static void DeleteKey(string path, bool global = false)
         {
+            Program.AssertMainThread("Database.DeleteKey");
             string key = CombineKeyPath(path, global);
             lock (_lock)
             {
@@ -899,6 +901,7 @@ namespace RotMG.Common
 
         public static void SetKey(string path, string contents, bool global = false)
         {
+            Program.AssertMainThread("Database.SetKey");
             string key = CombineKeyPath(path, global);
             lock (_lock)
             {

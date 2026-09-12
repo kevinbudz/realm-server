@@ -451,7 +451,7 @@ namespace RotMG.Game.Entities
         {
             if (TooLongSinceLastValidation())
             {
-                Client.Disconnect();
+                Client.RequestDisconnect("Too long since last validation");
                 return;
             }
 

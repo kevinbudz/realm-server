@@ -470,6 +470,7 @@ namespace RotMG.Game
 #if DEBUG
             if (client == null)
                 throw new Exception("Client is null.");
+            Program.AssertMainThread("Manager.AddClient");
 #endif
             lock (SyncRoot)
             {
@@ -483,6 +484,7 @@ namespace RotMG.Game
 #if DEBUG
             if (client == null)
                 throw new Exception("Client is null.");
+            Program.AssertMainThread("Manager.RemoveClient");
 #endif
             lock (SyncRoot)
             {
@@ -861,8 +863,11 @@ namespace RotMG.Game
         {
             TotalTimeUnsynced = (int)TickWatch.ElapsedMilliseconds;
 
-            ClientSnapshot.Clear();
-            ClientSnapshot.AddRange(Clients.Values);
+            lock (SyncRoot)
+            {
+                ClientSnapshot.Clear();
+                ClientSnapshot.AddRange(Clients.Values);
+            }
             foreach (Client client in ClientSnapshot)
                 client.Tick();
 

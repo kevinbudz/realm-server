@@ -125,7 +125,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                     Program.Print(PrintType.Error, "Aoe ack timed out");
 #endif
-                    Client.Disconnect();
+                    Client.RequestDisconnect("Aoe ack timed out");
                     return;
                 }
             }
@@ -167,7 +167,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                     Program.Print(PrintType.Error, "Proj ack timed out");
 #endif
-                    Client.Disconnect();
+                    Client.RequestDisconnect("Proj ack timed out");
                     return;
                 }
             }
@@ -620,7 +620,7 @@ namespace RotMG.Game.Entities
             if (++_suspicion >= SuspicionThreshold)
             {
                 Program.Print(PrintType.Error, $"Suppressed enemy hits suspected <{Name}> (bullet {bulletId}, elapsed {elapsed})");
-                Client.Disconnect();
+                Client.RequestDisconnect("Suppressed enemy hits");
             }
 #if DEBUG
             else

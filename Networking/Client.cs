@@ -38,7 +38,7 @@ namespace RotMG.Networking
 
     public class Client
     {
-        public ProtocolState State;
+        public volatile ProtocolState State;
         public int Id;
         public int TargetWorldId;
         public string IP;
@@ -66,9 +66,15 @@ namespace RotMG.Networking
         //touches this (concurrent queues have no push-front).
         private byte[] _held;
         //Set by Send from any thread when the client stops draining; acted
-        //on in Tick. Disconnect itself stays main-thread-only: it touches
-        //Manager dicts, the DB and the socket.
+        //on in Tick. Worker threads must not call Disconnect: they set
+        //_disconnectRequested and Tick performs teardown on the main thread.
         private volatile bool _sendOverflow;
+        private volatile bool _disconnectRequested;
+        private volatile string _disconnectReason;
+        //Shared by FlushSend/PollReceive (IO thread) and FinishDisconnect
+        //(main thread): socket close and pooled-buffer return never race
+        //a mid-copy flush.
+        private readonly object _ioLock = new object();
         private SendState _send;
         private ReceiveState _receive;
 
@@ -95,18 +101,63 @@ namespace RotMG.Networking
             });
         }
 
-        public void Disconnect() => FinishDisconnect(false);
+        //Any thread: flag the client so Tick tears it down on the main
+        //thread. Active is cleared immediately so DrainInbound skips work.
+        public void RequestDisconnect(string reason = null)
+        {
+            if (State == ProtocolState.Disconnected)
+                return;
+            if (reason != null)
+                _disconnectReason = reason;
+            Active = false;
+            _disconnectRequested = true;
+        }
 
-        public void DisconnectWaitingForSave() => FinishDisconnect(true);
+        //Main-thread teardown. Worker threads must use RequestDisconnect;
+        //DEBUG asserts, RELEASE defers so a missed site cannot recycle a
+        //buffer the IO thread is still writing.
+        public void Disconnect()
+        {
+            Program.AssertMainThread("Client.Disconnect");
+            if (!Program.IsMainThread)
+            {
+                RequestDisconnect();
+                return;
+            }
+            FinishDisconnect(false);
+        }
+
+        public void DisconnectWaitingForSave()
+        {
+            Program.AssertMainThread("Client.Disconnect");
+            if (!Program.IsMainThread)
+            {
+                RequestDisconnect();
+                return;
+            }
+            FinishDisconnect(true);
+        }
+
+        private bool ConsumeDisconnectRequest()
+        {
+            if (!_sendOverflow && !_disconnectRequested)
+                return false;
+            _sendOverflow = false;
+            _disconnectRequested = false;
+            return true;
+        }
 
         private void FinishDisconnect(bool waitForSave) //Disconnects, clears all individual client data and pushes the instance back to the server queue.
         {
+            Program.AssertMainThread("Client.Disconnect");
             if (State == ProtocolState.Disconnected)
                 return;
 #if DEBUG
             try
             {
-                Program.Print(PrintType.Debug, $"Disconnecting client from <{_socket.RemoteEndPoint}>");
+                string reason = _disconnectReason;
+                string extra = string.IsNullOrEmpty(reason) ? "" : $" ({reason})";
+                Program.Print(PrintType.Debug, $"Disconnecting client from <{_socket?.RemoteEndPoint}>{extra}");
             }
             catch (Exception ex) 
             {
@@ -157,35 +208,47 @@ namespace RotMG.Networking
                 catch { }
             }
 
-            //Shutdown socket
-            State = ProtocolState.Disconnected;
-
-            try
+            //Socket close + send-buffer return under _ioLock so the IO
+            //thread cannot be mid-Send/Receive or mid-copy of _send.Data.
+            //Do not take SyncRoot here (lock order: SyncRoot then never
+            //_ioLock from the IO snapshot path; _ioLock then never SyncRoot).
+            lock (_ioLock)
             {
-                _socket.Shutdown(SocketShutdown.Both);
-                _socket.Close();
-            }
+                State = ProtocolState.Disconnected;
+                if (_socket != null)
+                {
+                    try
+                    {
+                        _socket.Shutdown(SocketShutdown.Both);
+                        _socket.Close();
+                    }
 #if DEBUG
-            catch (Exception ex)
-            {
-                Program.Print(PrintType.Error, ex);
-            }
+                    catch (Exception ex)
+                    {
+                        Program.Print(PrintType.Error, ex);
+                    }
 #endif
 #if RELEASE
-            catch 
-            {
+                    catch 
+                    {
 
-            }
+                    }
 #endif
+                }
+                _held = null;
+                _send.Reset();
+                _receive.Reset();
+                _pending.Clear();
+                while (_inbound.TryDequeue(out _)) { }
+                _socketDead = false;
+                _sendOverflow = false;
+                _disconnectRequested = false;
+                _disconnectReason = null;
+            }
 
             //Clear data 
             Active = false;
             Reconnecting = false;
-            _send.Reset();
-            _receive.Reset();
-            _pending.Clear();
-            while (_inbound.TryDequeue(out _)) { }
-            _socketDead = false;
             Account = null;
             Player = null;
             Character = null;
@@ -211,6 +274,8 @@ namespace RotMG.Networking
             DCTime = -1;
             _socketDead = false;
             _sendOverflow = false;
+            _disconnectRequested = false;
+            _disconnectReason = null;
             while (_inbound.TryDequeue(out _)) { }
 
             Manager.AddClient(this);
@@ -223,20 +288,22 @@ namespace RotMG.Networking
         {
             try
             {
-                if (_sendOverflow)
+                if (ConsumeDisconnectRequest())
                 {
-                    _sendOverflow = false;
                     Disconnect();
                     return;
                 }
 
-                if (_socketDead || !_socket.Connected)
+                if (_socket == null || _socketDead || !_socket.Connected)
                 {
                     Disconnect();
                     return;
                 }
 
                 DrainInbound();
+
+                if (ConsumeDisconnectRequest())
+                    Disconnect();
             }
 #if DEBUG
             catch (Exception ex)
@@ -280,19 +347,22 @@ namespace RotMG.Networking
         //only raises _socketDead for the tick thread to act on.
         public void PollReceive()
         {
-            if (State == ProtocolState.Disconnected || _socketDead)
-                return;
-            try
+            lock (_ioLock)
             {
-                PollReceiveInner();
-            }
-            catch (ObjectDisposedException)
-            {
-                _socketDead = true;
-            }
-            catch (SocketException)
-            {
-                _socketDead = true;
+                if (State == ProtocolState.Disconnected || _socketDead)
+                    return;
+                try
+                {
+                    PollReceiveInner();
+                }
+                catch (ObjectDisposedException)
+                {
+                    _socketDead = true;
+                }
+                catch (SocketException)
+                {
+                    _socketDead = true;
+                }
             }
         }
 
@@ -346,22 +416,36 @@ namespace RotMG.Networking
         //Only the IO thread touches _send/_held.
         public void FlushSend()
         {
-            if (State == ProtocolState.Disconnected)
-                return;
-            try
+            lock (_ioLock)
             {
-                FlushSendInner();
-            }
-            catch (ObjectDisposedException)
-            {
-                _socketDead = true;
-            }
-            catch (SocketException ex)
-            {
-                //WouldBlock just means the kernel buffer is full; the
-                //remainder goes out on a later poll. Anything else kills it.
-                if (ex.SocketErrorCode != SocketError.WouldBlock)
+                if (State == ProtocolState.Disconnected)
+                {
+                    _send.ReturnPooledBuffer();
+                    return;
+                }
+                try
+                {
+                    _send.MarkInUse();
+                    try
+                    {
+                        FlushSendInner();
+                    }
+                    finally
+                    {
+                        _send.MarkIdle();
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
                     _socketDead = true;
+                }
+                catch (SocketException ex)
+                {
+                    //WouldBlock just means the kernel buffer is full; the
+                    //remainder goes out on a later poll. Anything else kills it.
+                    if (ex.SocketErrorCode != SocketError.WouldBlock)
+                        _socketDead = true;
+                }
             }
         }
 
@@ -373,6 +457,7 @@ namespace RotMG.Networking
                     return;
 
                 _send.EnsureBuffer();
+                _send.MarkInUse();
                 byte[] buf = _send.Data;
                 int total = 0;
                 int queued = _pending.Count + (_held == null ? 0 : 1);
@@ -432,6 +517,217 @@ namespace RotMG.Networking
             {
                 //Kernel buffer full; the remainder goes out on a later tick.
             }
+        }
+
+        //Holds _ioLock and marks the send buffer in-use, mimicking FlushSend
+        //mid-copy so Disconnect must wait instead of returning the rent.
+        public void DebugSimulateFlushHold(int holdMs)
+        {
+            lock (_ioLock)
+            {
+                _send.EnsureBuffer();
+                _send.MarkInUse();
+                try
+                {
+                    int n = Math.Min(16, _send.Data.Length);
+                    Buffer.BlockCopy(_send.Data, 0, _send.Data, 0, n);
+                    if (holdMs > 0)
+                        Thread.Sleep(holdMs);
+                }
+                finally
+                {
+                    _send.MarkIdle();
+                }
+            }
+        }
+
+        //Headless stand-in for "DEBUG server, 3+ worlds, frequent kicks":
+        //RequestDisconnect from Parallel.ForEach over live worlds, Tick
+        //teardown on the main thread, ClientSnapshot under SyncRoot while a
+        //worker mutates Clients, and the ArrayPool in-use check.
+        public static bool VerifyDisconnectThreading()
+        {
+            int worldCount;
+            lock (Manager.SyncRoot)
+                worldCount = Manager.Worlds.Count;
+            if (worldCount < 3)
+            {
+                Program.Print(PrintType.Error, $"P15 verify: expected 3+ worlds, have {worldCount}");
+                return false;
+            }
+            Program.Print(PrintType.Info, $"P15 verify: {worldCount} worlds");
+
+            List<World> worlds;
+            lock (Manager.SyncRoot)
+                worlds = new List<World>(Manager.Worlds.Values);
+
+            const int clientCount = 48;
+            List<Client> clients = new List<Client>(clientCount);
+            for (int i = 0; i < clientCount; i++)
+            {
+                Client c = new Client(new SendState(), new ReceiveState());
+                c.State = ProtocolState.Connected;
+                c.Active = true;
+                Manager.AddClient(c);
+                clients.Add(c);
+            }
+
+            Parallel.ForEach(worlds, world =>
+            {
+                foreach (Client c in clients)
+                    c.RequestDisconnect("p15-verify world " + world.Id);
+            });
+
+            foreach (Client c in clients)
+            {
+                c.Tick();
+                if (c.State != ProtocolState.Disconnected)
+                {
+                    Program.Print(PrintType.Error, "P15 verify: Tick did not tear down a requested disconnect");
+                    return false;
+                }
+            }
+            Program.Print(PrintType.Info, $"P15 verify: {clientCount} RequestDisconnect teardowns from {worldCount} worker worlds");
+
+#if DEBUG
+            Client workerKick = new Client(new SendState(), new ReceiveState());
+            workerKick.State = ProtocolState.Connected;
+            workerKick.Active = true;
+            Manager.AddClient(workerKick);
+            Exception workerEx = null;
+            Thread worker = new Thread(() =>
+            {
+                try { workerKick.Disconnect(); }
+                catch (Exception e) { workerEx = e; }
+            });
+            worker.IsBackground = true;
+            worker.Start();
+            worker.Join();
+            if (workerEx == null)
+            {
+                Program.Print(PrintType.Error, "P15 verify: worker Disconnect() did not assert");
+                workerKick.RequestDisconnect();
+                workerKick.Tick();
+                return false;
+            }
+            workerKick.RequestDisconnect();
+            workerKick.Tick();
+            Program.Print(PrintType.Info, "P15 verify: worker Disconnect() asserted");
+#endif
+
+            Client hold = new Client(new SendState(), new ReceiveState());
+            hold.State = ProtocolState.Connected;
+            hold.Active = true;
+            Manager.AddClient(hold);
+            Exception holdEx = null;
+            Thread io = new Thread(() =>
+            {
+                try { hold.DebugSimulateFlushHold(80); }
+                catch (Exception e) { holdEx = e; }
+            });
+            io.IsBackground = true;
+            io.Start();
+            Thread.Sleep(20);
+            try { hold.Disconnect(); }
+            catch (Exception e) { holdEx = holdEx ?? e; }
+            io.Join();
+            if (holdEx != null)
+            {
+                Program.Print(PrintType.Error, $"P15 verify: flush-hold Disconnect threw {holdEx}");
+                return false;
+            }
+            if (hold.State != ProtocolState.Disconnected)
+            {
+                Program.Print(PrintType.Error, "P15 verify: flush-hold Disconnect did not complete");
+                return false;
+            }
+            Program.Print(PrintType.Info, "P15 verify: Disconnect waited on IO flush without ArrayPool return");
+
+#if DEBUG
+            SendState pooled = new SendState();
+            pooled.EnsureBuffer();
+            pooled.MarkInUse();
+            bool threw = false;
+            try { pooled.ReturnPooledBuffer(); }
+            catch (Exception) { threw = true; }
+            if (!threw)
+            {
+                Program.Print(PrintType.Error, "P15 verify: in-use buffer return did not throw");
+                return false;
+            }
+            pooled.MarkIdle();
+            try { pooled.ReturnPooledBuffer(); }
+            catch (Exception e)
+            {
+                Program.Print(PrintType.Error, $"P15 verify: idle buffer return threw {e}");
+                return false;
+            }
+            Program.Print(PrintType.Info, "P15 verify: ArrayPool in-use check fires, idle return is clean");
+#endif
+
+            Client dummy = new Client(new SendState(), new ReceiveState());
+            dummy.State = ProtocolState.Connected;
+            Exception snapshotEx = null;
+            Thread mutator = new Thread(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < 20000; i++)
+                    {
+                        lock (Manager.SyncRoot)
+                        {
+                            Manager.Clients[int.MaxValue] = dummy;
+                            Manager.Clients.Remove(int.MaxValue);
+                        }
+                    }
+                }
+                catch (Exception e) { snapshotEx = e; }
+            });
+            mutator.IsBackground = true;
+            mutator.Start();
+            try
+            {
+                for (int i = 0; i < 20000; i++)
+                {
+                    lock (Manager.SyncRoot)
+                    {
+                        List<Client> snap = new List<Client>();
+                        snap.AddRange(Manager.Clients.Values);
+                    }
+                }
+            }
+            catch (Exception e) { snapshotEx = snapshotEx ?? e; }
+            mutator.Join();
+            if (snapshotEx != null)
+            {
+                Program.Print(PrintType.Error, $"P15 verify: ClientSnapshot raced ({snapshotEx.Message})");
+                return false;
+            }
+            Program.Print(PrintType.Info, "P15 verify: ClientSnapshot.AddRange under SyncRoot never threw");
+
+            Exception tickEx = null;
+            for (int i = 0; i < 80; i++)
+            {
+                Client c = new Client(new SendState(), new ReceiveState());
+                c.State = ProtocolState.Connected;
+                c.Active = true;
+                Manager.AddClient(c);
+                ThreadPool.QueueUserWorkItem(_ => c.RequestDisconnect("p15-soak"));
+                c.RequestDisconnect("p15-soak");
+                try { Manager.Tick(); }
+                catch (Exception e)
+                {
+                    tickEx = e;
+                    break;
+                }
+            }
+            if (tickEx != null)
+            {
+                Program.Print(PrintType.Error, $"P15 verify: Manager.Tick threw {tickEx}");
+                return false;
+            }
+            Program.Print(PrintType.Info, "P15 verify: Manager.Tick soak with worker RequestDisconnect did not throw");
+            return true;
         }
     }
 

@@ -55,6 +55,11 @@ namespace RotMG.Networking
         public SocketEventState State;
 
         public byte[] Data; //Pooled single-flush buffer (BufferSize), rented lazily.
+#if DEBUG
+        //Set while FlushSendInner is copying or socket.Send'ing this buffer.
+        //ReturnPooledBuffer throws if it would recycle a still-referenced rent.
+        internal volatile byte[] InUseBuffer;
+#endif
 
         public void EnsureBuffer()
         {
@@ -64,9 +69,19 @@ namespace RotMG.Networking
 
         public void Grow(int minimumLength)
         {
-            if (Data != null)
-                ArrayPool<byte>.Shared.Return(Data);
+            byte[] old = Data;
+#if DEBUG
+            bool transferring = InUseBuffer != null && object.ReferenceEquals(InUseBuffer, old);
+            if (transferring)
+                InUseBuffer = null;
+#endif
+            if (old != null)
+                ArrayPool<byte>.Shared.Return(old);
             Data = ArrayPool<byte>.Shared.Rent(minimumLength);
+#if DEBUG
+            if (transferring)
+                InUseBuffer = Data;
+#endif
         }
 
         public void Reset()
@@ -75,10 +90,35 @@ namespace RotMG.Networking
             PacketLength = 0;
             BytesWritten = 0;
             if (Data != null && Data.Length > GameServer.BufferSize)
-            {
-                ArrayPool<byte>.Shared.Return(Data); //Return oversized overflow buffer.
-                Data = null;
-            }
+                ReturnPooledBuffer();
+        }
+
+        //IO thread owns pooled-buffer lifetime: call under Client._ioLock
+        //when State is Disconnected, or from Reset for an oversized flush.
+        public void ReturnPooledBuffer()
+        {
+            if (Data == null)
+                return;
+#if DEBUG
+            if (InUseBuffer != null && object.ReferenceEquals(InUseBuffer, Data))
+                throw new Exception("ArrayPool: returning send buffer still referenced by FlushSend");
+#endif
+            ArrayPool<byte>.Shared.Return(Data);
+            Data = null;
+        }
+
+        public void MarkInUse()
+        {
+#if DEBUG
+            InUseBuffer = Data;
+#endif
+        }
+
+        public void MarkIdle()
+        {
+#if DEBUG
+            InUseBuffer = null;
+#endif
         }
     }
 

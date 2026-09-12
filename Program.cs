@@ -18,6 +18,19 @@ namespace RotMG
         private static int MainThread;
         private static ConcurrentQueue<Work> PendingWork;
 
+        public static bool IsMainThread =>
+            Thread.CurrentThread.ManagedThreadId == MainThread;
+
+        //DEBUG-only: Disconnect, Manager.Add/RemoveClient and Database sync
+        //writes must stay on this thread. Worker threads use RequestDisconnect.
+        public static void AssertMainThread(string where)
+        {
+#if DEBUG
+            if (Thread.CurrentThread.ManagedThreadId != MainThread)
+                throw new Exception($"{where} must run on the main thread (tid {Thread.CurrentThread.ManagedThreadId}, main {MainThread})");
+#endif
+        }
+
         public static void Main(string[] args)
         {
             MainThread = Thread.CurrentThread.ManagedThreadId;
@@ -44,6 +57,14 @@ namespace RotMG
                 bool ok = Manager.VerifyDungeonLifecycle();
                 DrainWork();
                 Console.WriteLine(ok ? "P2 verify: PASS" : "P2 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p15-verify")
+            {
+                bool ok = Client.VerifyDisconnectThreading();
+                DrainWork();
+                Console.WriteLine(ok ? "P15 verify: PASS" : "P15 verify: FAIL");
                 Environment.Exit(ok ? 0 : 1);
             }
 
