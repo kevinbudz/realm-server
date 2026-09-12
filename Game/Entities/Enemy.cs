@@ -1,4 +1,4 @@
-﻿using RotMG.Common;
+using RotMG.Common;
 using RotMG.Game.Logic;
 using Candyland = RotMG.Game.Dungeons.Candyland;
 using RotMG.Networking;
@@ -115,7 +115,7 @@ namespace RotMG.Game.Entities
 
                     if (items.Count > 0)
                     {
-                        int bagType = 1;
+                        int bagType = 0;
                         for (int k = 0; k < items.Count; k++)
                         {
                             ItemDesc d = Resources.Type2Item[(ushort)items[k]];
@@ -123,11 +123,14 @@ namespace RotMG.Game.Entities
                                 bagType = d.BagType;
                         }
 
-                        if (bagType == 2) player.FameStats.CyanBags++;
-                        else if (bagType == 3) player.FameStats.BlueBags++;
-                        else if (bagType == 4) player.FameStats.WhiteBags++;
+                        if (bagType == 4) player.FameStats.CyanBags++;
+                        else if (bagType == 5) player.FameStats.BlueBags++;
+                        else if (bagType >= 6) player.FameStats.WhiteBags++;
 
-                        Container c = new Container(Container.FromBagType(bagType), player.Id, 40000 * bagType);
+                        ushort bagId = Container.FromBagType(bagType);
+                        int ownerId = (bagType == 0 || bagType == 1) ? -1 : player.Id;
+                        int lifetime = Math.Max(60000, 30000 * Math.Max(1, bagType));
+                        Container c = new Container(bagId, ownerId, lifetime);
                         for (int k = 0; k < items.Count; k++)
                         {
                             Tuple<bool, ItemData> roll = Resources.Type2Item[(ushort)items[k]].Roll();

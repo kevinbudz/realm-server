@@ -1,4 +1,4 @@
-﻿using RotMG.Common;
+using RotMG.Common;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -19,21 +19,29 @@ namespace RotMG.Game.Entities
         public const int MaxSlots = 8;
 
         public const ushort BrownBag = 0x0500;
-        public const ushort PurpleBag = 0x0506;
-        public const ushort CyanBag = 0x0507;
-        public const ushort BlueBag = 0x0508;
-        public const ushort WhiteBag = 0x0509;
+        public const ushort PinkBag = 0x0506;
+        public const ushort PurpleBag = 0x0507;
+        public const ushort BasketBag = 0x0508;
+        public const ushort CyanBag = 0x0509;
+        public const ushort BlueBag = 0x050B;
+        public const ushort WhiteBag = 0x050C;
+        public const ushort BoostBag = 0x0510;
+
         public static ushort FromBagType(int bagType) 
         {
             switch (bagType) 
             {
                 case 0: return BrownBag;
-                case 1: return PurpleBag;
-                case 2: return CyanBag;
-                case 3: return BlueBag;
-                case 4: return WhiteBag;
+                case 1: return PinkBag;
+                case 2: return PurpleBag;
+                case 3: return BasketBag;
+                case 4: return CyanBag;
+                case 5: return BlueBag;
+                case 6: return WhiteBag;
+                case 7: return BoostBag;
+                case 8: return WhiteBag;
+                default: return WhiteBag;
             }
-            throw new Exception("Invalid bag type");
         }
 
         public int OwnerId = -1;
