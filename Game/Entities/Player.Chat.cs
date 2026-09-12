@@ -25,13 +25,13 @@ namespace RotMG.Game.Entities
 
         private void TransferToWorld(int worldId)
         {
-            Client.BeginReconnect();
-            CancelTradeIfTrading();
             World world = Manager.GetWorld(worldId);
-            if (world != null && Client.Account != null)
-                Manager.RegisterPendingTransfer(Client.Account.Id, world);
-            Client.Send(GameServer.Reconnect(worldId));
-            Client.ScheduleReconnectDisconnect();
+            if (world == null)
+            {
+                SendError("World not found.");
+                return;
+            }
+            BeginTransfer(world);
         }
 
         public void Chat(string text)

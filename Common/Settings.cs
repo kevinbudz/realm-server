@@ -10,6 +10,10 @@ namespace RotMG.Common
     public static class Settings
     {
         public static int MaxClients;
+        //Per-IP game-socket cap. World transfers briefly hold two sockets
+        //for the same player, so a household of 4 behind one NAT needs
+        //headroom above 4 (P18).
+        public static int MaxClientsPerIp = 8;
         public static string Address;
         public static int[] Ports;
         public static string ResourceDirectory;
@@ -33,6 +37,7 @@ namespace RotMG.Common
             {
                 XElement data = XElement.Parse(File.ReadAllText("Settings.xml"));
                 MaxClients = data.ParseInt("MaxClients", 256);
+                MaxClientsPerIp = Math.Max(1, data.ParseInt("MaxClientsPerIp", 8));
                 Address = data.ParseString("Address", "127.0.0.1");
                 Ports = data.ParseIntArray("Ports", ":");
                 ResourceDirectory = data.ParseString("@res", "Common/Resources");

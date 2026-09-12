@@ -639,6 +639,9 @@ namespace RotMG.Game.Entities
         //suspicion counting at expiry, not by doubting reports.
         public void TryHit(int bulletId)
         {
+            if (Dead || IsTransferring)
+                return;
+
             if (AckedProjectiles.TryGetValue(bulletId, out ProjectileAck v))
             {
                 if (v.Projectile?.Desc != null && v.Projectile.CanHit(this))

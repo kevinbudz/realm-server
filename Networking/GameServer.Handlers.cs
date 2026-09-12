@@ -86,7 +86,7 @@ namespace RotMG.Networking
         public static void Read(Client client, int id, byte[] data)
         {
 #if DEBUG
-            Program.Print(PrintType.Debug, $"Packet received <{id}> <{string.Join(" ,",data.Select(k => k.ToString()).ToArray())}>");
+            Program.Print(PrintType.Debug, $"Packet received <{id}> sendQueue={client.PendingCount} packets/{client.PendingBytes}B <{string.Join(" ,",data.Select(k => k.ToString()).ToArray())}>");
 #endif
 
             if (!client.Active)
@@ -206,13 +206,15 @@ namespace RotMG.Networking
 
         public static void Escape(Client client, PacketReader rdr)
         {
-            client.BeginReconnect();
-            client.Player.CancelTradeIfTrading();
-            client.Player.FameStats.Escapes++;
-            if (client.Player.HP <= 10)
-                client.Player.FameStats.NearDeathEscapes++;
-            client.Send(Reconnect(Manager.NexusId));
-            client.ScheduleReconnectDisconnect();
+            Player player = client.Player;
+            if (player == null || player.Parent == null || player.IsTransferring)
+                return;
+
+            player.FameStats.Escapes++;
+            if (player.HP <= 10)
+                player.FameStats.NearDeathEscapes++;
+            World nexus = Manager.GetWorld(Manager.NexusId);
+            player.BeginTransfer(nexus);
         }
 
         public static void GotoAck(Client client, PacketReader rdr)
@@ -277,14 +279,29 @@ namespace RotMG.Networking
         public static void UsePortal(Client client, PacketReader rdr)
         {
             int objectId = rdr.ReadInt32();
+            TryUsePortal(client, objectId);
+        }
 
+        //Distance-checked before ResolvePortalWorld so a crafted distant
+        //id cannot spawn a dungeon. Exposed for the P9 headless verify.
+        public static void TryUsePortal(Client client, int objectId)
+        {
             Player player = client.Player;
-            if (player == null || player.Parent == null)
+            if (player == null || player.Parent == null || player.IsTransferring)
                 return;
 
             Portal portal = player.Parent.GetEntity(objectId) as Portal;
             if (portal == null || !portal.Usable)
                 return;
+
+            float dist = player.Position.Distance(portal);
+            if (dist > Player.MaxPortalInteractDistance)
+            {
+                Program.Print(PrintType.Error,
+                    $"UsePortal rejected: {player.Name} (acc {client.Account?.Id}) too far from portal {objectId} " +
+                    $"at {portal.Position} (player {player.Position}, dist={dist:F2})");
+                return;
+            }
 
             //Drop instances reclaimed while empty (see Manager dungeon sweep).
             if (portal.WorldInstance != null && Manager.GetWorld(portal.WorldInstance.Id) != portal.WorldInstance)
@@ -294,12 +311,7 @@ namespace RotMG.Networking
             if (world == null)
                 return;
 
-            client.BeginReconnect();
-            player.CancelTradeIfTrading();
-            if (client.Account != null)
-                Manager.RegisterPendingTransfer(client.Account.Id, world);
-            client.Send(Reconnect(world.Id));
-            client.ScheduleReconnectDisconnect();
+            player.BeginTransfer(world);
         }
 
         private static World ResolvePortalWorld(Player player, Portal portal)

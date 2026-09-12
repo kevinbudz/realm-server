@@ -4,6 +4,7 @@ using System;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -128,13 +129,15 @@ namespace RotMG.Networking
         public const int PrefixLength = 5;
         public const int PrefixLengthWithId = PrefixLength - 1;
         public const int AddBackMinDelay = 10000;
-        public const byte MaxClientsPerIp = 4;
+        public const string TooManyConnectionsMessage = "Too many connections from your address";
+        public const string ServerFullMessage = "Server is full";
 
         private static bool _terminating;
         private static Socket _listener;
         private static ConcurrentQueue<Client> _clients;
         private static ConcurrentQueue<Client> _addBack;
         private static Dictionary<string, int> _connected;
+        private static readonly object _connectedLock = new object();
 
         public static void Init()
         {
@@ -221,14 +224,6 @@ namespace RotMG.Networking
                     List<Client> queueBack = new List<Client>();
                     while (_addBack.TryDequeue(out Client add))
                     {
-                        if (add.IP != null)
-                        {
-                            _connected[add.IP]--;
-                            if (_connected[add.IP] == 0)
-                                _connected.Remove(add.IP);
-                            add.IP = null;
-                        }
-
                         if (!(Manager.TotalTimeUnsynced - add.DCTime > AddBackMinDelay))
                             queueBack.Add(add);
                         else
@@ -256,24 +251,19 @@ namespace RotMG.Networking
 #if DEBUG
                         Program.Print(PrintType.Warn, $"No pooled client available, aborted connection from <{skt.RemoteEndPoint}>");
 #endif
-                        skt.Disconnect(false);
+                        RejectSocket(skt, ServerFullMessage);
                         continue;
                     }
 
                     string ip = skt.RemoteEndPoint.ToString().Split(':')[0];
-                    if (!_connected.ContainsKey(ip))
-                        _connected[ip] = 1;
-                    else
+                    if (!TryAcquireIp(ip))
                     {
-                        if (_connected[ip] == MaxClientsPerIp)
-                        {
 #if DEBUG
-                            Program.Print(PrintType.Warn, $"Too many clients connected, disconnecting <{skt.RemoteEndPoint}>");
+                        Program.Print(PrintType.Warn, $"Too many clients connected, disconnecting <{skt.RemoteEndPoint}>");
 #endif
-                            skt.Disconnect(false);
-                            continue;
-                        }
-                        _connected[ip]++;
+                        _clients.Enqueue(client);
+                        RejectSocket(skt, TooManyConnectionsMessage);
+                        continue;
                     }
 
                     Program.PushWork(() =>
@@ -302,6 +292,139 @@ namespace RotMG.Networking
         {
             client.DCTime = Manager.TotalTimeUnsynced;
             _addBack.Enqueue(client);
+        }
+
+        //Framed Failure(2, ...) on a raw socket that never entered Client.
+        //Used when the pool is empty or the per-IP cap is hit, so the
+        //Flash client can show a reason instead of a bare TCP drop.
+        public static byte[] FramePacket(byte[] packet)
+        {
+            int length = packet.Length + PrefixLengthWithId;
+            byte[] buf = new byte[length];
+            buf[0] = (byte)(length >> 24);
+            buf[1] = (byte)(length >> 16);
+            buf[2] = (byte)(length >> 8);
+            buf[3] = (byte)length;
+            Buffer.BlockCopy(packet, 0, buf, PrefixLengthWithId, packet.Length);
+            return buf;
+        }
+
+        public static void RejectSocket(Socket skt, string description)
+        {
+            try
+            {
+                byte[] framed = FramePacket(Failure(2, description));
+                skt.NoDelay = true;
+                skt.Send(framed);
+                try { skt.Shutdown(SocketShutdown.Both); } catch { }
+            }
+            catch { }
+            try { skt.Close(); } catch { }
+        }
+
+        public static bool TryAcquireIp(string ip)
+        {
+            int cap = Math.Max(1, Settings.MaxClientsPerIp);
+            lock (_connectedLock)
+            {
+                if (!_connected.TryGetValue(ip, out int n))
+                    n = 0;
+                if (n >= cap)
+                    return false;
+                _connected[ip] = n + 1;
+                return true;
+            }
+        }
+
+        public static void ReleaseIp(string ip)
+        {
+            if (string.IsNullOrEmpty(ip))
+                return;
+            lock (_connectedLock)
+            {
+                if (!_connected.TryGetValue(ip, out int n))
+                    return;
+                if (n <= 1)
+                    _connected.Remove(ip);
+                else
+                    _connected[ip] = n - 1;
+            }
+        }
+
+        public static int CountConnected(string ip)
+        {
+            if (string.IsNullOrEmpty(ip))
+                return 0;
+            lock (_connectedLock)
+            {
+                return _connected.TryGetValue(ip, out int n) ? n : 0;
+            }
+        }
+
+        public static bool VerifyIpAccounting()
+        {
+            static bool Fail(string msg)
+            {
+                Program.Print(PrintType.Error, "P18 verify: " + msg);
+                return false;
+            }
+
+            if (_connected == null)
+                _connected = new Dictionary<string, int>();
+
+            byte[] packet = Failure(2, TooManyConnectionsMessage);
+            byte[] framed = FramePacket(packet);
+            int length = (framed[0] << 24) | (framed[1] << 16) | (framed[2] << 8) | framed[3];
+            if (length != framed.Length)
+                return Fail($"framed length prefix {length} != {framed.Length}");
+            if (framed[4] != (byte)PacketId.Failure)
+                return Fail("framed packet is not Failure");
+            using (PacketReader rdr = new PacketReader(new MemoryStream(framed, 5, framed.Length - 5)))
+            {
+                int errorId = rdr.ReadInt32();
+                string text = rdr.ReadString();
+                if (errorId != 2 || text != TooManyConnectionsMessage)
+                    return Fail($"Failure payload {errorId}/{text}");
+            }
+            Program.Print(PrintType.Info, "P18 verify: framed Failure(2, Too many connections from your address)");
+
+            int oldCap = Settings.MaxClientsPerIp;
+            Settings.MaxClientsPerIp = 4;
+            string ip = "p18-verify";
+            try
+            {
+                while (CountConnected(ip) > 0)
+                    ReleaseIp(ip);
+
+                for (int i = 0; i < 4; i++)
+                {
+                    if (!TryAcquireIp(ip))
+                        return Fail($"acquire {i} of 4 failed");
+                }
+                if (TryAcquireIp(ip))
+                    return Fail("5th acquire succeeded at cap 4");
+                if (CountConnected(ip) != 4)
+                    return Fail($"count {CountConnected(ip)} after cap, expected 4");
+
+                ReleaseIp(ip);
+                if (CountConnected(ip) != 3)
+                    return Fail("ReleaseIp did not decrement immediately");
+                if (!TryAcquireIp(ip))
+                    return Fail("acquire after immediate release failed (old bug: held until pool recycle)");
+                if (CountConnected(ip) != 4)
+                    return Fail("count after re-acquire");
+
+                while (CountConnected(ip) > 0)
+                    ReleaseIp(ip);
+                Program.Print(PrintType.Info, "P18 verify: cap 4 rejects the 5th, ReleaseIp frees a slot immediately");
+                return true;
+            }
+            finally
+            {
+                while (CountConnected(ip) > 0)
+                    ReleaseIp(ip);
+                Settings.MaxClientsPerIp = oldCap;
+            }
         }
     }
 }

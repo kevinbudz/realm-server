@@ -3,7 +3,9 @@ using RotMG.Networking;
 using RotMG.Utils;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 
 namespace RotMG.Game.Entities
@@ -12,6 +14,9 @@ namespace RotMG.Game.Entities
     {
         private const int MaxLatencyMS = 2000;
         public const int MaxPotions = 6;
+        //Client interact reach is 1 tile; 1.5 leaves a small latency buffer
+        //and rejects UsePortal for any other portal id in the world.
+        public const float MaxPortalInteractDistance = 1.5f;
 
         public static int[] Stars = 
         {
@@ -243,6 +248,35 @@ namespace RotMG.Game.Entities
             RecalculateEquipBonuses();
         }
 
+        //Reconnect in flight: inbound packets are already dropped
+        //(Client.Active=false). Tick/Damage/Death must also ignore this
+        //entity so a body left in-world cannot die after Reconnect.
+        public bool IsTransferring => Client != null && Client.Reconnecting;
+
+        //Leave the current world immediately, persist into Character, and
+        //tell the client to open a new socket to target. Callers must not
+        //send Reconnect or schedule Disconnect themselves.
+        public bool BeginTransfer(World target)
+        {
+            if (target == null || Client == null || Dead || Client.Reconnecting)
+                return false;
+
+            CancelTradeIfTrading();
+            if (Client.Character != null)
+                SaveToCharacter();
+
+            Client.BeginReconnect();
+            if (Client.Account != null)
+                Manager.RegisterPendingTransfer(Client.Account.Id, target);
+
+            if (Parent != null)
+                Parent.RemoveEntity(this);
+
+            Client.Send(GameServer.Reconnect(target.Id));
+            Client.ScheduleReconnectDisconnect();
+            return true;
+        }
+
         public virtual void SaveToCharacter()
         {
             Client.Character.HP = HP;
@@ -349,6 +383,11 @@ namespace RotMG.Game.Entities
 
         public virtual void Death(string killer)
         {
+            //Must run before any Parent dereference: BeginTransfer removes
+            //the entity (Parent == null) and a reconnecting character must
+            //never be deleted after Reconnect has already gone out.
+            if (IsTransferring || Parent == null)
+                return;
 #if DEBUG
             if (Parent.Name.Equals("Dreamland"))
                 return;
@@ -408,6 +447,8 @@ namespace RotMG.Game.Entities
 
         public bool Damage(string hitter, int damage, ConditionEffectDesc[] effects, bool pierces)
         {
+            if (IsTransferring || Parent == null || Dead)
+                return false;
 #if DEBUG
             if (HasConditionEffect(ConditionEffectIndex.Invincible))
                 throw new Exception("Entity should not be damaged if invincible");
@@ -449,6 +490,9 @@ namespace RotMG.Game.Entities
 
         public override void Tick()
         {
+            if (IsTransferring)
+                return;
+
             if (TooLongSinceLastValidation())
             {
                 Client.RequestDisconnect("Too long since last validation");
@@ -534,6 +578,241 @@ namespace RotMG.Game.Entities
             SpeedHistory.Clear();
             MultiplierHistory.Clear();
             base.Dispose();
+        }
+
+        //Headless stand-in for "nexus in a pack then UsePortal a distant
+        //id": the body leaves the world before Reconnect, Death cannot
+        //delete the character, and a far portal id is ignored.
+        public static bool VerifyWorldTransfer()
+        {
+            World world = Manager.GetWorld(Manager.NexusId);
+            if (world == null)
+            {
+                Program.Print(PrintType.Error, "P9 verify: Nexus world missing");
+                return false;
+            }
+
+            List<IntPoint> spawns = world.GetSpawnPoints();
+            Position spawn = spawns.Count > 0
+                ? spawns[0].ToPosition()
+                : world.GetRegion(Region.Spawn).ToPosition();
+
+            Position far = default;
+            bool foundFar = false;
+            for (int x = 0; x < world.Width && !foundFar; x++)
+                for (int y = 0; y < world.Height && !foundFar; y++)
+                {
+                    if (world.GetTile(x, y) == null)
+                        continue;
+                    Position p = new Position(x + 0.5f, y + 0.5f);
+                    if (spawn.Distance(p) > 10f)
+                    {
+                        far = p;
+                        foundFar = true;
+                    }
+                }
+            if (!foundFar)
+            {
+                Program.Print(PrintType.Error, "P9 verify: no tile 10+ from spawn");
+                return false;
+            }
+
+            Player player = CreateVerifyPlayer("P9NearDeath");
+            if (world.AddEntity(player, spawn) == -1)
+            {
+                Program.Print(PrintType.Error, "P9 verify: failed to add player at spawn");
+                return false;
+            }
+            player.HP = 5;
+            player.Client.Character.HP = 999;
+
+            Portal farPortal = new Portal(0x0712);
+            if (world.AddEntity(farPortal, far) == -1)
+            {
+                Program.Print(PrintType.Error, "P9 verify: failed to add distant portal");
+                world.RemoveEntity(player);
+                return false;
+            }
+            float farDist = player.Position.Distance(farPortal);
+            if (farDist <= MaxPortalInteractDistance)
+            {
+                Program.Print(PrintType.Error, $"P9 verify: distant portal is too close ({farDist:F2})");
+                world.RemoveEntity(player);
+                world.RemoveEntity(farPortal);
+                return false;
+            }
+
+            byte[] usePortalBody = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(farPortal.Id));
+            using (PacketReader rdr = new PacketReader(new MemoryStream(usePortalBody)))
+                GameServer.UsePortal(player.Client, rdr);
+            if (player.Parent != world || player.IsTransferring || !world.Players.ContainsKey(player.Id))
+            {
+                Program.Print(PrintType.Error, "P9 verify FAIL: distant UsePortal was accepted");
+                player.Client.State = ProtocolState.Disconnected;
+                if (player.Parent == world)
+                    world.RemoveEntity(player);
+                if (farPortal.Parent == world)
+                    world.RemoveEntity(farPortal);
+                return false;
+            }
+            Program.Print(PrintType.Info, $"P9 verify: distant UsePortal ignored (dist={farDist:F2})");
+
+            Player nearPlayer = CreateVerifyPlayer("P9NearPortal");
+            if (world.AddEntity(nearPlayer, spawn) == -1)
+            {
+                Program.Print(PrintType.Error, "P9 verify: failed to add nearby-portal player");
+                world.RemoveEntity(player);
+                world.RemoveEntity(farPortal);
+                return false;
+            }
+            Portal nearPortal = new Portal(0x0712);
+            if (world.AddEntity(nearPortal, spawn) == -1)
+            {
+                Program.Print(PrintType.Error, "P9 verify: failed to add nearby portal");
+                world.RemoveEntity(player);
+                world.RemoveEntity(nearPlayer);
+                world.RemoveEntity(farPortal);
+                return false;
+            }
+            GameServer.TryUsePortal(nearPlayer.Client, nearPortal.Id);
+            if (nearPlayer.Parent != null || !nearPlayer.IsTransferring)
+            {
+                Program.Print(PrintType.Error, "P9 verify FAIL: in-range UsePortal did not transfer");
+                nearPlayer.Client.State = ProtocolState.Disconnected;
+                player.Client.State = ProtocolState.Disconnected;
+                if (nearPlayer.Parent == world)
+                    world.RemoveEntity(nearPlayer);
+                world.RemoveEntity(player);
+                if (farPortal.Parent == world)
+                    world.RemoveEntity(farPortal);
+                if (nearPortal.Parent == world)
+                    world.RemoveEntity(nearPortal);
+                return false;
+            }
+            nearPlayer.Client.State = ProtocolState.Disconnected;
+            Program.Print(PrintType.Info, "P9 verify: in-range UsePortal removed the entity and sent Reconnect");
+
+            if (!player.BeginTransfer(world))
+            {
+                Program.Print(PrintType.Error, "P9 verify FAIL: BeginTransfer returned false");
+                player.Client.State = ProtocolState.Disconnected;
+                if (player.Parent == world)
+                    world.RemoveEntity(player);
+                if (farPortal.Parent == world)
+                    world.RemoveEntity(farPortal);
+                return false;
+            }
+            if (player.Parent != null || world.Players.ContainsKey(player.Id) || !player.IsTransferring)
+            {
+                Program.Print(PrintType.Error, "P9 verify FAIL: player still in world after BeginTransfer");
+                player.Client.State = ProtocolState.Disconnected;
+                if (player.Parent == world)
+                    world.RemoveEntity(player);
+                if (farPortal.Parent == world)
+                    world.RemoveEntity(farPortal);
+                return false;
+            }
+            if (player.Client.Character.HP != 5)
+            {
+                Program.Print(PrintType.Error,
+                    $"P9 verify FAIL: Character.HP={player.Client.Character.HP} after transfer, expected 5");
+                player.Client.State = ProtocolState.Disconnected;
+                if (farPortal.Parent == world)
+                    world.RemoveEntity(farPortal);
+                return false;
+            }
+            Program.Print(PrintType.Info, "P9 verify: BeginTransfer removed the body and saved HP=5");
+
+            player.HP = 1;
+            bool died = false;
+            try
+            {
+                died = player.Damage("Oryx the Mad God", 10000, new ConditionEffectDesc[0], true);
+                player.Death("Oryx the Mad God");
+            }
+            catch (Exception e)
+            {
+                Program.Print(PrintType.Error, $"P9 verify FAIL: Damage/Death threw {e}");
+                player.Client.State = ProtocolState.Disconnected;
+                if (farPortal.Parent == world)
+                    world.RemoveEntity(farPortal);
+                return false;
+            }
+            if (died || player.Dead || player.Client.Character.Dead)
+            {
+                Program.Print(PrintType.Error, "P9 verify FAIL: transferring player died after Reconnect");
+                player.Client.State = ProtocolState.Disconnected;
+                if (farPortal.Parent == world)
+                    world.RemoveEntity(farPortal);
+                return false;
+            }
+
+            try { player.Tick(); }
+            catch (Exception e)
+            {
+                Program.Print(PrintType.Error, $"P9 verify FAIL: Tick threw after transfer ({e.Message})");
+                player.Client.State = ProtocolState.Disconnected;
+                if (farPortal.Parent == world)
+                    world.RemoveEntity(farPortal);
+                return false;
+            }
+
+            //Same persist rule as Client.FinishDisconnect: Parent == null
+            //and Reconnecting means Character was already captured.
+            if (player.Parent != null)
+                player.SaveToCharacter();
+            else if (!player.Client.Reconnecting)
+                player.SaveToCharacter();
+            if (player.Client.Character.HP != 5)
+            {
+                Program.Print(PrintType.Error,
+                    $"P9 verify FAIL: disconnect persist overwrote Character.HP to {player.Client.Character.HP}");
+                player.Client.State = ProtocolState.Disconnected;
+                if (farPortal.Parent == world)
+                    world.RemoveEntity(farPortal);
+                return false;
+            }
+
+            player.Client.State = ProtocolState.Disconnected;
+            if (farPortal.Parent == world)
+                world.RemoveEntity(farPortal);
+            if (nearPortal.Parent == world)
+                world.RemoveEntity(nearPortal);
+            Program.Print(PrintType.Info, "P9 verify: Death/Damage/Tick cannot kill after Reconnect; disconnect save kept Character.HP=5");
+            return true;
+        }
+
+        private static Player CreateVerifyPlayer(string name)
+        {
+            PlayerDesc pdesc = Resources.Type2Player.Values.First();
+            CharacterModel ch = new CharacterModel(0, 0)
+            {
+                ClassType = pdesc.Type,
+                Level = 20,
+                HP = 100,
+                MP = 100,
+                Stats = new int[8],
+                Inventory = (int[])pdesc.Equipment.Clone(),
+                ItemDatas = (int[])pdesc.ItemDatas.Clone(),
+                FameStats = new FameStatsInfo()
+            };
+            for (int i = 0; i < 8; i++)
+                ch.Stats[i] = pdesc.Stats[i].StartingValue;
+
+            Client client = new Client(new SendState(), new ReceiveState());
+            client.State = ProtocolState.Connected;
+            client.Active = true;
+            client.Account = new AccountModel()
+            {
+                Name = name,
+                LockedIds = new List<int>(),
+                IgnoredIds = new List<int>(),
+                Stats = new StatsInfo { ClassStats = Database.CreateClassStats() }
+            };
+            client.Character = ch;
+            Player created = new Player(client);
+            client.Player = created;
+            return created;
         }
     }
 }

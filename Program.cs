@@ -60,11 +60,35 @@ namespace RotMG
                 Environment.Exit(ok ? 0 : 1);
             }
 
+            if (args != null && args.Length > 0 && args[0] == "--p9-verify")
+            {
+                bool ok = Player.VerifyWorldTransfer();
+                DrainWork();
+                Console.WriteLine(ok ? "P9 verify: PASS" : "P9 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
             if (args != null && args.Length > 0 && args[0] == "--p15-verify")
             {
                 bool ok = Client.VerifyDisconnectThreading();
                 DrainWork();
                 Console.WriteLine(ok ? "P15 verify: PASS" : "P15 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p3-verify")
+            {
+                bool ok = Client.VerifySendBackpressure();
+                DrainWork();
+                Console.WriteLine(ok ? "P3 verify: PASS" : "P3 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p18-verify")
+            {
+                bool ok = GameServer.VerifyIpAccounting();
+                DrainWork();
+                Console.WriteLine(ok ? "P18 verify: PASS" : "P18 verify: FAIL");
                 Environment.Exit(ok ? 0 : 1);
             }
 

@@ -36,6 +36,59 @@ namespace RotMG.Networking
         public byte[] Body;
     }
 
+    //One outbound frame waiting for FlushSendInner. Droppable packets are
+    //cosmetics the client can lose without desync (effects, other-player
+    //damage numbers, ally shots). Everything else is protocol state and
+    //must never be silently discarded.
+    public struct OutgoingPacket
+    {
+        public byte[] Data;
+        public bool Droppable;
+
+        public static bool IsDroppable(byte[] packet)
+        {
+            if (packet == null || packet.Length < 1)
+                return false;
+            switch ((GameServer.PacketId)packet[0])
+            {
+                case GameServer.PacketId.ShowEffect:
+                case GameServer.PacketId.Notification:
+                case GameServer.PacketId.PlaySound:
+                case GameServer.PacketId.Damage:
+                case GameServer.PacketId.AllyShoot:
+                case GameServer.PacketId.GlobalNotification:
+                    return true;
+                case GameServer.PacketId.Text:
+                    return IsTextBubble(packet);
+                default:
+                    return false;
+            }
+        }
+
+        //Speech bubbles (bubbleTime > 0). Chat/info/error lines keep
+        //bubbleTime 0 and stay reliable until the byte cap.
+        private static bool IsTextBubble(byte[] packet)
+        {
+            int i = 1;
+            if (!SkipUtf(packet, ref i))
+                return false;
+            i += 8; //objectId + numStars
+            return i < packet.Length && packet[i] != 0;
+        }
+
+        private static bool SkipUtf(byte[] packet, ref int i)
+        {
+            if (i + 2 > packet.Length)
+                return false;
+            int len = (packet[i] << 8) | packet[i + 1];
+            i += 2;
+            if (len < 0 || i + len > packet.Length)
+                return false;
+            i += len;
+            return true;
+        }
+    }
+
     public class Client
     {
         public volatile ProtocolState State;
@@ -49,15 +102,39 @@ namespace RotMG.Networking
         public Player Player;
         public wRandom Random;
         public bool Active; //Used in escape to stop incoming packets (so you don't die)
-        public bool Reconnecting; //Set by Escape/UsePortal/Quake/chat before Reconnect
+        //Set by BeginTransfer before Reconnect. Also the transferring mark:
+        //Player.Tick skips validation/ack sweeps, Death/Damage no-op, and
+        //Disconnect persists the already-captured Character when Parent is null.
+        public bool Reconnecting;
         public int DCTime;
+        public int PendingCount => _pending.Count;
+        public int PendingBytes => Volatile.Read(ref _pendingBytes);
+        public int DroppedCosmeticCount => Volatile.Read(ref _droppedCosmetic);
 
-        private const int MaxPendingPackets = 256;
-        private const int MaxPendingDisconnect = 1024;
+        //Byte budget, not packet count: 256 frames was ~0.5 s of a busy
+        //realm tick stream, so WiFi jitter dropped one-shot Update/Goto/
+        //EnemyShoot and permanently desynced the client. Cosmetics are
+        //refused past the soft cap; any reliable packet that would pass
+        //the hard cap disconnects with Failure instead of dropping state.
+        internal const int DroppablePendingBytes = 2 * 1024 * 1024;
+        internal const int MaxPendingBytes = 4 * 1024 * 1024;
+        //Hello -> Load/Create must finish within this window or Tick
+        //returns the pooled slot. Also covers idle TCP and stuck policy
+        //sockets if the IO thread never saw "<pol".
+        public const int HandshakeTimeoutMs = 5000;
+        //First 4 bytes of "<policy-file-request/>" as a big-endian int.
+        private const int PolicyFileMagic = 1014001516;
         private Socket _socket;
         //Concurrent: parallel world broadcast enqueues from worker threads
         //while FlushSend dequeues on the IO thread.
-        private ConcurrentQueue<byte[]> _pending;
+        private ConcurrentQueue<OutgoingPacket> _pending;
+        private int _pendingBytes;
+        private int _droppedCosmetic;
+        private int _lastQueueDebugMs;
+        //Set when the send budget is exhausted: further Send() no-ops,
+        //Failure is staged in _disconnectFlush so it leaves before close.
+        private volatile int _slowDisconnect;
+        private byte[] _disconnectFlush;
         //Framed inbound packets (IO thread produces, tick thread consumes)
         //plus a death flag set by the IO thread when the socket dies.
         private readonly ConcurrentQueue<InboundPacket> _inbound = new ConcurrentQueue<InboundPacket>();
@@ -65,9 +142,8 @@ namespace RotMG.Networking
         //Packet that fit-checked but couldn't flush; only the IO thread
         //touches this (concurrent queues have no push-front).
         private byte[] _held;
-        //Set by Send from any thread when the client stops draining; acted
-        //on in Tick. Worker threads must not call Disconnect: they set
-        //_disconnectRequested and Tick performs teardown on the main thread.
+        //Legacy overflow flag still consumed by Tick. Slow-link disconnects
+        //now go through _slowDisconnect so Failure can flush before close.
         private volatile bool _sendOverflow;
         private volatile bool _disconnectRequested;
         private volatile string _disconnectReason;
@@ -77,10 +153,11 @@ namespace RotMG.Networking
         private readonly object _ioLock = new object();
         private SendState _send;
         private ReceiveState _receive;
+        private int _handshakeStartedAt;
 
         public Client(SendState send, ReceiveState receive)
         {
-            _pending = new ConcurrentQueue<byte[]>();
+            _pending = new ConcurrentQueue<OutgoingPacket>();
             _send = send;
             _receive = receive;
         }
@@ -157,7 +234,7 @@ namespace RotMG.Networking
             {
                 string reason = _disconnectReason;
                 string extra = string.IsNullOrEmpty(reason) ? "" : $" ({reason})";
-                Program.Print(PrintType.Debug, $"Disconnecting client from <{_socket?.RemoteEndPoint}>{extra}");
+                Program.Print(PrintType.Debug, $"Disconnecting client from <{_socket?.RemoteEndPoint}>{extra} sendQueue={_pending.Count} packets/{Volatile.Read(ref _pendingBytes)} bytes droppedCosmetic={Volatile.Read(ref _droppedCosmetic)}");
             }
             catch (Exception ex) 
             {
@@ -181,9 +258,19 @@ namespace RotMG.Networking
                 bool reconnecting = Reconnecting;
                 if (Player != null && Character != null)
                 {
-                    Player.SaveToCharacter();
                     if (Player.Parent != null)
+                    {
+                        Player.SaveToCharacter();
                         Player.Parent.RemoveEntity(Player);
+                    }
+                    else if (!reconnecting)
+                    {
+                        //Dropped without BeginTransfer: still flush live stats
+                        //off the entity. A reconnecting player was already
+                        //saved and pulled from the world; do not rewrite
+                        //Character from the disposed body.
+                        Player.SaveToCharacter();
+                    }
                     ch = Character;
                 }
 
@@ -244,11 +331,18 @@ namespace RotMG.Networking
                 _sendOverflow = false;
                 _disconnectRequested = false;
                 _disconnectReason = null;
+                _slowDisconnect = 0;
+                _disconnectFlush = null;
+                _droppedCosmetic = 0;
+                Volatile.Write(ref _pendingBytes, 0);
             }
 
             //Clear data 
             Active = false;
             Reconnecting = false;
+            string ip = IP;
+            IP = null;
+            GameServer.ReleaseIp(ip);
             Account = null;
             Player = null;
             Character = null;
@@ -272,10 +366,18 @@ namespace RotMG.Networking
             Reconnecting = false;
             HandoffCharacter = null;
             DCTime = -1;
+            //TickWatch, not TotalTimeUnsynced: the latter is 0 until the
+            //first Manager.Tick, and Init can already be >5 s in.
+            _handshakeStartedAt = (int)Manager.TickWatch.ElapsedMilliseconds;
             _socketDead = false;
             _sendOverflow = false;
             _disconnectRequested = false;
             _disconnectReason = null;
+            _slowDisconnect = 0;
+            _disconnectFlush = null;
+            _droppedCosmetic = 0;
+            Volatile.Write(ref _pendingBytes, 0);
+            while (_pending.TryDequeue(out _)) { }
             while (_inbound.TryDequeue(out _)) { }
 
             Manager.AddClient(this);
@@ -301,6 +403,26 @@ namespace RotMG.Networking
                 }
 
                 DrainInbound();
+
+                if (State == ProtocolState.Handshaked || State == ProtocolState.Awaiting)
+                {
+                    int now = Manager.TotalTimeUnsynced;
+                    if (now == 0 && Manager.TickWatch != null)
+                        now = (int)Manager.TickWatch.ElapsedMilliseconds;
+                    int elapsed = unchecked(now - _handshakeStartedAt);
+                    if (elapsed >= HandshakeTimeoutMs)
+                    {
+#if DEBUG
+                        Program.Print(PrintType.Debug, $"Handshake timeout client {Id} from <{IP}> after {elapsed} ms");
+#endif
+                        Disconnect();
+                        return;
+                    }
+                }
+
+#if DEBUG
+                LogSendQueueIfStalled();
+#endif
 
                 if (ConsumeDisconnectRequest())
                     Disconnect();
@@ -330,17 +452,104 @@ namespace RotMG.Networking
 
         public void Send(byte[] packet)
         {
-            if (_pending.Count >= MaxPendingPackets)
-            {
-                if (_pending.Count >= MaxPendingDisconnect)
-                {
-                    _sendOverflow = true; //Client is not draining; Tick drops it instead of growing without bound.
-                    return;
-                }
-                _pending.TryDequeue(out _); //Drop the stalest packet to make room for fresh state.
-            }
-            _pending.Enqueue(packet);
+            Send(packet, OutgoingPacket.IsDroppable(packet));
         }
+
+        public void Send(byte[] packet, bool droppable)
+        {
+            if (packet == null || packet.Length == 0)
+                return;
+            if (State == ProtocolState.Disconnected || _slowDisconnect != 0)
+                return;
+
+            int framed = packet.Length + GameServer.PrefixLengthWithId;
+            int pending = Volatile.Read(ref _pendingBytes);
+
+            if (droppable && pending + framed > DroppablePendingBytes)
+            {
+                Interlocked.Increment(ref _droppedCosmetic);
+#if DEBUG
+                LogSendQueue("drop cosmetic");
+#endif
+                return;
+            }
+
+            if (!droppable && pending + framed > MaxPendingBytes)
+            {
+                BeginSlowDisconnect();
+                return;
+            }
+
+            Interlocked.Add(ref _pendingBytes, framed);
+            _pending.Enqueue(new OutgoingPacket { Data = packet, Droppable = droppable });
+#if DEBUG
+            LogSendQueueIfStalled();
+#endif
+        }
+
+        //Discard the backlog so Failure can leave the NIC before the
+        //socket closes. Staged in _disconnectFlush (not the FIFO) so
+        //FlushSendInner writes it first instead of behind up to 4 MiB.
+        private void BeginSlowDisconnect()
+        {
+            if (State == ProtocolState.Disconnected)
+                return;
+            if (Interlocked.Exchange(ref _slowDisconnect, 1) != 0)
+                return;
+
+            Active = false;
+            _disconnectReason = "Connection too slow";
+
+            while (_pending.TryDequeue(out _)) { }
+            Interlocked.Exchange(ref _pendingBytes, 0);
+
+            byte[] failure = GameServer.Failure(2, "Connection too slow");
+            Interlocked.Exchange(ref _disconnectFlush, failure);
+
+#if DEBUG
+            Program.Print(PrintType.Debug, $"Send queue overflow client {Id}: disconnecting, Failure staged first");
+#endif
+
+            Manager.AddTimedAction(1000, () =>
+            {
+                if (State != ProtocolState.Disconnected)
+                    RequestDisconnect("Connection too slow");
+            });
+        }
+
+        private void AccountDequeued(int framed)
+        {
+            int cur, next;
+            do
+            {
+                cur = Volatile.Read(ref _pendingBytes);
+                next = cur - framed;
+                if (next < 0)
+                    next = 0;
+            } while (Interlocked.CompareExchange(ref _pendingBytes, next, cur) != cur);
+        }
+
+#if DEBUG
+        private void LogSendQueueIfStalled()
+        {
+            int bytes = Volatile.Read(ref _pendingBytes);
+            int count = _pending.Count;
+            if (bytes < 262144 && count < 256)
+                return;
+            LogSendQueue("stall");
+        }
+
+        private void LogSendQueue(string why)
+        {
+            int now = Environment.TickCount;
+            int last = _lastQueueDebugMs;
+            if (why != "overflow" && unchecked(now - last) < 1000)
+                return;
+            if (Interlocked.Exchange(ref _lastQueueDebugMs, now) != last && why != "overflow")
+                return;
+            Program.Print(PrintType.Debug, $"Send queue {why} client {Id}: {_pending.Count} packets / {Volatile.Read(ref _pendingBytes)} bytes droppedCosmetic={Volatile.Read(ref _droppedCosmetic)}");
+        }
+#endif
 
         //IO-thread half: frame available bytes into inbound packets. Never
         //touches game state and never dispatches handlers; fatal framing
@@ -349,10 +558,26 @@ namespace RotMG.Networking
         {
             lock (_ioLock)
             {
-                if (State == ProtocolState.Disconnected || _socketDead)
+                if (State == ProtocolState.Disconnected)
                     return;
                 try
                 {
+                    //Keep draining after the policy reply so a late
+                    //"<policy-file-request/>\0" tail is not sitting in the
+                    //buffer when Tick closes (that would RST).
+                    if (_socketDead)
+                    {
+                        DrainReceiveBuffer();
+                        return;
+                    }
+                    //Peer FIN: SelectRead && Available==0. Connected stays
+                    //true until an I/O, so without this a client that closes
+                    //holds its IP slot until the handshake timeout.
+                    if (_socket.Poll(0, SelectMode.SelectRead) && _socket.Available == 0)
+                    {
+                        _socketDead = true;
+                        return;
+                    }
                     PollReceiveInner();
                 }
                 catch (ObjectDisposedException)
@@ -363,6 +588,23 @@ namespace RotMG.Networking
                 {
                     _socketDead = true;
                 }
+            }
+        }
+
+        private void DrainReceiveBuffer()
+        {
+            if (_socket == null)
+                return;
+            int available = _socket.Available;
+            if (available <= 0)
+                return;
+            byte[] dump = new byte[Math.Min(available, 256)];
+            while (available > 0)
+            {
+                int n = _socket.Receive(dump, 0, Math.Min(dump.Length, available), SocketFlags.None);
+                if (n <= 0)
+                    break;
+                available = _socket.Available;
             }
         }
 
@@ -380,9 +622,12 @@ namespace RotMG.Networking
                     }
                     break;
                 case SocketEventState.InProgress:
-                    if (_receive.PacketLength == 1014001516) //Hacky policy file..
+                    if (_receive.PacketLength == PolicyFileMagic)
                     {
                         _socket.Send(GameServer.PolicyFile, 0, GameServer.PolicyFile.Length, SocketFlags.None);
+                        DrainReceiveBuffer();
+                        _receive.Reset();
+                        _socketDead = true;
                         return;
                     }
 
@@ -453,48 +698,73 @@ namespace RotMG.Networking
         {
             if (_send.State == SocketEventState.Awaiting)
             {
-                if (_held == null && _pending.IsEmpty)
+                byte[] disconnect = Interlocked.Exchange(ref _disconnectFlush, null);
+                if (disconnect == null && _held == null && _pending.IsEmpty)
                     return;
 
                 _send.EnsureBuffer();
                 _send.MarkInUse();
                 byte[] buf = _send.Data;
                 int total = 0;
-                int queued = _pending.Count + (_held == null ? 0 : 1);
-                while (queued-- > 0)
+
+                if (disconnect != null)
                 {
-                    byte[] packet;
-                    if (_held != null)
+                    //Failure-first: do not coalesce the abandoned backlog.
+                    _held = null;
+                    int length = disconnect.Length + GameServer.PrefixLengthWithId;
+                    if (length > buf.Length)
                     {
-                        packet = _held;
-                        _held = null;
+                        _send.Grow(length);
+                        buf = _send.Data;
                     }
-                    else if (!_pending.TryDequeue(out packet))
-                        break;
-                    //Measured after the dequeue, so a concurrent overflow-drop
-                    //by a worker thread can never desync the framing.
-                    int length = packet.Length + GameServer.PrefixLengthWithId;
-                    if (total + length > buf.Length)
+                    buf[0] = (byte)(length >> 24);
+                    buf[1] = (byte)(length >> 16);
+                    buf[2] = (byte)(length >> 8);
+                    buf[3] = (byte)length;
+                    Buffer.BlockCopy(disconnect, 0, buf, GameServer.PrefixLengthWithId, disconnect.Length);
+                    total = length;
+                }
+                else
+                {
+                    int queued = _pending.Count + (_held == null ? 0 : 1);
+                    while (queued-- > 0)
                     {
-                        if (total == 0)
+                        byte[] packet;
+                        if (_held != null)
                         {
-                            //Single packet larger than the pooled buffer: rent an
-                            //exact-size buffer for this flush (returned on Reset).
-                            _send.Grow(length);
-                            buf = _send.Data;
+                            packet = _held;
+                            _held = null;
                         }
+                        else if (!_pending.TryDequeue(out OutgoingPacket outgoing))
+                            break;
                         else
                         {
-                            _held = packet;
-                            break;
+                            packet = outgoing.Data;
+                            AccountDequeued(packet.Length + GameServer.PrefixLengthWithId);
                         }
+                        int length = packet.Length + GameServer.PrefixLengthWithId;
+                        if (total + length > buf.Length)
+                        {
+                            if (total == 0)
+                            {
+                                //Single packet larger than the pooled buffer: rent an
+                                //exact-size buffer for this flush (returned on Reset).
+                                _send.Grow(length);
+                                buf = _send.Data;
+                            }
+                            else
+                            {
+                                _held = packet;
+                                break;
+                            }
+                        }
+                        buf[total] = (byte)(length >> 24);
+                        buf[total + 1] = (byte)(length >> 16);
+                        buf[total + 2] = (byte)(length >> 8);
+                        buf[total + 3] = (byte)length;
+                        Buffer.BlockCopy(packet, 0, buf, total + GameServer.PrefixLengthWithId, packet.Length);
+                        total += length;
                     }
-                    buf[total] = (byte)(length >> 24);
-                    buf[total + 1] = (byte)(length >> 16);
-                    buf[total + 2] = (byte)(length >> 8);
-                    buf[total + 3] = (byte)length;
-                    Buffer.BlockCopy(packet, 0, buf, total + GameServer.PrefixLengthWithId, packet.Length);
-                    total += length;
                 }
 
                 if (total == 0)
@@ -539,6 +809,131 @@ namespace RotMG.Networking
                     _send.MarkIdle();
                 }
             }
+        }
+
+        //Headless: never drop protocol-state packets, drop cosmetics at
+        //2 MiB, disconnect with Failure staged first at 4 MiB.
+        public static bool VerifySendBackpressure()
+        {
+            static byte[] Dummy(GameServer.PacketId id, int extra)
+            {
+                byte[] packet = new byte[1 + extra];
+                packet[0] = (byte)id;
+                return packet;
+            }
+
+            static bool Fail(string msg)
+            {
+                Program.Print(PrintType.Error, "P3 verify: " + msg);
+                return false;
+            }
+
+            byte[] bubble = GameServer.Text("n", 1, 0, 5, "", "hi");
+            byte[] info = GameServer.Text("", 0, -1, 0, "", "hello");
+            if (!OutgoingPacket.IsDroppable(bubble))
+                return Fail("Text bubble should be droppable");
+            if (OutgoingPacket.IsDroppable(info))
+                return Fail("info Text should not be droppable");
+            if (!OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.ShowEffect, 8)))
+                return Fail("ShowEffect should be droppable");
+            if (!OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.Damage, 8)))
+                return Fail("Damage should be droppable");
+            if (!OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.AllyShoot, 8)))
+                return Fail("AllyShoot should be droppable");
+            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.Update, 8)))
+                return Fail("Update must not be droppable");
+            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.Goto, 8)))
+                return Fail("Goto must not be droppable");
+            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.EnemyShoot, 8)))
+                return Fail("EnemyShoot must not be droppable");
+            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.MapInfo, 8)))
+                return Fail("MapInfo must not be droppable");
+            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.CreateSuccess, 8)))
+                return Fail("CreateSuccess must not be droppable");
+            Program.Print(PrintType.Info, "P3 verify: droppable tagging");
+
+            Client keep = new Client(new SendState(), new ReceiveState());
+            keep.State = ProtocolState.Connected;
+            keep.Active = true;
+            keep.Id = 1;
+
+            byte[] createSuccess = GameServer.CreateSuccess(42, 7);
+            keep.Send(createSuccess);
+
+            byte[] tick = Dummy(GameServer.PacketId.NewTick, 8);
+            for (int i = 0; i < 300; i++)
+                keep.Send(tick);
+            if (keep.PendingCount != 301)
+                return Fail($"drop-oldest still active: queued {keep.PendingCount} after 301 reliable packets");
+            if (!keep._pending.TryPeek(out OutgoingPacket head) || head.Data[0] != (byte)GameServer.PacketId.CreateSuccess)
+                return Fail("CreateSuccess was dropped from the head of the queue");
+            Program.Print(PrintType.Info, "P3 verify: 301 reliable packets kept (old cap was 256), head is CreateSuccess");
+
+            Client cosmetics = new Client(new SendState(), new ReceiveState());
+            cosmetics.State = ProtocolState.Connected;
+            cosmetics.Active = true;
+            cosmetics.Id = 2;
+            byte[] effect = Dummy(GameServer.PacketId.ShowEffect, 1024);
+            int effectFramed = effect.Length + GameServer.PrefixLengthWithId;
+            while (cosmetics.PendingBytes + effectFramed <= DroppablePendingBytes)
+                cosmetics.Send(effect);
+            int cappedCount = cosmetics.PendingCount;
+            int cappedBytes = cosmetics.PendingBytes;
+            for (int i = 0; i < 1000; i++)
+                cosmetics.Send(effect);
+            if (cosmetics.PendingCount != cappedCount || cosmetics.PendingBytes != cappedBytes)
+                return Fail($"cosmetics queued past soft cap: {cosmetics.PendingCount} packets / {cosmetics.PendingBytes} bytes");
+            if (cosmetics.DroppedCosmeticCount < 1000)
+                return Fail($"expected 1000 dropped cosmetics, got {cosmetics.DroppedCosmeticCount}");
+
+            byte[] update = Dummy(GameServer.PacketId.Update, 1024);
+            cosmetics.Send(update);
+            if (cosmetics.PendingCount != cappedCount + 1)
+                return Fail("reliable Update was refused at the cosmetic watermark");
+            Program.Print(PrintType.Info, $"P3 verify: cosmetics capped at {cappedBytes} bytes, Update still queued");
+
+            Client overflow = new Client(new SendState(), new ReceiveState());
+            overflow.State = ProtocolState.Connected;
+            overflow.Active = true;
+            overflow.Id = 3;
+            overflow.Send(createSuccess);
+            byte[] filler = Dummy(GameServer.PacketId.NewTick, 1024);
+            int fillerFramed = filler.Length + GameServer.PrefixLengthWithId;
+            while (overflow.PendingBytes + fillerFramed <= MaxPendingBytes)
+                overflow.Send(filler);
+            overflow.Send(filler);
+            if (overflow._slowDisconnect == 0)
+                return Fail("reliable overflow did not start slow-disconnect");
+            if (overflow._disconnectFlush == null || overflow._disconnectFlush[0] != (byte)GameServer.PacketId.Failure)
+                return Fail("Failure was not staged first on overflow");
+            if (overflow.PendingCount != 0)
+                return Fail($"backlog was not discarded for Failure-first flush ({overflow.PendingCount} left)");
+            overflow.Send(filler);
+            if (overflow.PendingCount != 0)
+                return Fail("Send after overflow still queued");
+
+            overflow._send.EnsureBuffer();
+            byte[] disconnect = Interlocked.Exchange(ref overflow._disconnectFlush, null);
+            if (disconnect == null)
+                return Fail("disconnect flush was consumed unexpectedly");
+            int length = disconnect.Length + GameServer.PrefixLengthWithId;
+            byte[] buf = overflow._send.Data;
+            buf[0] = (byte)(length >> 24);
+            buf[1] = (byte)(length >> 16);
+            buf[2] = (byte)(length >> 8);
+            buf[3] = (byte)length;
+            Buffer.BlockCopy(disconnect, 0, buf, GameServer.PrefixLengthWithId, disconnect.Length);
+            if (buf[4] != (byte)GameServer.PacketId.Failure)
+                return Fail("framed disconnect packet is not Failure");
+            using (PacketReader rdr = new PacketReader(new MemoryStream(disconnect, 1, disconnect.Length - 1)))
+            {
+                int errorId = rdr.ReadInt32();
+                string text = rdr.ReadString();
+                if (errorId != 2 || text != "Connection too slow")
+                    return Fail($"Failure payload {errorId}/{text}");
+            }
+            Program.Print(PrintType.Info, "P3 verify: overflow discards backlog, stages Failure(2, Connection too slow) first");
+            return true;
         }
 
         //Headless stand-in for "DEBUG server, 3+ worlds, frequent kicks":

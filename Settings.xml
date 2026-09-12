@@ -1,6 +1,8 @@
 ﻿<Settings res="Resources" db="Database">
 <!--db is a directory (realm.db is created inside it) or a direct .db file path-->
 	<MaxClients>256</MaxClients>
+<!--Per-IP game sockets. 8 leaves room for 4 NAT'd players each holding an old+new socket during a portal.-->
+	<MaxClientsPerIp>8</MaxClientsPerIp>
 	<Address>127.0.0.1</Address>
 	<Ports>7777:2050</Ports>
 	<TicksPerSecond>10</TicksPerSecond> 

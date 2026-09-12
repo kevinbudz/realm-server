@@ -320,14 +320,9 @@ namespace RotMG.Game
                         BotManager.CarryInto(bot, newWorld);
                         continue;
                     }
-                    Client client = player.Client;
-                    if (client == null)
+                    if (player.Client == null)
                         continue;
-                    client.BeginReconnect();
-                    player.CancelTradeIfTrading();
-                    if (client.Account != null)
-                        Manager.RegisterPendingTransfer(client.Account.Id, newWorld);
-                    client.Send(GameServer.Reconnect(newWorld.Id));
+                    player.BeginTransfer(newWorld);
                 }
             });
             Manager.AddTimedAction(20000, () =>
