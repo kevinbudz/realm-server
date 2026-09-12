@@ -7211,32 +7211,4 @@
 		<feedPower>600</feedPower>
 	</Object>
 	
-<Object type="0x2750" id="RogueST0" setType="0x2754" setName="Skuld 2 The ReGhostening Set">
-		<DisplayId>Etherite Dagger</DisplayId>
-		<Class>Equipment</Class>
-		<Item />
-		<Texture>
-			<File>lofiObj3</File>
-			<Index>0x526</Index>
-		</Texture>
-		<SlotType>2</SlotType>
-		<Description>Made of a strange metal not known to the living. Its connection to the spirit plane causes a high pitched shriek as it slashes.</Description>
-		<RateOfFire>1.10</RateOfFire>
-		<Sound>weapon/fire_dagger</Sound>
-		<Projectile>
-			<ObjectId>Spooky Sparkle</ObjectId>
-			<Speed>160</Speed>
-			<MinDamage>110</MinDamage>
-			<MaxDamage>215</MaxDamage>
-			<LifetimeMS>240</LifetimeMS>
-			<Amplitude>0.2</Amplitude>
-			<Frequency>0.2</Frequency>
-		</Projectile>
-		<BagType>6</BagType>
-		<FameBonus>4</FameBonus>
-		<OldSound>daggerSwing</OldSound>
-		<feedPower>900</feedPower>
-		<Soulbound />
-	</Object>
-	
 </Objects>
