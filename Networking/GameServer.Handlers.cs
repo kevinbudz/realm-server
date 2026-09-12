@@ -80,8 +80,17 @@ namespace RotMG.Networking
             CancelTrade = 57,
             TradeDone = 58,
             TradeAccepted = 59,
-            GlobalNotification = 60
+            GlobalNotification = 60,
+            Ping = 61,
+            Pong = 62
         }
+
+        //Must match realm-client incoming/Failure.as. 0 is informational
+        //(chat only); 1/2 close the game; 3 is a teleport reject.
+        public const int FailureDefault = 0;
+        public const int FailureIncorrectVersion = 1;
+        public const int FailureForceCloseGame = 2;
+        public const int FailureInvalidTeleportTarget = 3;
 
         public static void Read(Client client, int id, byte[] data)
         {
@@ -89,7 +98,7 @@ namespace RotMG.Networking
             Program.Print(PrintType.Debug, $"Packet received <{id}> sendQueue={client.PendingCount} packets/{client.PendingBytes}B <{string.Join(" ,",data.Select(k => k.ToString()).ToArray())}>");
 #endif
 
-            if (!client.Active)
+            if (!client.Active || client.Closing)
             {
 #if DEBUG
                 Program.Print(PrintType.Error, "Didn't process packet, client not active");
@@ -194,6 +203,9 @@ namespace RotMG.Networking
                     case (int)PacketId.Reskin:
                         Reskin(client, rdr);
                         break;
+                    case (int)PacketId.Pong:
+                        Pong(client, rdr);
+                        break;
                 }
             }
         }
@@ -221,6 +233,15 @@ namespace RotMG.Networking
         {
             int time = rdr.ReadInt32(); 
             client.Player.TryGotoAck(time);
+        }
+
+        //Keepalive reply. Serial/time are consumed so the stream stays
+        //aligned; liveness is recorded in Client.DrainInbound for every
+        //inbound packet (this one included).
+        public static void Pong(Client client, PacketReader rdr)
+        {
+            rdr.ReadInt32();
+            rdr.ReadInt32();
         }
 
         public static void ChooseName(Client client, PacketReader rdr)
@@ -457,11 +478,16 @@ namespace RotMG.Networking
 
             if (client.State == ProtocolState.Handshaked) //Only allow Hello to be processed once.
             {
+                if (buildVersion != Settings.BuildVersion)
+                {
+                    client.SendFailureAndClose(FailureIncorrectVersion, Settings.BuildVersion);
+                    return;
+                }
+
                 int accountId = Database.Authenticate(username, password, client.IP);
                 if (accountId == -1)
                 {
-                    client.Send(Failure(0, "Invalid account."));
-                    Manager.AddTimedAction(1000, client.Disconnect);
+                    client.SendFailureAndClose(FailureForceCloseGame, "Invalid account.");
                     return;
                 }
 
@@ -490,8 +516,7 @@ namespace RotMG.Networking
                     acc = new AccountModel(accountId);
                     if (acc.IsNull)
                     {
-                        client.Send(Failure(0, "Invalid account."));
-                        Manager.AddTimedAction(1000, client.Disconnect);
+                        client.SendFailureAndClose(FailureForceCloseGame, "Invalid account.");
                         return;
                     }
                     acc.Load();
@@ -510,58 +535,62 @@ namespace RotMG.Networking
                         }
                         catch { }
                     }
-                    client.Send(Failure(0, "Banned."));
-                    Manager.AddTimedAction(1000, client.Disconnect);
+                    client.SendFailureAndClose(FailureForceCloseGame, "Banned.");
                     return;
                 }
 
                 if (!acc.Ranked && gameId == Manager.EditorId)
                 {
-                    client.Send(Failure(0, "Not ranked."));
-                    Manager.AddTimedAction(1000, client.Disconnect);
+                    if (fromHandoff)
+                        Manager.StoreHandoff(acc, handedCharacter);
+                    client.SendFailureAndClose(FailureForceCloseGame, "Not ranked.");
+                    return;
                 }
 
                 if (Database.IsAccountInUse(acc))
                 {
                     if (fromHandoff)
                         Manager.StoreHandoff(acc, handedCharacter);
-                    client.Send(Failure(0, "Account in use!"));
-                    Manager.AddTimedAction(1000, client.Disconnect);
+                    client.SendFailureAndClose(FailureForceCloseGame, "Account in use!");
                     return;
                 }
 
                 client.Account = acc;
                 client.HandoffCharacter = handedCharacter;
-                client.Account.Connected = true;
-                client.Account.Save();
-                client.TargetWorldId = gameId;
 
-                Manager.LinkClient(client.Account.Id, client.Id);
-                World world = Manager.GetWorld(gameId);
-
+                World world = null;
 #if DEBUG
-                if (client.TargetWorldId == Manager.EditorId)
+                if (gameId == Manager.EditorId)
                 {
                     Program.Print(PrintType.Debug, "Loading editor world");
                     JSMap map = new JSMap(Encoding.UTF8.GetString(mapJson));
                     world = new World(map, Resources.Worlds["Dreamland"]);
-                    client.TargetWorldId = Manager.AddWorld(world);
+                    Manager.AddWorld(world);
                 }
 #endif
+                if (world == null)
+                    world = Manager.ResolveHelloWorld(client, gameId);
 
                 if (world == null)
                 {
-                    client.Send(Failure(0, "Invalid world!"));
-                    Manager.AddTimedAction(1000, client.Disconnect);
+                    if (fromHandoff)
+                        Manager.StoreHandoff(acc, handedCharacter);
+                    client.SendFailureAndClose(FailureForceCloseGame, "Invalid world!");
                     return;
                 }
 
                 if (world is RealmWorld && !world.AllowedAccess(client))
                 {
-                    client.Send(Failure(0, "Realm closed."));
-                    Manager.AddTimedAction(1000, client.Disconnect);
+                    if (fromHandoff)
+                        Manager.StoreHandoff(acc, handedCharacter);
+                    client.SendFailureAndClose(FailureForceCloseGame, "Realm closed.");
                     return;
                 }
+
+                client.Account.Connected = true;
+                client.Account.Save();
+                client.TargetWorldId = world.Id;
+                Manager.LinkClient(client.Account.Id, client.Id);
 
                 uint seed = (uint)MathUtils.NextInt(1, int.MaxValue - 1);
                 client.Random = new wRandom(seed);
@@ -580,16 +609,14 @@ namespace RotMG.Networking
                 CharacterModel character = Database.CreateCharacter(client.Account, classType, skinType);
                 if (character == null)
                 {
-                    client.Send(Failure(0, "Failed to create character."));
-                    client.Disconnect();
+                    client.SendFailureAndClose(FailureForceCloseGame, "Failed to create character.");
                     return;
                 }
 
                 World world = Manager.GetWorld(client.TargetWorldId);
                 if (world is RealmWorld && !world.AllowedAccess(client))
                 {
-                    client.Send(Failure(0, "Realm closed."));
-                    Manager.AddTimedAction(1000, client.Disconnect);
+                    client.SendFailureAndClose(FailureForceCloseGame, "Realm closed.");
                     return;
                 }
                 client.HandoffCharacter = null;
@@ -635,16 +662,14 @@ namespace RotMG.Networking
                 client.HandoffCharacter = null;
                 if (character == null || character.IsNull || character.Dead || character.Deleted)
                 {
-                    client.Send(Failure(0, "Failed to load character."));
-                    client.Disconnect();
+                    client.SendFailureAndClose(FailureForceCloseGame, "Failed to load character.");
                     return;
                 }
 
                 World world = Manager.GetWorld(client.TargetWorldId);
                 if (world is RealmWorld && !world.AllowedAccess(client))
                 {
-                    client.Send(Failure(0, "Realm closed."));
-                    Manager.AddTimedAction(1000, client.Disconnect);
+                    client.SendFailureAndClose(FailureForceCloseGame, "Realm closed.");
                     return;
                 }
                 client.Character = character;
@@ -823,6 +848,14 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
+        public static byte[] Ping(int serial)
+        {
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Ping);
+            wtr.Write(serial);
+            return PacketWriter.RentedBytes();
+        }
+
         public static byte[] Aoe(Position pos, float radius, int damage, ConditionEffectIndex effect, uint color)
         {
             PacketWriter wtr = PacketWriter.Rent();
@@ -915,6 +948,9 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
+        //Wire: a single int gameId. Authorization is server-side
+        //(Manager.PendingTransfers); a random 32-bit key can be appended
+        //on both sides when a client rebuild is planned.
         public static byte[] Reconnect(int gameId)
         {
             PacketWriter wtr = PacketWriter.Rent();
@@ -955,6 +991,70 @@ namespace RotMG.Networking
             wtr.Write((byte)'\r');
             wtr.Write((byte)'\n');
             return PacketWriter.RentedBytes();
+        }
+
+        //Headless P13: the probe packets the DEBUG /p13 command sends must
+        //round-trip with the client EnemyShoot/NewTick readers. The Flash
+        //handler changes (ack-before-lookup, movesRequested first, typed
+        //stat null-guards) are exercised in-game via /p13.
+        public static bool VerifyClientRobustnessProbes()
+        {
+            static bool Fail(string msg)
+            {
+                Program.Print(PrintType.Error, "P13 verify: " + msg);
+                return false;
+            }
+
+            const int unknownOwnerId = 0x7f0ead01;
+            byte[] shoot = EnemyShoot(0, unknownOwnerId, 0, new Position(1.5f, 2.25f), 0.5f, 7, 1, 0f);
+            using (PacketReader rdr = new PacketReader(new MemoryStream(shoot)))
+            {
+                if (rdr.ReadByte() != (byte)PacketId.EnemyShoot)
+                    return Fail("EnemyShoot id");
+                if (rdr.ReadInt32() != 0)
+                    return Fail("EnemyShoot bulletId");
+                if (rdr.ReadInt32() != unknownOwnerId)
+                    return Fail("EnemyShoot ownerId must be the unknown id");
+                rdr.ReadByte();
+                Position pos = new Position(rdr);
+                if (pos.X != 1.5f || pos.Y != 2.25f)
+                    return Fail("EnemyShoot position");
+                rdr.ReadSingle();
+                rdr.ReadInt16();
+                if (rdr.BaseStream.Position != rdr.BaseStream.Length)
+                    return Fail("single-shot EnemyShoot must omit numShots tail");
+            }
+
+            ObjectStatus status = new ObjectStatus
+            {
+                Id = 99,
+                Position = new Position(3f, 4f),
+                Stats = new Dictionary<StatType, object> { { StatType.MaxMP, 100 } }
+            };
+            byte[] tick = NewTick(new List<ObjectStatus> { status }, new Dictionary<StatType, object>());
+            using (PacketReader rdr = new PacketReader(new MemoryStream(tick)))
+            {
+                if (rdr.ReadByte() != (byte)PacketId.NewTick)
+                    return Fail("NewTick id");
+                if (rdr.ReadInt16() != 1)
+                    return Fail("NewTick status count");
+                if (rdr.ReadInt32() != 99)
+                    return Fail("NewTick objectId");
+                Position pos = new Position(rdr);
+                if (pos.X != 3f || pos.Y != 4f)
+                    return Fail("NewTick position");
+                if (rdr.ReadByte() != 1)
+                    return Fail("NewTick stat count");
+                if (rdr.ReadByte() != (byte)StatType.MaxMP)
+                    return Fail("NewTick stat type must be MaxMP");
+                if (rdr.ReadInt32() != 100)
+                    return Fail("NewTick MaxMP value");
+                if (rdr.BaseStream.Position != rdr.BaseStream.Length)
+                    return Fail("NewTick leftover bytes");
+            }
+
+            Program.Print(PrintType.Info, "P13 verify: EnemyShoot(unknown owner) and NewTick(MaxMP on non-player) serialize as the client parses them");
+            return true;
         }
     }
 }

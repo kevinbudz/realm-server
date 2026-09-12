@@ -83,11 +83,15 @@ namespace RotMG.Networking
 
         private static byte[] AppInit(HttpListenerContext context, NameValueCollection query)
         {
+            XElement hashes = new XElement("GameDataHashes");
+            foreach (var kv in Resources.GameDataHashes.OrderBy(k => k.Key))
+                hashes.Add(new XElement("File", new XAttribute("name", kv.Key), kv.Value));
             XElement root = new XElement("AppSettings",
-                new XElement("BuildVersion", "1.0.0"),
+                new XElement("BuildVersion", Settings.BuildVersion),
                 new XElement("ServerAddress", Settings.Address),
                 new XElement("AppPort", Settings.Ports[0]),
-                new XElement("GamePort", Settings.Ports[1]));
+                new XElement("GamePort", Settings.Ports[1]),
+                hashes);
             return Write(root.ToString());
         }
 

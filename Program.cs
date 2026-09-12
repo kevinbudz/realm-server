@@ -37,11 +37,45 @@ namespace RotMG
             PendingWork = new ConcurrentQueue<Work>();
             Thread.CurrentThread.Priority = ThreadPriority.Highest;
 
+            if (args != null && args.Length > 0 && args[0] == "--p21-verify")
+            {
+                bool ok = ConditionEffectsLayout.Verify();
+                DrainWork();
+                Console.WriteLine(ok ? "P21 verify: PASS" : "P21 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
             if (args != null && args.Length > 0 && args[0] == "--p4-verify")
             {
                 bool ok = Player.VerifyGotoAckClock();
                 DrainWork();
                 Console.WriteLine(ok ? "P4 verify: PASS" : "P4 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p6-verify")
+            {
+                bool ok = Player.VerifyTimingPolicy();
+                DrainWork();
+                Console.WriteLine(ok ? "P6 verify: PASS" : "P6 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && (args[0] == "--p14-verify" || args[0] == "--p16-verify"))
+            {
+                bool ok = Player.VerifyMoveCorrection();
+                DrainWork();
+                string tag = args[0] == "--p16-verify" ? "P16" : "P14";
+                Console.WriteLine(ok ? $"{tag} verify: PASS" : $"{tag} verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && (args[0] == "--p14-verify" || args[0] == "--p16-verify"))
+            {
+                bool ok = Player.VerifyMoveCorrection();
+                DrainWork();
+                string tag = args[0] == "--p16-verify" ? "P16" : "P14";
+                Console.WriteLine(ok ? $"{tag} verify: PASS" : $"{tag} verify: FAIL");
                 Environment.Exit(ok ? 0 : 1);
             }
 
@@ -57,6 +91,14 @@ namespace RotMG
                 bool ok = Manager.VerifyDungeonLifecycle();
                 DrainWork();
                 Console.WriteLine(ok ? "P2 verify: PASS" : "P2 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p10-verify")
+            {
+                bool ok = Player.VerifyInventoryResync();
+                DrainWork();
+                Console.WriteLine(ok ? "P10 verify: PASS" : "P10 verify: FAIL");
                 Environment.Exit(ok ? 0 : 1);
             }
 
@@ -89,6 +131,39 @@ namespace RotMG
                 bool ok = GameServer.VerifyIpAccounting();
                 DrainWork();
                 Console.WriteLine(ok ? "P18 verify: PASS" : "P18 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && (args[0] == "--p7-verify" || args[0] == "--p8-verify"))
+            {
+                bool ok = Client.VerifyHandshakeFailure();
+                DrainWork();
+                string tag = args[0] == "--p8-verify" ? "P8" : "P7";
+                Console.WriteLine(ok ? $"{tag} verify: PASS" : $"{tag} verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p13-verify")
+            {
+                bool ok = GameServer.VerifyClientRobustnessProbes();
+                DrainWork();
+                Console.WriteLine(ok ? "P13 verify: PASS" : "P13 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p19-verify")
+            {
+                bool ok = Manager.VerifyWorldAuthorization();
+                DrainWork();
+                Console.WriteLine(ok ? "P19 verify: PASS" : "P19 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p22-verify")
+            {
+                bool ok = AppServer.VerifyCharListCredentials();
+                DrainWork();
+                Console.WriteLine(ok ? "P22 verify: PASS" : "P22 verify: FAIL");
                 Environment.Exit(ok ? 0 : 1);
             }
 

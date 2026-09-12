@@ -1105,13 +1105,22 @@ namespace RotMG.Common
             return (int)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
         }
 
-        public static bool IsAccountInUse(AccountModel acc)
+        public static bool IsAccountInUse(AccountModel acc, bool charListGrace = false)
         {
             //GetClient / in-flight handoff are the source of truth. Never
             //acc.Save() here: the model may be a stale SQLite snapshot from
             //Verify, and writing it would roll back gold/fame/locks.
-            if (Manager.GetClient(acc.Id) != null)
-                return true;
+            Client live = Manager.GetClient(acc.Id);
+            if (live != null)
+            {
+                //Char list after death/transfer: the old socket is still
+                //counted until Disconnect, but Active is already false.
+                //Hello stays strict so a second session cannot skip the kick.
+                if (charListGrace && (!live.Active || live.Reconnecting || live.State == ProtocolState.Disconnected))
+                { }
+                else
+                    return true;
+            }
             if (Manager.HasHandoff(acc.Id))
                 return true;
             if (acc.Connected)

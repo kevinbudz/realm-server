@@ -30,6 +30,9 @@ namespace RotMG.Common
         //(default 1 = legacy single realm). Each instance gets its own
         //Nexus portal, overseer lifecycle, and close/quake/reset cycle.
         public static int RealmInstances;
+        //Bump together with realm-client Parameters.BUILD_VERSION whenever
+        //PacketId, StatType, ConditionEffect bits or GameData change.
+        public static string BuildVersion = "1.0.0";
 
         public static void Init()
         {
@@ -62,6 +65,7 @@ namespace RotMG.Common
                 SecondsPerTick = 1f / TicksPerSecond;
                 AsyncWorldCreation = data.ParseBool("AsyncWorldCreation", false);
                 RealmInstances = Math.Max(1, data.ParseInt("RealmInstances", 1));
+                BuildVersion = data.ParseString("BuildVersion", "1.0.0");
             }
         }
     }

@@ -489,6 +489,27 @@ namespace RotMG.Game.Entities
                             SendInfo($"Rendered {piece.Item1}.");
                             break;
                         }
+                    case "/wall":
+                        {
+                            if (!Client.Account.Ranked)
+                            {
+                                SendError("Not ranked");
+                                return;
+                            }
+                            if (Parent == null)
+                                return;
+                            string wallName = string.IsNullOrWhiteSpace(input) ? "grey wall" : input.Trim().ToLower();
+                            if (!Resources.IdLower2Object.TryGetValue(wallName, out ObjectDesc wallDesc) || !wallDesc.Static)
+                            {
+                                SendError($"Static object <{wallName}> not found. Usage: /wall [object id]");
+                                return;
+                            }
+                            int wx = (int)Position.X;
+                            int wy = (int)Position.Y;
+                            Parent.UpdateStatic(wx, wy, wallDesc.Type);
+                            SendInfo($"Placed {wallDesc.DisplayId} at {wx},{wy}. Standing players are nudged.");
+                            break;
+                        }
                     case "/killall":
                     case "/ka":
                         {
@@ -1426,13 +1447,72 @@ namespace RotMG.Game.Entities
                                 "/world, /uptime, /time, /realm, /nexus, /vault, /ghall, /tutorial, /gland, /join, /pause, " +
                                 "/tp, /lock, /unlock, /ignore, /unignore, /lefttomax, /gkick, /invite, /gwho, /mates, " +
                                 "/servers, /svrs, /fame, /spawn, /give, /max, /size, /level20, /eff, /tq, /tppos, /goto, " +
-                                "/getquest, /setpiece, /killall, /ka, /clearspawn, /cs, /cleargraves, /cgraves, /clearinv, " +
+                                "/getquest, /setpiece, /wall, /killall, /ka, /clearspawn, /cs, /cleargraves, /cgraves, /clearinv, " +
                                 "/summon, /summonall, /visit, /kick, /mute, /unmute, /ban, /banip, /unban, /grank, " +
                                 "/rename, /unname, /quake, /closerealm, /announce, /oryxsay, /osay, /reskin, /reboot, " +
                                 "/compactloh, /god, /roll, /legendary, /allyshots, /allydamage, /effects, /sounds, /notifications, " +
                                 "/bot");
                             break;
                         }
+#if DEBUG
+                    case "/badpacket":
+                    case "/p5":
+                        {
+                            if (!Client.Account.Ranked)
+                            {
+                                SendError("Not ranked");
+                                return;
+                            }
+                            //P5 probe: unmapped id 61 with an arbitrary body, then a
+                            //normal Text. The client must log the protocol error and
+                            //close rather than parse the body/Text as a new header.
+                            SendInfo("P5 probe: sending unknown packet id 61, then Text.");
+                            PacketWriter wtr = PacketWriter.Rent();
+                            wtr.Write((byte)61);
+                            wtr.Write(0x45524F52);
+                            wtr.Write("unknown-id-body");
+                            Client.Send(PacketWriter.RentedBytes());
+                            Client.Send(GameServer.Text("", 0, -1, 0, "", "P5 FAIL: parsed past unknown id 61"));
+                            break;
+                        }
+                    case "/p13":
+                        {
+                            if (!Client.Account.Ranked)
+                            {
+                                SendError("Not ranked");
+                                return;
+                            }
+                            //P13 probe: EnemyShoot from an owner the client was
+                            //never sent, plus MAX_MP on a non-Player. The client
+                            //must ack/keep moving (trace, not stall). Enqueue an
+                            //empty await so the resulting ShootAck is not a desync.
+                            const int unknownOwnerId = 0x7f0ead01;
+                            AwaitProjectiles(new List<Projectile>());
+                            Client.Send(GameServer.EnemyShoot(0, unknownOwnerId, 0, Position, 0f, 0, 1, 0f));
+                            SendInfo("P13 probe 1: EnemyShoot for unknown owner " + unknownOwnerId);
+
+                            Entity target = null;
+                            if (Parent != null)
+                            {
+                                foreach (Entity e in Parent.Entities.Values)
+                                {
+                                    if (!(e is Player))
+                                    {
+                                        target = e;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (target != null)
+                            {
+                                target.TrySetSV(StatType.MaxMP, 100);
+                                SendInfo("P13 probe 2: MaxMP on object " + target.Id + " type=" + target.Type);
+                            }
+                            else
+                                SendInfo("P13 probe 2 skipped: no non-player entity in world");
+                            break;
+                        }
+#endif
                     case "/ignore":
                         {
                             if (string.IsNullOrWhiteSpace(input))

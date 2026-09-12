@@ -1,5 +1,6 @@
 ﻿using RotMG.Common;
 using RotMG.Networking;
+using RotMG.Utils;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,11 +15,21 @@ namespace RotMG.Game.Entities
     {
         public const int TradeSlots = 12;
         private const int TradeRequestTimeoutMS = 20000;
+        private const int TradeInactivityTimeoutMS = 60000;
+        private const float TradeMaximumDistance = 4f;
 
         internal Dictionary<Player, int> PotentialTraders = new Dictionary<Player, int>();
         internal Player TradeTarget;
         internal bool[] Trade;
         internal bool TradeAccepted;
+        private int _tradeActivityAt;
+
+        private void TouchTradeActivity()
+        {
+            _tradeActivityAt = Manager.TotalTimeUnsynced;
+            if (TradeTarget != null)
+                TradeTarget._tradeActivityAt = _tradeActivityAt;
+        }
 
         private TradeItem BuildTradeItem(int slot)
         {
@@ -93,6 +104,8 @@ namespace RotMG.Game.Entities
 
                 TradeItem[] my = BuildTradeList();
                 TradeItem[] your = target.BuildTradeList();
+                TouchTradeActivity();
+                target._tradeActivityAt = _tradeActivityAt;
                 Client.Send(GameServer.TradeStart(my, target.Name, your));
                 target.Client.Send(GameServer.TradeStart(your, Name, my));
             }
@@ -135,6 +148,7 @@ namespace RotMG.Game.Entities
             TradeAccepted = false;
             TradeTarget.TradeAccepted = false;
             Trade = offer;
+            TouchTradeActivity();
             TradeTarget.Client.Send(GameServer.TradeChanged(Trade));
 
             if (blockedSoulbound)
@@ -156,7 +170,10 @@ namespace RotMG.Game.Entities
             //have sent one first.)
             if (myOffer == null || myOffer.Length != TradeSlots ||
                 yourOffer == null || yourOffer.Length != TradeSlots)
+            {
+                SendError("Trade offer changed, please accept again");
                 return;
+            }
 
             bool[] clean = new bool[TradeSlots];
             for (int i = 0; i < TradeSlots; i++)
@@ -171,6 +188,7 @@ namespace RotMG.Game.Entities
             }
 
             Trade = clean;
+            TouchTradeActivity();
             if (TradeTarget.Trade.SequenceEqual(yourOffer))
             {
                 TradeAccepted = true;
@@ -182,6 +200,16 @@ namespace RotMG.Game.Entities
 
                 if (TradeAccepted && TradeTarget.TradeAccepted)
                     DoTrade(this);
+            }
+            else
+            {
+                TradeAccepted = false;
+                TradeTarget.TradeAccepted = false;
+                if (Client != null && Client.Player == this)
+                    Client.Send(GameServer.TradeChanged(TradeTarget.Trade));
+                if (TradeTarget.Client != null && TradeTarget.Client.Player == TradeTarget)
+                    TradeTarget.Client.Send(GameServer.TradeChanged(Trade));
+                SendError("Trade offer changed, please accept again");
             }
         }
 
@@ -349,15 +377,31 @@ namespace RotMG.Game.Entities
 
         internal void CheckTradeTimeout()
         {
-            if (PotentialTraders.Count == 0)
+            if (PotentialTraders.Count > 0)
+            {
+                int now = Manager.TotalTimeUnsynced;
+                foreach (Player p in PotentialTraders.Keys.ToArray())
+                    if (PotentialTraders[p] < now)
+                    {
+                        PotentialTraders.Remove(p);
+                        p.SendInfo("Trade to " + Name + " has timed out!");
+                    }
+            }
+
+            if (TradeTarget == null)
                 return;
-            int now = Manager.TotalTimeUnsynced;
-            foreach (Player p in PotentialTraders.Keys.ToArray())
-                if (PotentialTraders[p] < now)
-                {
-                    PotentialTraders.Remove(p);
-                    p.SendInfo("Trade to " + Name + " has timed out!");
-                }
+            if (TradeTarget.Parent != Parent || TradeTarget.Parent == null)
+            {
+                CancelTrade();
+                return;
+            }
+            if (Position.Distance(TradeTarget) > TradeMaximumDistance)
+            {
+                CancelTrade();
+                return;
+            }
+            if (Manager.TotalTimeUnsynced - _tradeActivityAt > TradeInactivityTimeoutMS)
+                CancelTrade();
         }
 
         internal void CancelTradeIfTrading()

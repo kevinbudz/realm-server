@@ -106,6 +106,10 @@ namespace RotMG.Networking
         //Player.Tick skips validation/ack sweeps, Death/Damage no-op, and
         //Disconnect persists the already-captured Character when Parent is null.
         public bool Reconnecting;
+        //Set by SendFailureAndClose: Read ignores further packets and Tick
+        //skips the handshake timeout so Disconnect cannot wipe the Failure
+        //before the 1 s flush window.
+        public bool Closing => _closing;
         public int DCTime;
         public int PendingCount => _pending.Count;
         public int PendingBytes => Volatile.Read(ref _pendingBytes);
@@ -147,6 +151,7 @@ namespace RotMG.Networking
         private volatile bool _sendOverflow;
         private volatile bool _disconnectRequested;
         private volatile string _disconnectReason;
+        private volatile bool _closing;
         //Shared by FlushSend/PollReceive (IO thread) and FinishDisconnect
         //(main thread): socket close and pooled-buffer return never race
         //a mid-copy flush.
@@ -154,6 +159,7 @@ namespace RotMG.Networking
         private SendState _send;
         private ReceiveState _receive;
         private int _handshakeStartedAt;
+        private int _lastInboundAt;
 
         public Client(SendState send, ReceiveState receive)
         {
@@ -333,6 +339,7 @@ namespace RotMG.Networking
                 _disconnectReason = null;
                 _slowDisconnect = 0;
                 _disconnectFlush = null;
+                _closing = false;
                 _droppedCosmetic = 0;
                 Volatile.Write(ref _pendingBytes, 0);
             }
@@ -369,12 +376,14 @@ namespace RotMG.Networking
             //TickWatch, not TotalTimeUnsynced: the latter is 0 until the
             //first Manager.Tick, and Init can already be >5 s in.
             _handshakeStartedAt = (int)Manager.TickWatch.ElapsedMilliseconds;
+            _lastInboundAt = _handshakeStartedAt;
             _socketDead = false;
             _sendOverflow = false;
             _disconnectRequested = false;
             _disconnectReason = null;
             _slowDisconnect = 0;
             _disconnectFlush = null;
+            _closing = false;
             _droppedCosmetic = 0;
             Volatile.Write(ref _pendingBytes, 0);
             while (_pending.TryDequeue(out _)) { }
@@ -404,7 +413,7 @@ namespace RotMG.Networking
 
                 DrainInbound();
 
-                if (State == ProtocolState.Handshaked || State == ProtocolState.Awaiting)
+                if (!_closing && (State == ProtocolState.Handshaked || State == ProtocolState.Awaiting))
                 {
                     int now = Manager.TotalTimeUnsynced;
                     if (now == 0 && Manager.TickWatch != null)
@@ -447,7 +456,28 @@ namespace RotMG.Networking
             //Bounded per tick so one flooding client cannot starve the rest.
             int budget = 32;
             while (budget-- > 0 && _inbound.TryDequeue(out InboundPacket packet))
+            {
+                NoteInbound();
                 GameServer.Read(this, packet.Id, packet.Body);
+            }
+        }
+
+        public void NoteInbound()
+        {
+            int now = Manager.TotalTimeUnsynced;
+            if (now == 0 && Manager.TickWatch != null)
+                now = (int)Manager.TickWatch.ElapsedMilliseconds;
+            _lastInboundAt = now;
+        }
+
+        public bool IdleTimedOut(int timeoutMs)
+        {
+            if (_lastInboundAt <= 0)
+                return false;
+            int now = Manager.TotalTimeUnsynced;
+            if (now == 0 && Manager.TickWatch != null)
+                now = (int)Manager.TickWatch.ElapsedMilliseconds;
+            return now - _lastInboundAt > timeoutMs;
         }
 
         public void Send(byte[] packet)
@@ -459,7 +489,7 @@ namespace RotMG.Networking
         {
             if (packet == null || packet.Length == 0)
                 return;
-            if (State == ProtocolState.Disconnected || _slowDisconnect != 0)
+            if (State == ProtocolState.Disconnected || _slowDisconnect != 0 || _closing)
                 return;
 
             int framed = packet.Length + GameServer.PrefixLengthWithId;
@@ -487,6 +517,28 @@ namespace RotMG.Networking
 #endif
         }
 
+        //Queue Failure, ignore further inbound, close after the IO thread
+        //has a second to flush. Immediate Disconnect() clears _pending and
+        //the client never sees the reason (P7).
+        public const int FailureCloseDelayMs = 1000;
+
+        public void SendFailureAndClose(int id, string text)
+        {
+            if (State == ProtocolState.Disconnected || _closing)
+                return;
+
+            Send(GameServer.Failure(id, text));
+            _closing = true;
+            Active = false;
+
+            int clientId = Id;
+            Manager.AddTimedAction(FailureCloseDelayMs, () =>
+            {
+                if (Id == clientId && State != ProtocolState.Disconnected)
+                    Disconnect();
+            });
+        }
+
         //Discard the backlog so Failure can leave the NIC before the
         //socket closes. Staged in _disconnectFlush (not the FIFO) so
         //FlushSendInner writes it first instead of behind up to 4 MiB.
@@ -503,7 +555,7 @@ namespace RotMG.Networking
             while (_pending.TryDequeue(out _)) { }
             Interlocked.Exchange(ref _pendingBytes, 0);
 
-            byte[] failure = GameServer.Failure(2, "Connection too slow");
+            byte[] failure = GameServer.Failure(GameServer.FailureForceCloseGame, "Connection too slow");
             Interlocked.Exchange(ref _disconnectFlush, failure);
 
 #if DEBUG
@@ -1122,6 +1174,115 @@ namespace RotMG.Networking
                 return false;
             }
             Program.Print(PrintType.Info, "P15 verify: Manager.Tick soak with worker RequestDisconnect did not throw");
+            return true;
+        }
+
+        public static bool VerifyHandshakeFailure()
+        {
+            static bool Fail(string msg)
+            {
+                Program.Print(PrintType.Error, "P7/P8 verify: " + msg);
+                return false;
+            }
+
+            static byte[] HelloBody(string version, int gameId, string user, string pass)
+            {
+                PacketWriter wtr = PacketWriter.Rent();
+                wtr.Write(version);
+                wtr.Write(gameId);
+                wtr.Write(user);
+                wtr.Write(pass);
+                wtr.Write(0);
+                return PacketWriter.RentedBytes();
+            }
+
+            static bool PeekFailure(Client client, int expectedId, string expectedText, string label)
+            {
+                if (!client._pending.TryPeek(out OutgoingPacket head) || head.Data == null || head.Data.Length < 1)
+                {
+                    Program.Print(PrintType.Error, $"P7/P8 verify: {label}: queue empty");
+                    return false;
+                }
+                if (head.Data[0] != (byte)GameServer.PacketId.Failure)
+                {
+                    Program.Print(PrintType.Error, $"P7/P8 verify: {label}: packet id {head.Data[0]}");
+                    return false;
+                }
+                using (PacketReader rdr = new PacketReader(new MemoryStream(head.Data, 1, head.Data.Length - 1)))
+                {
+                    int errorId = rdr.ReadInt32();
+                    string text = rdr.ReadString();
+                    if (errorId != expectedId || text != expectedText)
+                    {
+                        Program.Print(PrintType.Error, $"P7/P8 verify: {label}: Failure({errorId}, {text})");
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            if (Settings.MillisecondsPerTick <= 0 || string.IsNullOrEmpty(Settings.BuildVersion))
+                return Fail("Settings not loaded");
+            if (Settings.BuildVersion != "1.0.0")
+                return Fail($"BuildVersion {Settings.BuildVersion}, expected 1.0.0");
+            Program.Print(PrintType.Info, $"P8 verify: Settings.BuildVersion={Settings.BuildVersion}");
+
+            Client close = new Client(new SendState(), new ReceiveState());
+            close.State = ProtocolState.Handshaked;
+            close.Active = true;
+            close.Id = 7001;
+            close.SendFailureAndClose(GameServer.FailureForceCloseGame, "Failed to load character.");
+            if (close.State == ProtocolState.Disconnected)
+                return Fail("SendFailureAndClose disconnected immediately (Failure would not flush)");
+            if (!close.Closing || close.Active)
+                return Fail("Closing flag/Active not set");
+            if (close.PendingCount != 1)
+                return Fail($"expected 1 queued Failure, have {close.PendingCount}");
+            if (!PeekFailure(close, GameServer.FailureForceCloseGame, "Failed to load character.", "SendFailureAndClose"))
+                return false;
+
+            close.SendFailureAndClose(GameServer.FailureForceCloseGame, "again");
+            if (close.PendingCount != 1)
+                return Fail("second SendFailureAndClose queued another packet");
+            close.Send(GameServer.Text("", 0, -1, 0, "", "nope"));
+            if (close.PendingCount != 1)
+                return Fail("Send after Closing still queued");
+
+            byte[] extraHello = HelloBody(Settings.BuildVersion, Manager.NexusId, "nouser", "nopass");
+            GameServer.Read(close, (int)GameServer.PacketId.Hello, extraHello);
+            if (close.PendingCount != 1 || close.State != ProtocolState.Handshaked)
+                return Fail("Read processed a packet after Closing");
+            Program.Print(PrintType.Info, "P7 verify: SendFailureAndClose queues Failure(2), stays connected, Read/Send ignored");
+
+            Client mismatch = new Client(new SendState(), new ReceiveState());
+            mismatch.State = ProtocolState.Handshaked;
+            mismatch.Active = true;
+            mismatch.Id = 7002;
+            mismatch.IP = "p8-verify";
+            byte[] badVersion = HelloBody("0.0.1", Manager.NexusId, "nouser", "nopass");
+            using (PacketReader rdr = new PacketReader(new MemoryStream(badVersion)))
+                GameServer.Hello(mismatch, rdr);
+            if (mismatch.State == ProtocolState.Disconnected)
+                return Fail("version mismatch disconnected immediately");
+            if (!mismatch.Closing)
+                return Fail("version mismatch did not set Closing");
+            if (!PeekFailure(mismatch, GameServer.FailureIncorrectVersion, Settings.BuildVersion, "version mismatch"))
+                return false;
+            Program.Print(PrintType.Info, "P8 verify: Hello with 0.0.1 sends Failure(1, BuildVersion) and waits to flush");
+
+            Client badLogin = new Client(new SendState(), new ReceiveState());
+            badLogin.State = ProtocolState.Handshaked;
+            badLogin.Active = true;
+            badLogin.Id = 7003;
+            badLogin.IP = "p7-verify";
+            byte[] badCreds = HelloBody(Settings.BuildVersion, Manager.NexusId, "nouser", "nopass");
+            using (PacketReader rdr = new PacketReader(new MemoryStream(badCreds)))
+                GameServer.Hello(badLogin, rdr);
+            if (badLogin.State == ProtocolState.Disconnected)
+                return Fail("invalid account disconnected immediately");
+            if (!PeekFailure(badLogin, GameServer.FailureForceCloseGame, "Invalid account.", "invalid account"))
+                return false;
+            Program.Print(PrintType.Info, "P7 verify: Hello with matching version + bad password sends Failure(2, Invalid account.)");
             return true;
         }
     }

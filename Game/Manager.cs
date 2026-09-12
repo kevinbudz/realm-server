@@ -591,10 +591,11 @@ namespace RotMG.Game
             return acc;
         }
 
-        //In-flight reconnect to a dynamic world (Id > 0). Static negative
-        //ids (Nexus/Realm/Tutorial) are never reclaimed, so Escape and
-        ///nexus skip registration. Expires after the same 15s window as
-        //SessionHandoff so a dropped Hello cannot pin a dungeon.
+        //In-flight reconnect authorization. Recorded for every Reconnect
+        //(including static negative ids) so a stale dungeon grant cannot
+        //outlive an Escape to Nexus. PendingEntrants is only bumped for
+        //dynamic worlds (Id > 0) that the empty-dungeon sweep can reclaim.
+        //Expires after the same 15s window as SessionHandoff.
         public class PendingTransfer
         {
             public int AccountId;
@@ -604,7 +605,7 @@ namespace RotMG.Game
 
         public static void RegisterPendingTransfer(int accountId, World world)
         {
-            if (world == null || world.Id <= 0)
+            if (world == null)
                 return;
             lock (SyncRoot)
             {
@@ -616,8 +617,51 @@ namespace RotMG.Game
                     WorldId = world.Id,
                     ExpiresAt = TotalTimeUnsynced + SessionHandoffTtlMs
                 };
-                world.PendingEntrants++;
+                if (world.Id > 0)
+                    world.PendingEntrants++;
             }
+        }
+
+        public static bool TryMatchPendingTransfer(int accountId, int worldId)
+        {
+            lock (SyncRoot)
+            {
+                if (!PendingTransfers.TryGetValue(accountId, out PendingTransfer existing))
+                    return false;
+                if (existing.ExpiresAt < TotalTimeUnsynced)
+                    return false;
+                return existing.WorldId == worldId;
+            }
+        }
+
+        //Hello world lookup. Static negative ids stay open (Vault/Guild
+        //remap to this account's instance). Positive ids require a live
+        //pending transfer for this account matching the requested id.
+        public static World ResolveHelloWorld(Client client, int gameId)
+        {
+            if (client?.Account == null)
+                return null;
+
+            switch (gameId)
+            {
+                case NexusId:
+                case RealmId:
+                case TutorialId:
+                case EditorId:
+                    return GetWorld(gameId);
+                case VaultId:
+                    return GetVaultWorld(client);
+                case GuildId:
+                    if (string.IsNullOrWhiteSpace(client.Account.GuildName))
+                        return null;
+                    return GetGuildHallWorld(client.Account.GuildName);
+            }
+
+            if (gameId <= 0)
+                return null;
+            if (!TryMatchPendingTransfer(client.Account.Id, gameId))
+                return null;
+            return GetWorld(gameId);
         }
 
         public static void CompletePendingTransfer(int accountId)
@@ -788,6 +832,165 @@ namespace RotMG.Game
             Program.Print(PrintType.Info,
                 $"P2 verify: expired reconnect released the dungeon; world count {remaining}");
             return remaining == baseline;
+        }
+
+        public static bool VerifyWorldAuthorization()
+        {
+            static bool Fail(string msg)
+            {
+                Program.Print(PrintType.Error, "P19 verify: " + msg);
+                return false;
+            }
+
+            static Client MakeClient(int accountId, string guildName = null)
+            {
+                Client client = new Client(new SendState(), new ReceiveState());
+                client.State = ProtocolState.Handshaked;
+                client.Active = true;
+                client.Account = new AccountModel(accountId, skipReload: true)
+                {
+                    Name = "p19-" + accountId,
+                    GuildName = guildName,
+                    LockedIds = new List<int>(),
+                    IgnoredIds = new List<int>(),
+                    Stats = new StatsInfo { ClassStats = Database.CreateClassStats() }
+                };
+                return client;
+            }
+
+            TotalTimeUnsynced = Math.Max(TotalTimeUnsynced, 1000);
+
+            byte[] reconnect = GameServer.Reconnect(42);
+            if (reconnect == null || reconnect.Length != 5 || reconnect[0] != (byte)GameServer.PacketId.Reconnect)
+                return Fail($"Reconnect wire changed (len={reconnect?.Length})");
+            Program.Print(PrintType.Info, "P19 verify: Reconnect still writes PacketId + int gameId");
+
+            if (!Resources.Worlds.TryGetValue("Spider Den", out WorldDesc denDesc)
+                || !Dungeons.DungeonWorld.IsSupported(denDesc))
+                return Fail("Spider Den world desc missing");
+
+            Client owner = MakeClient(910001, "P19Hall");
+            Client other = MakeClient(910002);
+
+            World dungeon = CreateDungeonWorld(denDesc);
+            World guessed = ResolveHelloWorld(other, dungeon.Id);
+            if (guessed != null)
+                return Fail("second account joined a guessed dungeon id");
+            Program.Print(PrintType.Info, $"P19 verify: guessed dungeon {dungeon.Id} from account 910002 -> rejected");
+
+            if (ResolveHelloWorld(owner, dungeon.Id) != null)
+                return Fail("owner joined dungeon without a pending transfer");
+
+            RegisterPendingTransfer(owner.Account.Id, dungeon);
+            World allowed = ResolveHelloWorld(owner, dungeon.Id);
+            if (allowed != dungeon)
+                return Fail("owner pending transfer did not authorize the dungeon");
+            if (ResolveHelloWorld(other, dungeon.Id) != null)
+                return Fail("second account joined after owner registered a pending transfer");
+            Program.Print(PrintType.Info, "P19 verify: matching pending transfer required for positive ids");
+
+            CompletePendingTransfer(owner.Account.Id);
+            if (ResolveHelloWorld(owner, dungeon.Id) != null)
+                return Fail("dungeon still authorized after CompletePendingTransfer");
+
+            World nexus = ResolveHelloWorld(owner, NexusId);
+            World realm = ResolveHelloWorld(owner, RealmId);
+            World tutorial = ResolveHelloWorld(owner, TutorialId);
+            if (nexus == null || realm == null || tutorial == null)
+                return Fail("static Nexus/Realm/Tutorial ids were closed");
+            Program.Print(PrintType.Info, "P19 verify: static Nexus/Realm/Tutorial remain open");
+
+            World vaultA = GetVaultWorld(owner);
+            World vaultB = GetVaultWorld(other);
+            if (vaultA == null || vaultB == null || vaultA.Id == vaultB.Id)
+                return Fail("personal vaults did not split per account");
+            if (ResolveHelloWorld(owner, VaultId) != vaultA)
+                return Fail("VaultId did not resolve to the account's own instance");
+            if (ResolveHelloWorld(other, vaultA.Id) != null)
+                return Fail("second account joined a guessed vault instance id");
+            Program.Print(PrintType.Info, "P19 verify: VaultId remaps; guessed vault instance rejected");
+
+            World hall = GetGuildHallWorld(owner.Account.GuildName);
+            if (ResolveHelloWorld(owner, GuildId) != hall)
+                return Fail("GuildId did not resolve to the account's hall");
+            if (ResolveHelloWorld(other, GuildId) != null)
+                return Fail("unguilded account joined via GuildId");
+            if (ResolveHelloWorld(other, hall.Id) != null)
+                return Fail("second account joined a guessed guild-hall id");
+            Program.Print(PrintType.Info, "P19 verify: GuildId remaps; guessed hall instance rejected");
+
+            World castle = CreateCastleWorld(2);
+            RegisterPendingTransfer(owner.Account.Id, castle);
+            if (ResolveHelloWorld(owner, castle.Id) != castle)
+                return Fail("quake-to-castle pending transfer was rejected");
+            if (ResolveHelloWorld(other, castle.Id) != null)
+                return Fail("second account joined the castle without a transfer");
+            CompletePendingTransfer(owner.Account.Id);
+            Program.Print(PrintType.Info, "P19 verify: quake-to-castle pending transfer accepted for the owner");
+
+            World quakeTarget = CreateDungeonWorld(denDesc);
+            RegisterPendingTransfer(owner.Account.Id, quakeTarget);
+            if (ResolveHelloWorld(owner, quakeTarget.Id) != quakeTarget)
+                return Fail("/quake pending transfer was rejected");
+            CompletePendingTransfer(owner.Account.Id);
+            Program.Print(PrintType.Info, "P19 verify: /quake-style dungeon transfer accepted for the owner");
+
+            PlayerDesc pdesc = Resources.Type2Player.Values.First();
+            CharacterModel ch = new CharacterModel(0, 0)
+            {
+                ClassType = pdesc.Type,
+                Level = 20,
+                HP = 100,
+                MP = 100,
+                Stats = new int[8],
+                Inventory = (int[])pdesc.Equipment.Clone(),
+                ItemDatas = (int[])pdesc.ItemDatas.Clone(),
+                FameStats = new FameStatsInfo()
+            };
+            for (int i = 0; i < 8; i++)
+                ch.Stats[i] = pdesc.Stats[i].StartingValue;
+            owner.Character = ch;
+            owner.State = ProtocolState.Connected;
+            Player player = new Player(owner);
+            owner.Player = player;
+            World start = GetWorld(NexusId);
+            Position spawn = start.GetRegion(Region.Spawn).ToPosition();
+            start.AddEntity(player, spawn);
+
+            World portalDungeon = CreateDungeonWorld(denDesc);
+            if (!player.BeginTransfer(portalDungeon))
+                return Fail("BeginTransfer (portal flow) returned false");
+            if (!TryMatchPendingTransfer(owner.Account.Id, portalDungeon.Id))
+                return Fail("BeginTransfer did not record PendingTransfers");
+            if (ResolveHelloWorld(owner, portalDungeon.Id) != portalDungeon)
+                return Fail("portal-flow Hello was rejected");
+            if (ResolveHelloWorld(other, portalDungeon.Id) != null)
+                return Fail("second account joined via the portal world's id");
+            CompletePendingTransfer(owner.Account.Id);
+            Program.Print(PrintType.Info, "P19 verify: portal BeginTransfer -> Hello authorized for the owner only");
+
+            RegisterPendingTransfer(owner.Account.Id, dungeon);
+            TotalTimeUnsynced += SessionHandoffTtlMs + 1;
+            SweepExpiredPendingTransfers();
+            if (ResolveHelloWorld(owner, dungeon.Id) != null)
+                return Fail("expired pending transfer still authorized the dungeon");
+            Program.Print(PrintType.Info, "P19 verify: expired pending transfer is rejected");
+
+            lock (SyncRoot)
+            {
+                Worlds.Remove(dungeon.Id);
+                Worlds.Remove(quakeTarget.Id);
+                Worlds.Remove(portalDungeon.Id);
+                Worlds.Remove(castle.Id);
+                if (vaultA != null) { Worlds.Remove(vaultA.Id); VaultWorlds.Remove(owner.Account.Id); }
+                if (vaultB != null) { Worlds.Remove(vaultB.Id); VaultWorlds.Remove(other.Account.Id); }
+                if (hall != null)
+                {
+                    Worlds.Remove(hall.Id);
+                    GuildHallWorlds.Remove(owner.Account.GuildName);
+                }
+            }
+            return true;
         }
 
         private static void SweepExpiredHandoffs()

@@ -40,10 +40,37 @@ namespace RotMG.Game.Entities
         }
     }
 
+    //Invalid Move / shoot / AoE-ack corrections. One Goto rubber-band per
+    //reject; disconnect only after Limit strikes inside WindowMS so a
+    //boss wall or a one-tile desync cannot kick, while a 10-tile/tick
+    //speed hack still burns through the window.
+    public class MoveStrikeTracker
+    {
+        public const int Limit = 10;
+        public const int WindowMS = 30000;
+
+        private readonly List<int> _times = new List<int>();
+
+        public int Count => _times.Count;
+
+        //True if this strike should disconnect.
+        public bool Strike(int nowUnsynced)
+        {
+            for (int i = _times.Count - 1; i >= 0; i--)
+            {
+                if (nowUnsynced - _times[i] > WindowMS)
+                    _times.RemoveAt(i);
+            }
+            _times.Add(nowUnsynced);
+            return _times.Count >= Limit;
+        }
+    }
+
     public partial class Player
     {
         private const float MoveSpeedThreshold = 1.1f;
         private const int SpeedHistoryCount = 10; //in world ticks (10 = 1 sec history), the lower the count, the stricter the detection
+        public const int MaxAwaitingMoves = 3;
 
         public float MoveMultiplier = 1f;
         public int MoveTime;
@@ -54,6 +81,7 @@ namespace RotMG.Game.Entities
         public int TickId;
         public float PushX;
         public float PushY;
+        private readonly MoveStrikeTracker _moveStrikes = new MoveStrikeTracker();
 
         //Mad Lab vat pools (production behavior): the green "Bad Vat"
         //pools hex, the blue "Good Vat" pools cleanse. Tile types are fixed
@@ -137,6 +165,13 @@ namespace RotMG.Game.Entities
 
         public void TryMove(int time, Position pos)
         {
+            //Every received Move consumes one NewTick credit, including
+            //the ones we ignore (goto wait, death). The client always
+            //decrements movesRequested_ after sending, so skipping the
+            //decrement here used to inflate AwaitingMoves for the rest
+            //of the session.
+            AwaitingMoves = ConsumeMove(AwaitingMoves, out bool tooMany);
+
             //Dead players' packets are meaningless (the client keeps
             //sending for ~1500ms before the death disconnect): touching
             //world state with them re-adds corpses to chunks and throws
@@ -147,7 +182,7 @@ namespace RotMG.Game.Entities
 
             if (!ValidTime(time))
             {
-                Client.Disconnect();
+                Client.RequestDisconnect("Invalid time");
                 return;
             }
 
@@ -155,8 +190,17 @@ namespace RotMG.Game.Entities
             {
 #if DEBUG
                 if (AwaitingGoto.Count > 0)
-                    Program.Print(PrintType.Error, "Waiting for goto ack...");
+                    Program.Print(PrintType.Error, $"Waiting for goto ack... AwaitingMoves={AwaitingMoves}");
 #endif
+                return;
+            }
+
+            if (tooMany)
+            {
+#if DEBUG
+                Program.Print(PrintType.Error, "Too many move packets");
+#endif
+                RejectInvalidMove("Too many move packets");
                 return;
             }
 
@@ -165,26 +209,20 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Invalid move");
 #endif
-                Client.Disconnect();
+                RejectInvalidMove("Invalid move");
                 return;
             }
 
-            if (TileFullOccupied(pos.X, pos.Y))
+            //Client isWalkable (NoWalk / OccupySquare) plus isFullOccupy
+            //on this tile and its occupied edges. TileFullOccupied at the
+            //dest covers a FullOccupy object at tile center (frac == 0.5
+            //skips the edge checks inside RegionUnblocked).
+            if (!RegionUnblocked(pos.X, pos.Y) || TileFullOccupied(pos.X, pos.Y))
             {
 #if DEBUG
                 Program.Print(PrintType.Error, "Tile occupied");
 #endif
-                Client.Disconnect();
-                return;
-            }
-
-            AwaitingMoves--;
-            if (AwaitingMoves < 0)
-            {
-#if DEBUG
-                Program.Print(PrintType.Error, "Too many move packets");
-#endif
-                Client.Disconnect();
+                RejectInvalidMove("Tile occupied");
                 return;
             }
 
@@ -194,7 +232,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Move out of bounds");
 #endif
-                Client.Disconnect();
+                RejectInvalidMove("Move out of bounds");
                 return;
             }
             TileDesc desc = Resources.Type2Tile[tile.Value.Type];
@@ -291,6 +329,9 @@ namespace RotMG.Game.Entities
             if (Client.State == ProtocolState.Connected)
                 EnqueueGotoWait();
             BroadcastGoto(pos, withTeleportEffect: true);
+#if DEBUG
+            Program.Print(PrintType.Debug, $"Teleport Goto queued, AwaitingMoves={AwaitingMoves}");
+#endif
             return true;
         }
 
@@ -350,6 +391,57 @@ namespace RotMG.Game.Entities
                     player.Client.Send(eff);
                 player.Client.Send(go);
             }
+        }
+
+        //Keep the server position, Goto the client, count a strike.
+        //Returns true if the strike window is exhausted and the client
+        //is being disconnected.
+        public bool RejectInvalidMove(string reason)
+        {
+            SnapClientToServerPosition();
+            if (_moveStrikes.Strike(Manager.TotalTimeUnsynced))
+            {
+#if DEBUG
+                Program.Print(PrintType.Error, $"Move strike limit ({MoveStrikeTracker.Limit}/{MoveStrikeTracker.WindowMS}ms): {reason}");
+#endif
+                Client.RequestDisconnect(reason);
+                return true;
+            }
+#if DEBUG
+            Program.Print(PrintType.Warn, $"Move corrected ({_moveStrikes.Count}/{MoveStrikeTracker.Limit}): {reason}");
+#endif
+            return false;
+        }
+
+        //Server-placed static under this player: walk to the nearest free
+        //tile and Goto. Not a strike — the server caused the overlap.
+        public void NudgeToNearestWalkable()
+        {
+            if (Dead || Parent == null)
+                return;
+            if (!Parent.TryFindNearestWalkable((int)Position.X, (int)Position.Y, out Position dest))
+                return;
+            Parent.MoveEntity(this, dest);
+            if (Client != null && Client.State == ProtocolState.Connected)
+            {
+                EnqueueGotoWait();
+                BroadcastGoto(dest, withTeleportEffect: false);
+            }
+        }
+
+        public static int CreditNewTick(int awaitingMoves)
+        {
+            awaitingMoves++;
+            if (awaitingMoves > MaxAwaitingMoves)
+                awaitingMoves = MaxAwaitingMoves;
+            return awaitingMoves;
+        }
+
+        public static int ConsumeMove(int awaitingMoves, out bool tooMany)
+        {
+            awaitingMoves--;
+            tooMany = awaitingMoves < 0;
+            return awaitingMoves;
         }
 
         //Headless stand-in for mixed-clock /teleport kicks: both process
@@ -424,6 +516,141 @@ namespace RotMG.Game.Entities
             }
 
             Program.Print(PrintType.Info, "P4 verify: mixed clocks would have kicked; server-clock grace then resolve does not");
+            return true;
+        }
+
+        //Headless stand-in for P14 (correct instead of kick, shared
+        //walkability, spiral nudge) and P16 (AwaitingMoves accounting).
+        public static bool VerifyMoveCorrection()
+        {
+            MoveStrikeTracker strikes = new MoveStrikeTracker();
+            for (int i = 0; i < MoveStrikeTracker.Limit - 1; i++)
+            {
+                if (strikes.Strike(1000 + i))
+                {
+                    Program.Print(PrintType.Error, "P14 verify FAIL: kicked before 10 strikes");
+                    return false;
+                }
+            }
+            if (!strikes.Strike(1000 + MoveStrikeTracker.Limit - 1))
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: 10th strike in 30s must kick");
+                return false;
+            }
+
+            MoveStrikeTracker window = new MoveStrikeTracker();
+            for (int i = 0; i < MoveStrikeTracker.Limit - 1; i++)
+                window.Strike(0);
+            if (window.Strike(MoveStrikeTracker.WindowMS + 1))
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: strikes older than 30s must expire");
+                return false;
+            }
+
+            if (!Entity.StaticBlocksPlayerWalk(occupySquare: true, fullOccupy: false, enemyOccupySquare: false, enemy: false))
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: OccupySquare non-enemy static must block");
+                return false;
+            }
+            if (Entity.StaticBlocksPlayerWalk(occupySquare: true, fullOccupy: false, enemyOccupySquare: false, enemy: true))
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: OccupySquare on an enemy must not block by itself");
+                return false;
+            }
+            if (!Entity.StaticBlocksPlayerWalk(occupySquare: false, fullOccupy: true, enemyOccupySquare: false, enemy: false))
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: FullOccupy must block");
+                return false;
+            }
+            if (!Entity.StaticBlocksPlayerWalk(occupySquare: false, fullOccupy: false, enemyOccupySquare: true, enemy: true))
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: EnemyOccupySquare must block");
+                return false;
+            }
+            if (Entity.StaticBlocksPlayerWalk(occupySquare: false, fullOccupy: false, enemyOccupySquare: false, enemy: false))
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: empty static must not block");
+                return false;
+            }
+
+            if (!World.TrySpiralFreeTile(5, 5, 20, (x, y) => x == 5 && y == 5, out int fx, out int fy))
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: spiral must find a neighbour");
+                return false;
+            }
+            if (fx == 5 && fy == 5)
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: spiral must leave the blocked tile");
+                return false;
+            }
+            if (Math.Max(Math.Abs(fx - 5), Math.Abs(fy - 5)) != 1)
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: nearest free tile should be adjacent");
+                return false;
+            }
+
+            //10 tiles in a 100 ms tick exceeds any 1.1x speed envelope
+            //(same bound P6 uses); each such Move is one strike, so 10
+            //of them still kick.
+            float maxDistance = (0.01f * 100) * 1.1f;
+            if (10f <= maxDistance)
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: 10-tile Move must fail the speed envelope");
+                return false;
+            }
+            MoveStrikeTracker speed = new MoveStrikeTracker();
+            int speedKicks = 0;
+            for (int i = 0; i < MoveStrikeTracker.Limit; i++)
+            {
+                if (10f > maxDistance && speed.Strike(i))
+                    speedKicks++;
+            }
+            if (speedKicks != 1)
+            {
+                Program.Print(PrintType.Error, "P14 verify FAIL: 10 speed-hack Moves must kick once at the threshold");
+                return false;
+            }
+
+            int awaiting = 0;
+            for (int i = 0; i < 5; i++)
+                awaiting = CreditNewTick(awaiting);
+            if (awaiting != MaxAwaitingMoves)
+            {
+                Program.Print(PrintType.Error, $"P16 verify FAIL: AwaitingMoves must clamp to {MaxAwaitingMoves}, got {awaiting}");
+                return false;
+            }
+
+            awaiting = ConsumeMove(awaiting, out bool tooMany);
+            if (tooMany || awaiting != MaxAwaitingMoves - 1)
+            {
+                Program.Print(PrintType.Error, "P16 verify FAIL: a received Move (even during goto wait) must decrement");
+                return false;
+            }
+
+            awaiting = 0;
+            awaiting = ConsumeMove(awaiting, out tooMany);
+            if (!tooMany || awaiting != -1)
+            {
+                Program.Print(PrintType.Error, "P16 verify FAIL: extra Move must set AwaitingMoves < 0");
+                return false;
+            }
+
+            MoveStrikeTracker extra = new MoveStrikeTracker();
+            awaiting = 0;
+            bool extraKicked = false;
+            for (int i = 0; i < MoveStrikeTracker.Limit; i++)
+            {
+                awaiting = ConsumeMove(awaiting, out tooMany);
+                if (tooMany && extra.Strike(i))
+                    extraKicked = true;
+            }
+            if (!extraKicked)
+            {
+                Program.Print(PrintType.Error, "P16 verify FAIL: AwaitingMoves < 0 must route through strikes and kick at the limit");
+                return false;
+            }
+
+            Program.Print(PrintType.Info, "P14/P16 verify: correct-not-kick, OccupySquare/NoWalk, spiral nudge, AwaitingMoves clamp");
             return true;
         }
     }

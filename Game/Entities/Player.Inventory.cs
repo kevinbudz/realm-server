@@ -28,6 +28,44 @@ namespace RotMG.Game.Entities
         public int[] Inventory { get; set; }
         public int[] ItemDatas { get; set; }
 
+        //InvResult has no correlation id, so every InvSwap/InvDrop/UseItem
+        //must reply. On rejection, re-queue the live slot values (including
+        //ITEMDATA_*) so the next NewTick is a safety net if the client's
+        //FIFO restore races a bag that has already left sight.
+        private void ReplyInv(bool success)
+        {
+            Client.Send(success ? ValidInvSwap : InvalidInvSwap);
+        }
+
+        private void RejectInventory(IContainer a, int slotA, IContainer b = null, int slotB = -1)
+        {
+            QueueAuthoritativeSlot(a, slotA);
+            if (b != null && slotB >= 0)
+                QueueAuthoritativeSlot(b, slotB);
+            ReplyInv(false);
+        }
+
+        private void QueueAuthoritativeSlot(IContainer con, int slot)
+        {
+            if (con == null)
+                return;
+            if (con.ValidSlot(slot))
+                con.UpdateInventorySlot(slot);
+            ForceContainerStatus(con as Entity);
+        }
+
+        //NewTick for non-players sends NewSVs (deltas). If those were
+        //cleared after the previous tick, bumping UpdateCount alone would
+        //emit an empty ObjectStatus. Copy SVs so the bag goes out in full.
+        internal static void ForceContainerStatus(Entity en)
+        {
+            if (en == null || en is Player)
+                return;
+            foreach (KeyValuePair<StatType, object> kv in en.SVs)
+                en.NewSVs[kv.Key] = kv.Value;
+            en.UpdateCount++;
+        }
+
         public void InitInventory(CharacterModel character)
         {
             Inventory = character.Inventory.ToArray();
@@ -119,15 +157,17 @@ namespace RotMG.Game.Entities
         public void DropItem(byte slot)
         {
             CancelTradeIfTrading();
-            UpdateInventorySlot(slot);
 
             if (!ValidSlot(slot))
             {
 #if DEBUG
                 Program.Print(PrintType.Error, "Invalid slot");
 #endif
+                ReplyInv(false);
                 return;
             }
+
+            QueueAuthoritativeSlot(this, slot);
 
             int item = Inventory[slot];
             int data = ItemDatas[slot];
@@ -136,6 +176,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Nothing to drop");
 #endif
+                ReplyInv(false);
                 return;
             }
 
@@ -144,6 +185,7 @@ namespace RotMG.Game.Entities
             UpdateInventorySlot(slot);
 
             RecalculateEquipBonuses();
+            ReplyInv(true);
             //The dropped bag is ephemeral, but the removal from this player's
             //inventory is durable: the commit lands before the drop becomes
             //visible, or a crash resurrects the item while someone else
@@ -239,7 +281,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Undefined entities");
 #endif
-                Client.Send(InvalidInvSwap);
+                RejectInventory(en1 as IContainer, slot1.SlotId, en2 as IContainer, slot2.SlotId);
                 return;
             }
             
@@ -249,7 +291,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Not containers");
 #endif
-                Client.Send(InvalidInvSwap);
+                RejectInventory(en1 as IContainer, slot1.SlotId, en2 as IContainer, slot2.SlotId);
                 return;
             }
 
@@ -258,7 +300,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Too far away from container");
 #endif
-                Client.Send(InvalidInvSwap);
+                RejectInventory(en1 as IContainer, slot1.SlotId, en2 as IContainer, slot2.SlotId);
                 return;
             }
 
@@ -269,7 +311,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Player manipulation attempt");
 #endif
-                Client.Send(InvalidInvSwap);
+                RejectInventory(en1 as IContainer, slot1.SlotId, en2 as IContainer, slot2.SlotId);
                 return;
             }
 
@@ -284,7 +326,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Container manipulation attempt");
 #endif
-                Client.Send(InvalidInvSwap);
+                RejectInventory(en1 as IContainer, slot1.SlotId, en2 as IContainer, slot2.SlotId);
                 return;
             }
 
@@ -297,7 +339,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Invalid inv swap");
 #endif
-                Client.Send(InvalidInvSwap);
+                RejectInventory(en1 as IContainer, slot1.SlotId, en2 as IContainer, slot2.SlotId);
                 return;
             }
 
@@ -314,7 +356,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "One-way container deposit attempt");
 #endif
-                Client.Send(InvalidInvSwap);
+                RejectInventory(en1 as IContainer, slot1.SlotId, en2 as IContainer, slot2.SlotId);
                 return;
             }
             PlayerDesc d = Desc as PlayerDesc;
@@ -335,7 +377,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                             Program.Print(PrintType.Error, "Invalid slot type");
 #endif
-                            Client.Send(InvalidInvSwap);
+                            RejectInventory(en1 as IContainer, slot1.SlotId, en2 as IContainer, slot2.SlotId);
                             return;
                         }
                     }
@@ -354,7 +396,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                             Program.Print(PrintType.Error, "Invalid slot type");
 #endif
-                            Client.Send(InvalidInvSwap);
+                            RejectInventory(en1 as IContainer, slot1.SlotId, en2 as IContainer, slot2.SlotId);
                             return;
                         }
                     }
@@ -369,7 +411,7 @@ namespace RotMG.Game.Entities
             con2.UpdateInventorySlot(slot2.SlotId);
             RecalculateEquipBonuses();
             PersistInventoryMutation(en1 as Container, en2 as Container);
-            Client.Send(ValidInvSwap);
+            ReplyInv(true);
         }
 
         //Persists this swap before acknowledging it. Ground bags are
@@ -515,6 +557,61 @@ namespace RotMG.Game.Entities
                     SetPrivateSV(StatType.ItemData_19, ItemDatas[19]);
                     break;
             }
+        }
+
+        //Headless check that a rejected bag swap re-queues both ITEMDATA_*
+        //and a full ObjectStatus (NewSVs copied from SVs) without changing
+        //the InvResult wire layout (id + int32).
+        public static bool VerifyInventoryResync()
+        {
+            Container bag = new Container(Container.PurpleBag, -1, 120000);
+            bag.Inventory[0] = 0x15f;
+            bag.ItemDatas[0] = 7;
+            bag.Inventory[1] = 0x15f;
+            bag.ItemDatas[1] = 3;
+            bag.UpdateInventorySlot(0);
+            bag.UpdateInventorySlot(1);
+            int afterSet = bag.UpdateCount;
+            bag.NewSVs.Clear();
+            ForceContainerStatus(bag);
+            if (bag.UpdateCount <= afterSet)
+            {
+                Program.Print(PrintType.Error, "P10 verify: UpdateCount not forced");
+                return false;
+            }
+            if (!bag.NewSVs.ContainsKey(StatType.Inventory_0) || !bag.NewSVs.ContainsKey(StatType.ItemData_0) ||
+                !bag.NewSVs.ContainsKey(StatType.Inventory_1) || !bag.NewSVs.ContainsKey(StatType.ItemData_1))
+            {
+                Program.Print(PrintType.Error, "P10 verify: bag NewSVs missing slot stats");
+                return false;
+            }
+            if ((int)bag.NewSVs[StatType.Inventory_0] != 0x15f || (int)bag.NewSVs[StatType.ItemData_0] != 7 ||
+                (int)bag.NewSVs[StatType.Inventory_1] != 0x15f || (int)bag.NewSVs[StatType.ItemData_1] != 3)
+            {
+                Program.Print(PrintType.Error, "P10 verify: bag slot values mismatch");
+                return false;
+            }
+            byte[] fail = GameServer.InvResult(1);
+            byte[] ok = GameServer.InvResult(0);
+            if (fail == null || fail.Length != 5 || fail[0] != (byte)GameServer.PacketId.InvResult)
+            {
+                Program.Print(PrintType.Error, "P10 verify: InvResult(1) wire layout changed");
+                return false;
+            }
+            if (ok == null || ok.Length != 5 || ok[0] != (byte)GameServer.PacketId.InvResult)
+            {
+                Program.Print(PrintType.Error, "P10 verify: InvResult(0) wire layout changed");
+                return false;
+            }
+            int failResult = (fail[1] << 24) | (fail[2] << 16) | (fail[3] << 8) | fail[4];
+            int okResult = (ok[1] << 24) | (ok[2] << 16) | (ok[3] << 8) | ok[4];
+            if (failResult != 1 || okResult != 0)
+            {
+                Program.Print(PrintType.Error, "P10 verify: InvResult payload is not a big-endian int");
+                return false;
+            }
+            Program.Print(PrintType.Info, "P10 verify: container status requeue and InvResult layout ok");
+            return true;
         }
     }
 }

@@ -15,6 +15,27 @@ namespace RotMG.Game.Entities
         public string Hitter;
         public float Radius;
         public int Time;
+        public bool Forgiven;
+
+        public const int Waiting = 0;
+        public const int GrantedGrace = 1;
+        public const int Expired = 2;
+
+        //Same grace-then-resolve step as AwaitingShots / AwaitingGotoWait:
+        //one late ack is re-stamped; a twice-starved wait is expired so
+        //the caller can apply or drop it without disconnecting.
+        public int Advance(int now, int timeoutMs)
+        {
+            if (now - Time <= timeoutMs)
+                return Waiting;
+            if (!Forgiven)
+            {
+                Forgiven = true;
+                Time = now;
+                return GrantedGrace;
+            }
+            return Expired;
+        }
     }
 
     public struct ProjectileAck
@@ -118,16 +139,25 @@ namespace RotMG.Game.Entities
             if (Manager.TotalTime % TickProjectilesDelay != 0)
                 return;
 
-            foreach (AoeAck aoe in AwaitingAoes)
+            while (AwaitingAoes.Count > 0)
             {
-                if (Manager.TotalTime - aoe.Time > TimeUntilAckTimeout)
+                AoeAck head = AwaitingAoes.Peek();
+                int step = head.Advance(Manager.TotalTime, TimeUntilAckTimeout);
+                if (step == AoeAck.Waiting)
+                    break;
+                if (step == AoeAck.GrantedGrace)
                 {
 #if DEBUG
-                    Program.Print(PrintType.Error, "Aoe ack timed out");
+                    Program.Print(PrintType.Warn, "Aoe ack late, forgiven");
 #endif
-                    Client.RequestDisconnect("Aoe ack timed out");
-                    return;
+                    break;
                 }
+
+                AwaitingAoes.Dequeue();
+#if DEBUG
+                Program.Print(PrintType.Error, "Aoe ack wait expired, resolving without ack");
+#endif
+                ResolveAoeWithoutAck(head);
             }
 
             //Ack waits use the server clock (see AwaitingShots): the head
@@ -305,7 +335,8 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Invalid move for player shoot");
 #endif
-                Client.Disconnect();
+                Client.Random.Drop(numShots);
+                RejectInvalidMove("Invalid move for player shoot");
                 return;
             }
 
@@ -423,6 +454,16 @@ namespace RotMG.Game.Entities
         public void AwaitAoe(AoeAck aoe)
         {
             AwaitingAoes.Enqueue(aoe);
+        }
+
+        //Client never acked: apply against the server position so a
+        //suppressed AoeAck cannot dodge, then drop the wait.
+        private void ResolveAoeWithoutAck(AoeAck aoe)
+        {
+            if (Dead || Parent == null)
+                return;
+            if (Position.Distance(aoe.Position) < aoe.Radius && !HasConditionEffect(ConditionEffectIndex.Invincible))
+                Damage(aoe.Hitter, aoe.Damage, aoe.Effects, false);
         }
 
         //Observe-only sweep, move-driven half: records every live enemy
@@ -735,8 +776,9 @@ namespace RotMG.Game.Entities
 #if DEBUG
                     Program.Print(PrintType.Error, "INVALID MOVE FOR AOEACK!");
 #endif
-                    Client.Disconnect();
-                    return;
+                    if (RejectInvalidMove("INVALID MOVE FOR AOEACK!"))
+                        return;
+                    pos = Position;
                 }
 
                 if (pos.Distance(aoe.Position) < aoe.Radius && !HasConditionEffect(ConditionEffectIndex.Invincible))

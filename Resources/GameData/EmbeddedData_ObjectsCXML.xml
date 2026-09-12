@@ -212,6 +212,7 @@
     </Object>
     <Object type="0x0504" id="Vault Chest">
         <Class>Container</Class>
+        <ShowName/>
         <Container/>
         <CanPutNormalObjects/>
         <CanPutSoulboundObjects/>

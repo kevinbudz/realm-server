@@ -11,4 +11,6 @@
 	<AsyncWorldCreation>false</AsyncWorldCreation>
 <!--Realm instances for spreading players (default 1). Each extra realm gets its own Nexus portal.-->
 	<RealmInstances>1</RealmInstances>
+<!--Must match realm-client Parameters.BUILD_VERSION. Bump both whenever PacketId, StatType, ConditionEffect bits or GameData change.-->
+	<BuildVersion>1.0.0</BuildVersion>
 </Settings>

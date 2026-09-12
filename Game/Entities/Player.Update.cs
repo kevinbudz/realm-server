@@ -127,7 +127,7 @@ namespace RotMG.Game.Entities
 
             Client.Send(GameServer.NewTick(_statusScratch, PrivateSVs));
             PrivateSVs.Clear();
-            AwaitingMoves++;
+            AwaitingMoves = CreditNewTick(AwaitingMoves);
         }
 
         public virtual void SendUpdate()

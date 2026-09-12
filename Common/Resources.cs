@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
 using System.Xml.XPath;
@@ -33,6 +34,7 @@ namespace RotMG.Common
         public static Dictionary<ushort, QuestDesc> Quests = new Dictionary<ushort, QuestDesc>();
 
         public static Dictionary<string, byte[]> WebFiles = new Dictionary<string, byte[]>();
+        public static Dictionary<string, string> GameDataHashes = new Dictionary<string, string>();
 
 
         public static List<XElement> News = new List<XElement>();
@@ -49,16 +51,24 @@ namespace RotMG.Common
             LoadWorlds();
             LoadWebFiles();
             LoadNews();
+            if (!ConditionEffectsLayout.Verify())
+                throw new Exception("ConditionEffects layout does not match ConditionEffectIndex");
         }
 
         private static void LoadGameData()
         {
+            GameDataHashes.Clear();
             string[] paths = Directory.EnumerateFiles(CombineResourcePath("GameData/"), "*.xml", SearchOption.TopDirectoryOnly).ToArray();
+            Array.Sort(paths, StringComparer.Ordinal);
             for (int i = 0; i < paths.Length; i++)
             {
+                string fileName = Path.GetFileName(paths[i]);
+                string hash = Convert.ToHexString(SHA1.HashData(File.ReadAllBytes(paths[i]))).ToLowerInvariant();
+                GameDataHashes[fileName] = hash;
+                Program.Print(PrintType.Info, $"GameData SHA-1 {fileName}={hash}");
 
 #if DEBUG
-                Program.Print(PrintType.Debug, $"Parsing GameData <{paths[i].Split('/').Last()}>");
+                Program.Print(PrintType.Debug, $"Parsing GameData <{fileName}>");
 #endif
                 XElement data = XElement.Parse(File.ReadAllText(paths[i]));
 

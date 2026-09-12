@@ -305,6 +305,9 @@ namespace RotMG.Game
                 if (time == 0)
                     continue;
 
+                //Skip Nothing (i==0): 1<<(i-1) is not a client bit.
+                if (i == 0)
+                    continue;
                 newEffects |= (ConditionEffects)((ulong)1 << (i - 1));
 
                 if (time != -1) //Infinite duration
@@ -522,6 +525,11 @@ namespace RotMG.Game
             return true;
         }
 
+        //Matches the client's Square.isWalkable: NoWalk ground, plus a
+        //non-enemy static with OccupySquare (walls, merchants, props).
+        //EnemyOccupySquare stays so enemies still block the tile they
+        //stand on. FullOccupy is TileFullOccupied / edge checks, same
+        //split as Player.isFullOccupy.
         public bool TileOccupied(float x, float y)
         {
             Tile? tile = Parent.GetTile((int)x, (int)y);
@@ -534,7 +542,10 @@ namespace RotMG.Game
 
             if (tile.Value.StaticObject != null)
             {
-                if (tile.Value.StaticObject.Desc.EnemyOccupySquare)
+                ObjectDesc obj = tile.Value.StaticObject.Desc;
+                if (obj.EnemyOccupySquare)
+                    return true;
+                if (obj.OccupySquare && !obj.Enemy)
                     return true;
             }
 
@@ -554,6 +565,23 @@ namespace RotMG.Game
             }
 
             return false;
+        }
+
+        //Pure walkability for a static: FullOccupy / EnemyOccupySquare
+        //always block; OccupySquare blocks only for non-enemy objects
+        //(client occupySquare_ on walls, not on enemies).
+        public static bool StaticBlocksPlayerWalk(bool occupySquare, bool fullOccupy, bool enemyOccupySquare, bool enemy)
+        {
+            if (fullOccupy || enemyOccupySquare)
+                return true;
+            return occupySquare && !enemy;
+        }
+
+        public static bool StaticBlocksPlayerWalk(ObjectDesc desc)
+        {
+            if (desc == null)
+                return false;
+            return StaticBlocksPlayerWalk(desc.OccupySquare, desc.FullOccupy, desc.EnemyOccupySquare, desc.Enemy);
         }
 
         public void InitStates()

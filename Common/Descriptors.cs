@@ -40,36 +40,67 @@ namespace RotMG.Common
         FameBonus = 1 << 19
     }
 
+    //Value = 1UL << ((int)ConditionEffectIndex - 1) for every index except
+    //Nothing=0. Source of truth is realm-client ConditionEffect.as
+    //(X_BIT = 1 << (X - 1)); TickEffects writes the same layout.
     [Flags]
     public enum ConditionEffects : ulong
     {
-        Nothing = 1 << 0,
-        Quiet = 1 << 1,
-        Weak = 1 << 2,
-        Slowed = 1 << 3,
-        Sick = 1 << 4,
-        Dazed = 1 << 5,
-        Stunned = 1 << 6,
-        Blind = 1 << 7,
-        Hallucinating = 1 << 8,
-        Drunk = 1 << 9,
-        Confused = 1 << 10,
-        StunImmume = 1 << 11,
-        Invisible = 1 << 12,
-        Paralyzed = 1 << 13,
-        Speedy = 1 << 14,
-        Bleeding = 1 << 15,
-        Healing = 1 << 16,
-        Damaging = 1 << 17,
-        Berserk = 1 << 18,
-        Stasis = 1 << 19,
-        StasisImmune = 1 << 20,
-        Invincible = 1 << 21,
-        Invulnerable = 1 << 23,
-        Armored = 1 << 24,
-        ArmorBroken = 1 << 25,
-        Hexed = 1 << 26,
-        NinjaSpeedy = 1 << 27,
+        Nothing = 0,
+        Quiet = 1UL << 0,
+        Weak = 1UL << 1,
+        Slowed = 1UL << 2,
+        Sick = 1UL << 3,
+        Dazed = 1UL << 4,
+        Stunned = 1UL << 5,
+        Blind = 1UL << 6,
+        Hallucinating = 1UL << 7,
+        Drunk = 1UL << 8,
+        Confused = 1UL << 9,
+        StunImmune = 1UL << 10,
+        Invisible = 1UL << 11,
+        Paralyzed = 1UL << 12,
+        Speedy = 1UL << 13,
+        Bleeding = 1UL << 14,
+        Healing = 1UL << 15,
+        Damaging = 1UL << 16,
+        Berserk = 1UL << 17,
+        Stasis = 1UL << 18,
+        StasisImmune = 1UL << 19,
+        Invincible = 1UL << 20,
+        Invulnerable = 1UL << 21,
+        Armored = 1UL << 22,
+        ArmorBroken = 1UL << 23,
+        Hexed = 1UL << 24,
+    }
+
+    public static class ConditionEffectsLayout
+    {
+        public static bool Verify()
+        {
+            foreach (ConditionEffectIndex idx in Enum.GetValues(typeof(ConditionEffectIndex)))
+            {
+                if (!Enum.TryParse(idx.ToString(), out ConditionEffects flag))
+                {
+                    Program.Print(PrintType.Error, $"P21 verify FAIL: missing ConditionEffects.{idx}");
+                    return false;
+                }
+                ulong expected = idx == ConditionEffectIndex.Nothing ? 0UL : 1UL << ((int)idx - 1);
+                if ((ulong)flag != expected)
+                {
+                    Program.Print(PrintType.Error, $"P21 verify FAIL: ConditionEffects.{idx}={(ulong)flag} expected {expected}");
+                    return false;
+                }
+            }
+            if (Enum.IsDefined(typeof(ConditionEffects), "NinjaSpeedy") ||
+                Enum.IsDefined(typeof(ConditionEffects), "StunImmume"))
+            {
+                Program.Print(PrintType.Error, "P21 verify FAIL: leftover client-unknown ConditionEffects member");
+                return false;
+            }
+            Program.Print(PrintType.Info, "P21 verify: ConditionEffects bits match ConditionEffectIndex / ConditionEffect.as");
+            return true;
+        }
     }
 
     public enum ConditionEffectIndex

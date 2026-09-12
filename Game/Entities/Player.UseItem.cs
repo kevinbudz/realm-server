@@ -66,6 +66,13 @@ namespace RotMG.Game.Entities
                 {
                     Heal(100, false);
                     HealthPotions--;
+                    ReplyInv(true);
+                }
+                else
+                {
+                    HealthPotions = HealthPotions;
+                    MagicPotions = MagicPotions;
+                    ReplyInv(false);
                 }
                 return;
             }
@@ -75,6 +82,13 @@ namespace RotMG.Game.Entities
                 {
                     Heal(100, true);
                     MagicPotions--;
+                    ReplyInv(true);
+                }
+                else
+                {
+                    HealthPotions = HealthPotions;
+                    MagicPotions = MagicPotions;
+                    ReplyInv(false);
                 }
                 return;
             }
@@ -87,6 +101,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Undefined entity");
 #endif
+                RejectInventory(en as IContainer, slot.SlotId);
                 return;
             }
 
@@ -95,16 +110,18 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Trying to use items from another players inventory");
 #endif
+                RejectInventory(en as IContainer, slot.SlotId);
                 return;
             }
 
-            if (en is Container c)
+            if (en is Container)
             {
                 if ((en as Container).OwnerId != -1 && (en as Container).OwnerId != Id)
                 {
 #if DEBUG
                     Program.Print(PrintType.Error, "Trying to use items from another players container/bag");
 #endif
+                    RejectInventory(en as IContainer, slot.SlotId);
                     return;
                 }
 
@@ -113,11 +130,21 @@ namespace RotMG.Game.Entities
 #if DEBUG
                     Program.Print(PrintType.Error, "Too far away from container");
 #endif
+                    RejectInventory(en as IContainer, slot.SlotId);
                     return;
                 }
             }
 
             IContainer con = en as IContainer;
+            if (!con.ValidSlot(slot.SlotId))
+            {
+#if DEBUG
+                Program.Print(PrintType.Error, "Invalid use slot");
+#endif
+                RejectInventory(con, slot.SlotId);
+                return;
+            }
+
             ItemDesc desc = null;
             if (con.Inventory[slot.SlotId] != -1)
                 desc = Resources.Type2Item[(ushort)con.Inventory[slot.SlotId]];
@@ -127,6 +154,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                 Program.Print(PrintType.Error, "Invalid use item");
 #endif
+                RejectInventory(con, slot.SlotId);
                 return;
             }
 
@@ -138,6 +166,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                     Program.Print(PrintType.Error, "Trying to use ability from a container?");
 #endif
+                    RejectInventory(con, slot.SlotId);
                     return;
                 }
 
@@ -146,6 +175,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                     Program.Print(PrintType.Error, "Used ability too soon");
 #endif
+                    ReplyInv(false);
                     return;
                 }
 
@@ -154,6 +184,7 @@ namespace RotMG.Game.Entities
 #if DEBUG
                     Program.Print(PrintType.Error, "Not enough MP");
 #endif
+                    ReplyInv(false);
                     return;
                 }
             }
@@ -727,6 +758,8 @@ namespace RotMG.Game.Entities
             //because the callback can mutate the slot as well.
             if (desc.Consumable || callback != null)
                 PersistUsedContainer(con);
+
+            ReplyInv(true);
         }
 
         //Persists a container mutation made by UseItem (consumed item or

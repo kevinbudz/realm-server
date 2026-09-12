@@ -254,6 +254,83 @@ namespace RotMG.Game
             return true;
         }
 
+        //Player-standing test used when the server places a static under
+        //someone: NoWalk ground or a blocking static (FullOccupy,
+        //EnemyOccupySquare, or OccupySquare on a non-enemy). Matches
+        //TileOccupied + TileFullOccupied at the tile center.
+        public bool BlocksPlayerWalk(int x, int y)
+        {
+            Tile? tile = GetTile(x, y);
+            if (tile == null)
+                return true;
+            if (Resources.Type2Tile.TryGetValue(tile.Value.Type, out TileDesc ground) && ground.NoWalk)
+                return true;
+            return Entity.StaticBlocksPlayerWalk(tile.Value.StaticObject?.Desc);
+        }
+
+        //Ring search around (x, y); the origin is never returned.
+        public static bool TrySpiralFreeTile(int x, int y, int maxRadius, Func<int, int, bool> blocked, out int tx, out int ty)
+        {
+            for (int r = 1; r < maxRadius; r++)
+                for (int dx = -r; dx <= r; dx++)
+                    for (int dy = -r; dy <= r; dy++)
+                    {
+                        if (Math.Abs(dx) != r && Math.Abs(dy) != r)
+                            continue;
+                        int nx = x + dx;
+                        int ny = y + dy;
+                        if (!blocked(nx, ny))
+                        {
+                            tx = nx;
+                            ty = ny;
+                            return true;
+                        }
+                    }
+            tx = x;
+            ty = y;
+            return false;
+        }
+
+        public bool TryFindNearestWalkable(int x, int y, out Position pos)
+        {
+            if (TrySpiralFreeTile(x, y, 20, BlocksPlayerWalk, out int tx, out int ty))
+            {
+                pos = new Position(tx + 0.5f, ty + 0.5f);
+                return true;
+            }
+            pos = new Position(x + 0.5f, y + 0.5f);
+            return false;
+        }
+
+        //Boss walls, UpdateStatic, PlacePortal, setpieces: if the new
+        //static makes this tile unwalkable, Goto anyone standing on it
+        //to the nearest free tile instead of leaving them to be rejected.
+        public void NudgePlayersOffBlockedTile(int x, int y)
+        {
+            if (Players == null || Players.Count == 0)
+                return;
+            if (GetTile(x, y) == null)
+                return;
+            if (!Entity.StaticBlocksPlayerWalk(Tiles[x, y].StaticObject?.Desc))
+                return;
+
+            List<Player> standing = null;
+            foreach (Player player in Players.Values)
+            {
+                if (player == null || player.Dead)
+                    continue;
+                if ((int)player.Position.X != x || (int)player.Position.Y != y)
+                    continue;
+                if (standing == null)
+                    standing = new List<Player>();
+                standing.Add(player);
+            }
+            if (standing == null)
+                return;
+            foreach (Player player in standing)
+                player.NudgeToNearestWalkable();
+        }
+
         //Chunk-routed proximity check: scans only the chunk neighborhood
         //instead of all players, turning the per-entity idle gate from
         //O(P) into O(local players). Decoy entries in PlayerChunks are
@@ -410,6 +487,7 @@ namespace RotMG.Game
             AddEntity(next, new Position(x + 0.5f, y + 0.5f));
 
             UpdateCount++;
+            NudgePlayersOffBlockedTile(x, y);
         }
 
         public void RemoveStatic(int x, int y)
@@ -521,6 +599,7 @@ namespace RotMG.Game
                     Tiles[(int)at.X, (int)at.Y].StaticObject = staticObj;
                     Tiles[(int)at.X, (int)at.Y].UpdateCount++;
                     UpdateCount++;
+                    NudgePlayersOffBlockedTile((int)at.X, (int)at.Y);
                 }
                 //Statics with behaviors (e.g. Dr Terrible Bubble, Monster
                 //Cage, Oryx's Living Floor) need InitStates just like any

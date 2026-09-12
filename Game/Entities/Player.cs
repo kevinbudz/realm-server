@@ -12,7 +12,6 @@ namespace RotMG.Game.Entities
 {
     public partial class Player : Entity, IContainer
     {
-        private const int MaxLatencyMS = 2000;
         public const int MaxPotions = 6;
         //Client interact reach is 1 tile; 1.5 leaves a small latency buffer
         //and rejects UsePortal for any other portal id in the world.
@@ -493,10 +492,16 @@ namespace RotMG.Game.Entities
             if (IsTransferring)
                 return;
 
-            if (TooLongSinceLastValidation())
+            if (Client != null && Client.State == ProtocolState.Connected)
             {
-                Client.RequestDisconnect("Too long since last validation");
-                return;
+                if (Client.IdleTimedOut(IdleTimeoutMS))
+                {
+                    Client.RequestDisconnect("Idle timeout");
+                    return;
+                }
+
+                if (Manager.TotalTime % PingIntervalMS == 0)
+                    Client.Send(GameServer.Ping(++_pingSerial));
             }
 
             if (Manager.TotalTime % 60000 == 0)
@@ -511,48 +516,6 @@ namespace RotMG.Game.Entities
             SweepAckedProjectilesTick();
             CheckTradeTimeout();
             base.Tick();
-        }
-
-        private int _serverStartTime = -1;
-        private int _serverTime = -1;
-        private int _clientStartTime = -1;
-        private int _clientTime = -1;
-        public bool ValidTime(int clientTime)
-        {
-            int serverTime = Manager.TotalTimeUnsynced;
-            if (_serverTime == -1)
-            {
-                _clientTime = clientTime;
-                _clientStartTime = clientTime;
-                _serverTime = serverTime;
-                _serverStartTime = serverTime;
-                return true;
-            }
-
-            if (clientTime < _clientTime)
-                return false;
-
-            int clientDiff = clientTime - _clientTime;
-            int serverDiff = serverTime - _serverTime;
-            int startDiff = Math.Abs((serverTime - _serverStartTime) - (clientTime - _clientStartTime));
-
-            if (clientDiff < 0 || serverDiff < 0 || clientDiff > MaxLatencyMS || serverDiff > MaxLatencyMS)
-                return false;
-
-            if (startDiff > MaxLatencyMS)
-                return false;
-
-            _clientTime = clientTime;
-            _serverTime = serverTime;
-            return true;
-        }
-
-        public bool TooLongSinceLastValidation()
-        {
-            if (_serverTime == -1)
-                return false;
-            int serverDiff = Manager.TotalTimeUnsynced - _serverTime;
-            return serverDiff > MaxLatencyMS;
         }
 
         public override string ToString()

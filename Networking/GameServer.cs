@@ -313,7 +313,7 @@ namespace RotMG.Networking
         {
             try
             {
-                byte[] framed = FramePacket(Failure(2, description));
+                byte[] framed = FramePacket(Failure(FailureForceCloseGame, description));
                 skt.NoDelay = true;
                 skt.Send(framed);
                 try { skt.Shutdown(SocketShutdown.Both); } catch { }
@@ -372,7 +372,7 @@ namespace RotMG.Networking
             if (_connected == null)
                 _connected = new Dictionary<string, int>();
 
-            byte[] packet = Failure(2, TooManyConnectionsMessage);
+            byte[] packet = Failure(FailureForceCloseGame, TooManyConnectionsMessage);
             byte[] framed = FramePacket(packet);
             int length = (framed[0] << 24) | (framed[1] << 16) | (framed[2] << 8) | framed[3];
             if (length != framed.Length)
