@@ -155,7 +155,7 @@ namespace RotMG.Game.Entities
             ShotProjectiles = new Dictionary<int, Projectile>();
             AwaitingAoes = new Queue<AoeAck>();
             ShootAEs = new Queue<ushort>();
-            AwaitingGoto = new Queue<int>();
+            AwaitingGoto = new Queue<AwaitingGotoWait>();
 
             SpeedHistory = new List<float>(10);
             MultiplierHistory = new List<float>(10);
@@ -483,7 +483,7 @@ namespace RotMG.Game.Entities
                 bot.Owner = owner;
                 if (bot.Parent == owner.Parent)
                 {
-                    if (bot.Teleport(Manager.TotalTimeUnsynced, owner.Position, ignoreSeen: true))
+                    if (bot.Teleport(owner.Position, ignoreSeen: true))
                         moved++;
                 }
                 else if (MoveBotToWorld(bot, owner.Parent, owner.Position))

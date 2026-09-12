@@ -276,7 +276,7 @@ namespace RotMG.Game.Entities
             ShotProjectiles = new Dictionary<int, Projectile>();
             AwaitingAoes = new Queue<AoeAck>();
             ShootAEs = new Queue<ushort>();
-            AwaitingGoto = new Queue<int>();
+            AwaitingGoto = new Queue<AwaitingGotoWait>();
 
             SpeedHistory = new List<float>(SpeedHistoryCount);
             MultiplierHistory = new List<float>(SpeedHistoryCount);
@@ -460,6 +460,7 @@ namespace RotMG.Game.Entities
 
             TickRegens();
             TickProjectiles();
+            TickGotoAcks();
             //Standing players send no Moves, so the move-driven sweep
             //would never run for them: the tick sweep covers stationary
             //players with the same recording and expiry logic.

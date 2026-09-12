@@ -615,7 +615,7 @@ namespace RotMG.Game.Entities
                         break;
                     case ActivateEffectIndex.Teleport:
                         if (inRange)
-                            Teleport(time, target);
+                            Teleport(target);
                         break;
                     case ActivateEffectIndex.Decoy:
                         Parent.AddEntity(new Decoy(this, Position.Angle(target), eff.DurationMS), Position);

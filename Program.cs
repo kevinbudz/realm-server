@@ -1,5 +1,6 @@
 ﻿using RotMG.Common;
 using RotMG.Game;
+using RotMG.Game.Entities;
 using RotMG.Networking;
 using RotMG.Utils;
 using System;
@@ -22,6 +23,14 @@ namespace RotMG
             MainThread = Thread.CurrentThread.ManagedThreadId;
             PendingWork = new ConcurrentQueue<Work>();
             Thread.CurrentThread.Priority = ThreadPriority.Highest;
+
+            if (args != null && args.Length > 0 && args[0] == "--p4-verify")
+            {
+                bool ok = Player.VerifyGotoAckClock();
+                DrainWork();
+                Console.WriteLine(ok ? "P4 verify: PASS" : "P4 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
 
             Settings.Init();
             Resources.Init();

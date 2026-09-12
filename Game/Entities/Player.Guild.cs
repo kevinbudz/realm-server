@@ -22,7 +22,7 @@ namespace RotMG.Game.Entities
                 return;
 
             FameStats.Teleports++;
-            Teleport(Manager.TotalTimeUnsynced, target.Position);
+            Teleport(target.Position);
         }
 
         public void SendGuild(string text)

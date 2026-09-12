@@ -457,7 +457,7 @@ namespace RotMG.Game.Entities
                                 SendError("Invalid coordinates! Usage: /tppos <x> <y>");
                                 return;
                             }
-                            if (!Teleport(Manager.TotalTimeUnsynced, new Position(gotoX + 0.5f, gotoY + 0.5f)))
+                            if (!Teleport(new Position(gotoX + 0.5f, gotoY + 0.5f)))
                                 SendError("Cannot teleport there.");
                             break;
                         }
@@ -606,7 +606,7 @@ namespace RotMG.Game.Entities
                                 SendError($"Player '{input.Trim()}' could not be found!");
                                 return;
                             }
-                            summoned.Teleport(Manager.TotalTimeUnsynced, Position);
+                            summoned.Teleport(Position);
                             summoned.SendInfo($"You've been summoned by {Name}.");
                             SendInfo("Player summoned!");
                             break;
@@ -622,7 +622,7 @@ namespace RotMG.Game.Entities
                             {
                                 if (guest == this)
                                     continue;
-                                guest.Teleport(Manager.TotalTimeUnsynced, Position);
+                                guest.Teleport(Position);
                                 guest.SendInfo($"You've been summoned by {Name}.");
                             }
                             SendInfo("All players summoned!");
@@ -711,7 +711,7 @@ namespace RotMG.Game.Entities
                                 SendError("Player does not have a quest!");
                                 return;
                             }
-                            if (!Teleport(Manager.TotalTimeUnsynced, Quest.Position, ignoreSeen: true))
+                            if (!Teleport(Quest.Position, ignoreSeen: true))
                                 SendError("Cannot teleport to quest.");
                             else
                                 SendInfo("Teleported to Quest Location: (" + (int)Quest.Position.X + ", " + (int)Quest.Position.Y + ")");
@@ -1171,7 +1171,7 @@ namespace RotMG.Game.Entities
                                 SendError("This command requires you to be in realm first.");
                                 return;
                             }
-                            Teleport(Manager.TotalTimeUnsynced, new Position(1512 + 0.5f, 1048 + 0.5f));
+                            Teleport(new Position(1512 + 0.5f, 1048 + 0.5f));
                             break;
                         }
                     case "/join":

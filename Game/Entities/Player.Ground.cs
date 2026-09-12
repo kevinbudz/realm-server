@@ -8,6 +8,38 @@ using System.Text;
 
 namespace RotMG.Game.Entities
 {
+    //One server-issued Goto waiting for its GotoAck. The wait is stamped
+    //with Manager.TotalTimeUnsynced (same idea as AwaitingShots.EnqueueTime):
+    //Teleport used to enqueue either client getTimer() or server uptime,
+    //and TryMove compared that mix against the client's Move timestamp,
+    //which is a different epoch. Forgiven is the one grace re-stamp a
+    //starved head gets before the wait is dropped and the client is
+    //Goto'd again instead of disconnected.
+    public class AwaitingGotoWait
+    {
+        public int ServerEnqueuedAt;
+        public bool Forgiven;
+
+        public const int Waiting = 0;
+        public const int GrantedGrace = 1;
+        public const int Expired = 2;
+
+        //Server-clock step: still waiting, one grace re-stamp, or expired
+        //(caller dequeues and snaps). nowUnsynced is Manager.TotalTimeUnsynced.
+        public int Advance(int nowUnsynced, int timeoutMs)
+        {
+            if (nowUnsynced - ServerEnqueuedAt <= timeoutMs)
+                return Waiting;
+            if (!Forgiven)
+            {
+                Forgiven = true;
+                ServerEnqueuedAt = nowUnsynced;
+                return GrantedGrace;
+            }
+            return Expired;
+        }
+    }
+
     public partial class Player
     {
         private const float MoveSpeedThreshold = 1.1f;
@@ -16,7 +48,7 @@ namespace RotMG.Game.Entities
         public float MoveMultiplier = 1f;
         public int MoveTime;
         public int AwaitingMoves;
-        public Queue<int> AwaitingGoto;
+        public Queue<AwaitingGotoWait> AwaitingGoto;
         public List<float> SpeedHistory;
         public List<float> MultiplierHistory;
         public int TickId;
@@ -119,19 +151,11 @@ namespace RotMG.Game.Entities
                 return;
             }
 
-            if (AwaitingGoto.Count > 0)
+            if (TickGotoAcks() || AwaitingGoto.Count > 0)
             {
-                foreach (int gt in AwaitingGoto)
-                {
-                    if (gt + TimeUntilAckTimeout < time)
-                    {
-                        Program.Print(PrintType.Error, "Goto ack timed out");
-                        Client.Disconnect();
-                        return;
-                    }
-                }
 #if DEBUG
-                Program.Print(PrintType.Error, "Waiting for goto ack...");
+                if (AwaitingGoto.Count > 0)
+                    Program.Print(PrintType.Error, "Waiting for goto ack...");
 #endif
                 return;
             }
@@ -235,13 +259,15 @@ namespace RotMG.Game.Entities
                 return;
             }
 
-            if (!AwaitingGoto.TryDequeue(out int t))
+            //A late or duplicate ack (lost Goto recovered by TickGotoAcks,
+            //or an extra GotoAck after the wait was dropped) must not kick.
+            //The wait is a server-clock queue; the packet time is only for
+            //ValidTime above.
+            if (!AwaitingGoto.TryDequeue(out _))
             {
 #if DEBUG
                 Program.Print(PrintType.Error, "No GotoAck to ack");
 #endif
-                Client.Disconnect();
-                return;
             }
         }
 
@@ -250,7 +276,7 @@ namespace RotMG.Game.Entities
         //UpdateCount, so those callers bypass the seen check. The client's
         //update loop streams the destination tiles on the following ticks,
         //exactly as on dungeon entry. RegionUnblocked still applies.
-        public bool Teleport(int time, Position pos, bool ignoreSeen = false)
+        public bool Teleport(Position pos, bool ignoreSeen = false)
         {
             if (!RegionUnblocked(pos.X, pos.Y))
                 return false;
@@ -260,17 +286,144 @@ namespace RotMG.Game.Entities
                 return false;
 
             Parent.MoveEntity(this, pos);
-            AwaitingGoto.Enqueue(time);
+            //Bots have a Disconnected stub client and never send GotoAck;
+            //observers still get the broadcast Goto below.
+            if (Client.State == ProtocolState.Connected)
+                EnqueueGotoWait();
+            BroadcastGoto(pos, withTeleportEffect: true);
+            return true;
+        }
 
-            byte[] eff = GameServer.ShowEffect(ShowEffectIndex.Teleport, Id, 0xFFFFFFFF, pos);
+        //Ack waits use the server clock (see AwaitingGotoWait): the head
+        //is the oldest waiter. A starved head is forgiven once (a late
+        //ack still drains it in order); a twice-starved head is dropped
+        //and the client is Goto'd to the server position so a lost ack
+        //cannot freeze or kick them. Returns true if a wait was resolved
+        //this call so TryMove can ignore a stale in-flight Move.
+        public bool TickGotoAcks()
+        {
+            if (Dead || Parent == null)
+                return false;
+
+            bool resolved = false;
+            while (AwaitingGoto.Count > 0)
+            {
+                AwaitingGotoWait head = AwaitingGoto.Peek();
+                int step = head.Advance(Manager.TotalTimeUnsynced, TimeUntilAckTimeout);
+                if (step == AwaitingGotoWait.Waiting)
+                    break;
+                if (step == AwaitingGotoWait.GrantedGrace)
+                {
+#if DEBUG
+                    Program.Print(PrintType.Warn, "Goto ack late, forgiven");
+#endif
+                    break;
+                }
+
+                AwaitingGoto.Dequeue();
+#if DEBUG
+                Program.Print(PrintType.Error, "Goto ack wait expired, snapping client");
+#endif
+                BroadcastGoto(Position, withTeleportEffect: false);
+                resolved = true;
+            }
+            return resolved;
+        }
+
+        private void EnqueueGotoWait()
+        {
+            AwaitingGoto.Enqueue(new AwaitingGotoWait
+            {
+                ServerEnqueuedAt = Manager.TotalTimeUnsynced
+            });
+        }
+
+        private void BroadcastGoto(Position pos, bool withTeleportEffect)
+        {
             byte[] go = GameServer.Goto(Id, pos);
-
+            byte[] eff = withTeleportEffect
+                ? GameServer.ShowEffect(ShowEffectIndex.Teleport, Id, 0xFFFFFFFF, pos)
+                : null;
             foreach (Player player in Parent.Players.Values)
             {
-                if (player.Client.Account.Effects)
+                if (withTeleportEffect && player.Client.Account.Effects)
                     player.Client.Send(eff);
                 player.Client.Send(go);
             }
+        }
+
+        //Headless stand-in for mixed-clock /teleport kicks: both process
+        //start orders, one grace then snap (no disconnect), extra GotoAck.
+        public static bool VerifyGotoAckClock()
+        {
+            const int timeout = TimeUntilAckTimeout;
+
+            int serverUptime = 30_000;
+            int clientGetTimer = 150_000;
+            bool oldKicksWhenServerStartedFirst = serverUptime + timeout < clientGetTimer;
+            int serverJustRestarted = 500;
+            int clientAlreadyOpen = 180_000;
+            bool oldKicksWhenClientStartedFirst = serverJustRestarted + timeout < clientAlreadyOpen;
+            if (!oldKicksWhenServerStartedFirst || !oldKicksWhenClientStartedFirst)
+            {
+                Program.Print(PrintType.Error, "P4 verify: old mixed-clock comparison no longer reproduces");
+                return false;
+            }
+
+            AwaitingGotoWait wait = new AwaitingGotoWait { ServerEnqueuedAt = 30_000 };
+            if (wait.Advance(31_000, timeout) != AwaitingGotoWait.Waiting)
+            {
+                Program.Print(PrintType.Error, "P4 verify FAIL: wait expired before 2s");
+                return false;
+            }
+
+            int step = wait.Advance(32_001, timeout);
+            if (step != AwaitingGotoWait.GrantedGrace || !wait.Forgiven || wait.ServerEnqueuedAt != 32_001)
+            {
+                Program.Print(PrintType.Error, "P4 verify FAIL: first timeout must grant one grace");
+                return false;
+            }
+
+            if (wait.Advance(33_000, timeout) != AwaitingGotoWait.Waiting)
+            {
+                Program.Print(PrintType.Error, "P4 verify FAIL: grace window still open");
+                return false;
+            }
+
+            if (wait.Advance(34_002, timeout) != AwaitingGotoWait.Expired)
+            {
+                Program.Print(PrintType.Error, "P4 verify FAIL: second timeout must expire without kick");
+                return false;
+            }
+
+            AwaitingGotoWait freshServer = new AwaitingGotoWait { ServerEnqueuedAt = 100 };
+            if (freshServer.Advance(1_500, timeout) != AwaitingGotoWait.Waiting)
+            {
+                Program.Print(PrintType.Error, "P4 verify FAIL: client-first ordering expired immediately");
+                return false;
+            }
+
+            Queue<AwaitingGotoWait> q = new Queue<AwaitingGotoWait>();
+            q.Enqueue(new AwaitingGotoWait { ServerEnqueuedAt = 0 });
+            AwaitingGotoWait head = q.Peek();
+            if (head.Advance(2_001, timeout) != AwaitingGotoWait.GrantedGrace)
+            {
+                Program.Print(PrintType.Error, "P4 verify FAIL: missing ack first timeout");
+                return false;
+            }
+            if (head.Advance(4_002, timeout) != AwaitingGotoWait.Expired)
+            {
+                Program.Print(PrintType.Error, "P4 verify FAIL: missing ack second timeout");
+                return false;
+            }
+            q.Dequeue();
+            if (q.TryDequeue(out _))
+            {
+                Program.Print(PrintType.Error, "P4 verify FAIL: extra ack found a wait");
+                return false;
+            }
+
+            Program.Print(PrintType.Info, "P4 verify: mixed clocks would have kicked; server-clock grace then resolve does not");
             return true;
         }
     }
