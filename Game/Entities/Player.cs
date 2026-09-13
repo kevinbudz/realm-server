@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Reflection;
+using System.Xml.Linq;
 
 namespace RotMG.Game.Entities
 {
@@ -222,6 +223,7 @@ namespace RotMG.Game.Entities
             if (client.Character.HasBackpack) HasBackpack = client.Character.HasBackpack;
             PetId = client.Character.PetId;
             if (client.Character.SkinType != 0) SkinType = client.Character.SkinType;
+            if (client.Character.Size != 0) Size = client.Character.Size;
             if (client.Character.Tex1 != 0) Tex1 = client.Character.Tex1;
             if (client.Character.Tex2 != 0) Tex2 = client.Character.Tex2;
             if (client.Account.Stats.Credits != 0) Credits = client.Account.Stats.Credits;
@@ -286,6 +288,7 @@ namespace RotMG.Game.Entities
             Client.Character.HasBackpack = HasBackpack;
             Client.Character.PetId = PetId;
             Client.Character.SkinType = SkinType;
+            Client.Character.Size = Size;
             Client.Character.Tex1 = Tex1;
             Client.Character.Tex2 = Tex2;
             Client.Character.Experience = EXP;
@@ -743,6 +746,80 @@ namespace RotMG.Game.Entities
                 world.RemoveEntity(nearPortal);
             Program.Print(PrintType.Info, "P9 verify: Death/Damage/Tick cannot kill after Reconnect; disconnect save kept Character.HP=5");
             return true;
+        }
+
+        //Headless stand-in for /size persistence and the quake warning:
+        //Size must survive SaveToCharacter, world re-entry (a new Player
+        //over the same Character) and a database Export/Load round-trip,
+        //and the quake ShowEffect must serialize the exact id the client
+        //shakes on (14: Earthquake in the reference, Jitter locally and
+        //client-side).
+        public static bool VerifySizeQuake()
+        {
+            Player player = CreateVerifyPlayer("SizeQuake");
+            try
+            {
+                if (player.Size != 0 || player.Client.Character.Size != 0)
+                {
+                    Program.Print(PrintType.Error, "SizeQuake verify FAIL: fresh player/character Size is not 0");
+                    return false;
+                }
+
+                player.Size = 200;
+                player.SaveToCharacter();
+                if (player.Client.Character.Size != 200)
+                {
+                    Program.Print(PrintType.Error, $"SizeQuake verify FAIL: Character.Size={player.Client.Character.Size} after save, expected 200");
+                    return false;
+                }
+                Program.Print(PrintType.Info, "SizeQuake verify: SaveToCharacter stored Size=200");
+
+                Player reentry = new Player(player.Client);
+                if (reentry.Size != 200)
+                {
+                    Program.Print(PrintType.Error, $"SizeQuake verify FAIL: re-entry Size={reentry.Size}, expected 200");
+                    return false;
+                }
+                Program.Print(PrintType.Info, "SizeQuake verify: world re-entry restored Size=200");
+
+                XElement db = player.Client.Character.Export(false);
+                CharacterModel reloaded = new CharacterModel(0, 0);
+                reloaded.Data = db;
+                reloaded.Load();
+                if (reloaded.Size != 200)
+                {
+                    Program.Print(PrintType.Error, $"SizeQuake verify FAIL: database round-trip Size={reloaded.Size}, expected 200");
+                    return false;
+                }
+                db.Element("Size")?.Remove();
+                CharacterModel legacy = new CharacterModel(0, 0);
+                legacy.Data = db;
+                legacy.Load();
+                if (legacy.Size != 0)
+                {
+                    Program.Print(PrintType.Error, $"SizeQuake verify FAIL: legacy row Size={legacy.Size}, expected 0");
+                    return false;
+                }
+                Program.Print(PrintType.Info, "SizeQuake verify: database round-trip kept Size=200, legacy rows default 0");
+
+                byte[] quake = GameServer.ShowEffect(ShowEffectIndex.Jitter, 7, 0);
+                if (quake == null || quake.Length < 2 || quake[1] != 14)
+                {
+                    Program.Print(PrintType.Error, "SizeQuake verify FAIL: quake ShowEffect did not serialize effect id 14");
+                    return false;
+                }
+                Program.Print(PrintType.Info, "SizeQuake verify: quake ShowEffect serializes effect id 14");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Program.Print(PrintType.Error, $"SizeQuake verify FAIL: threw {e.Message}");
+                return false;
+            }
+            finally
+            {
+                player.Client.State = ProtocolState.Disconnected;
+            }
         }
 
         private static Player CreateVerifyPlayer(string name)

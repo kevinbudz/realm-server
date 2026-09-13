@@ -681,6 +681,7 @@ namespace RotMG.Game.Entities
                                 return;
                             }
                             Size = newSize == 0 ? 100 : newSize;
+                            Client.Character.Size = Size;
                             SendInfo(newSize == 0 ? "Size restored." : $"Size set to {Size}.");
                             break;
                         }
@@ -1192,7 +1193,11 @@ namespace RotMG.Game.Entities
                                 SendError("This command requires you to be in realm first.");
                                 return;
                             }
-                            Teleport(new Position(1512 + 0.5f, 1048 + 0.5f));
+                            //Fixed glands point is never seen on entry (see
+                            //Teleport): bypass the seen check like /tq and
+                            //report a blocked tile instead of failing silent.
+                            if (!Teleport(new Position(1512 + 0.5f, 1048 + 0.5f), ignoreSeen: true))
+                                SendError("Cannot teleport to glands.");
                             break;
                         }
                     case "/join":

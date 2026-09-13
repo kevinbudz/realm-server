@@ -72,6 +72,7 @@ namespace RotMG.Common
         public bool HasBackpack;
         public FameStatsInfo FameStats;
         public int PetId;
+        public int Size;
 
         public CharacterModel(int accountId, int key) : base($"char.{accountId}.{key}") 
         {
@@ -102,6 +103,7 @@ namespace RotMG.Common
             HasBackpack = Data.ParseBool("HasBackpack");
             FameStats = new FameStatsInfo(Data.Element("FameStats"));
             PetId = Data.ParseInt("PetId");
+            Size = Data.ParseInt("Size");
         }
 
         public XElement ExportFame()
@@ -177,6 +179,7 @@ namespace RotMG.Common
                 data.Add(new XElement("DeathFame", DeathFame));
                 data.Add(new XElement("DeathTime", DeathTime));
                 data.Add(new XElement("PetId", PetId));
+                data.Add(new XElement("Size", Size));
                 data.Add(FameStats.Export(appExport));
             }
             return data;

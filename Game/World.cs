@@ -374,16 +374,23 @@ namespace RotMG.Game
         }
 
         //Moves everyone to another world, adapted from realm-src-master
-        //World.QuakeToWorld. There is no earthquake ShowEffect locally
-        //(ShowEffectIndex has no Earthquake member), so the warning
-        //broadcast is skipped; reconnect/disconnect below mirrors
-        //GameServer.Escape and Oryx.CloseRealm. The reference diverts
-        //Paused players to the Nexus, but this codebase has no Paused
-        //condition effect, so everyone goes to newWorld.
+        //World.QuakeToWorld. The quake warning (effect 14: Earthquake in
+        //the reference, Jitter in ShowEffectIndex and the client) shakes
+        //every connected client up front; reconnect/disconnect below
+        //mirrors GameServer.Escape and Oryx.CloseRealm. The reference
+        //diverts Paused players to the Nexus, but this codebase has no
+        //Paused condition effect, so everyone goes to newWorld.
         public void QuakeToWorld(World newWorld)
         {
             if (this is RealmWorld realm)
                 realm.Closed = true;
+
+            foreach (Player player in Players.Values.ToArray())
+            {
+                if (player is Bot || player.Client == null)
+                    continue;
+                player.Client.Send(GameServer.ShowEffect(ShowEffectIndex.Jitter, player.Id, 0));
+            }
 
             Manager.AddTimedAction(8000, () =>
             {

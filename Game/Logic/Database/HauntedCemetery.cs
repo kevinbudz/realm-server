@@ -1950,7 +1950,6 @@ namespace RotMG.Game.Logic.Database
                     new TierLoot(5, TierLoot.LootType.Ring, 0.07f)
                 ),
                 new Threshold(0.001f,
-                    new ItemLoot("RogueST0", 0.008f),
                     new ItemLoot("Potion of Vitality", 1),
                     new ItemLoot("Potion of Wisdom", 1),
                     new ItemLoot("Resurrected Warrior's Armor", 0.002f),

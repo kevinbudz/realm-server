@@ -79,6 +79,19 @@ namespace RotMG
                 Environment.Exit(ok ? 0 : 1);
             }
 
+            //Pre-Init like the other early verifies (no sockets, no
+            //worlds): only the game data and database the check reads.
+            if (args != null && args.Length > 0 && args[0] == "--sizequake-verify")
+            {
+                Settings.Init();
+                Resources.Init();
+                Database.Init();
+                bool ok = Player.VerifySizeQuake();
+                DrainWork();
+                Console.WriteLine(ok ? "SizeQuake verify: PASS" : "SizeQuake verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
             Settings.Init();
             Resources.Init();
             Database.Init();
