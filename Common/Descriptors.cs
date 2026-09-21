@@ -721,6 +721,8 @@ namespace RotMG.Common
         public readonly bool Usable;
         public readonly int BagType;
         public readonly int MpCost;
+        public readonly int MpEndCost;
+        public readonly bool MultiPhase;
         public readonly int FameBonus;
         public readonly int NumProjectiles;
         public readonly float ArcGap;
@@ -751,6 +753,8 @@ namespace RotMG.Common
             Usable = e.ParseBool("Usable");
             BagType = e.ParseInt("BagType");
             MpCost = e.ParseInt("MpCost");
+            MpEndCost = e.ParseInt("MpEndCost", 0);
+            MultiPhase = e.ParseBool("MultiPhase");
             FameBonus = e.ParseInt("FameBonus");
             NumProjectiles = e.ParseInt("NumProjectiles", 1);
             ArcGap = e.ParseFloat("ArcGap", 11.25f);

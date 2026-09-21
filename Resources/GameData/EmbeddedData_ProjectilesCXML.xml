@@ -1366,42 +1366,66 @@
     
     <Object type="0x2108" id="Ninja Star Basic">
         <Class>Projectile</Class>
-        <Texture><File>lofiObj3</File><Index>0x258</Index></Texture> 
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x258</Index>
+        </Texture>
         <Rotation>70</Rotation>
     </Object>
     <Object type="0x2109" id="Ninja Star Four-Point">
         <Class>Projectile</Class>
-        <Texture><File>lofiObj3</File><Index>0x259</Index></Texture>  
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x259</Index>
+        </Texture>
         <Rotation>70</Rotation>
     </Object>
     <Object type="0x210a" id="Ninja Star Spiral">
         <Class>Projectile</Class>
-        <Texture><File>lofiObj3</File><Index>0x25a</Index></Texture> 
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x25a</Index>
+        </Texture>
         <Rotation>70</Rotation>
     </Object>
     <Object type="0x210b" id="Ninja Star Silver">
         <Class>Projectile</Class>
-        <Texture><File>lofiObj3</File><Index>0x25b</Index></Texture> 
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x25b</Index>
+        </Texture>
         <Rotation>-75</Rotation>
     </Object>
     <Object type="0x210c" id="Ninja Star Wind">
         <Class>Projectile</Class>
-        <Texture><File>lofiObj3</File><Index>0x25c</Index></Texture>
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x25c</Index>
+        </Texture>
         <Rotation>-95</Rotation>
     </Object>
     <Object type="0x210d" id="Ninja Star Ice">
         <Class>Projectile</Class>
-        <Texture><File>lofiObj3</File><Index>0x25d</Index></Texture>
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x25d</Index>
+        </Texture>
         <Rotation>75</Rotation>
     </Object>
     <Object type="0x210e" id="Ninja Star Doom">
         <Class>Projectile</Class>
-        <Texture><File>lofiObj3</File><Index>0x25e</Index></Texture>
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x25e</Index>
+        </Texture>
         <Rotation>80</Rotation>
     </Object>
     <Object type="0x210f" id="Ninja Star Midnight">
         <Class>Projectile</Class>
-        <Texture><File>lofiObj3</File><Index>0x25f</Index></Texture>
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x25f</Index>
+        </Texture>
         <Rotation>-100</Rotation>
     </Object>
     

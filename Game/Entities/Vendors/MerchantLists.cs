@@ -122,12 +122,29 @@ namespace RotMG.Game.Entities.Vendors
             new ShopItem("Effusion of Defense", 250)
         };
 
+        //Nexus/0.jm paints all six Store regions (Store_3: 6 tiles,
+        //Store_5/Store_6: 13 each). The equipment lists defined above match
+        //them 1:1: Weapons holds 6 items for the 6 Store_3 tiles, Abilities
+        //holds 14 for the 13 Store_5 tiles, and Store_6 sells gear (Armor plus
+        //Rings, 14 resolvable entries for 13 tiles). Equipment prices sit on
+        //the gold scale, so all three trade in gold.
+        private static readonly List<ShopItem> Store6Gear = new List<ShopItem>(Armor.Count + Rings.Count);
+
+        static MerchantLists()
+        {
+            Store6Gear.AddRange(Armor);
+            Store6Gear.AddRange(Rings);
+        }
+
         public static readonly Dictionary<Region, List<ShopItem>> Shops =
             new Dictionary<Region, List<ShopItem>>
             {
                 { Region.Store_1, Store1 },
                 { Region.Store_2, Store2 },
-                { Region.Store_4, Store4 }
+                { Region.Store_3, Weapons },
+                { Region.Store_4, Store4 },
+                { Region.Store_5, Abilities },
+                { Region.Store_6, Store6Gear }
             };
 
         public static readonly Dictionary<Region, CurrencyType> ShopCurrency =
@@ -135,7 +152,10 @@ namespace RotMG.Game.Entities.Vendors
             {
                 { Region.Store_1, CurrencyType.Gold },
                 { Region.Store_2, CurrencyType.Fame },
-                { Region.Store_4, CurrencyType.Fame }
+                { Region.Store_3, CurrencyType.Gold },
+                { Region.Store_4, CurrencyType.Fame },
+                { Region.Store_5, CurrencyType.Gold },
+                { Region.Store_6, CurrencyType.Gold }
             };
 
         private static bool _resolved;

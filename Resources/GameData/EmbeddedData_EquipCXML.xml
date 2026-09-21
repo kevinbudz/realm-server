@@ -6571,7 +6571,10 @@
     <Object type="0xc53" id="Basic Star">
         <Class>Equipment</Class>
         <Item/>
-        <Texture><File>lofiObj3</File><Index>0x22b</Index></Texture>
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x22b</Index>
+        </Texture>
         <SlotType>25</SlotType>
         <Tier>0</Tier>
         <Description>A basic ninja-star.</Description>
@@ -6582,11 +6585,11 @@
             <EffectInfo name="" description="Drain 10 MP/sec"/>
             <EffectInfo name="When Key Released" description=""/>
         </ExtraTooltipData>
-        <Projectile>  
+        <Projectile>
             <ObjectId>Ninja Star Basic</ObjectId>
-            <Speed>150</Speed>
-            <MinDamage>80</MinDamage>
-            <MaxDamage>120</MaxDamage>
+            <Speed>100</Speed>
+            <MinDamage>100</MinDamage>
+            <MaxDamage>200</MaxDamage>
             <LifetimeMS>1000</LifetimeMS>
             <Size>120</Size>
             <PassesCover/>
@@ -6597,13 +6600,18 @@
         <MpEndCost>30</MpEndCost>
         <MultiPhase/>
         <Activate>ShurikenAbility</Activate>
+        <feedPower>5</feedPower>
+        <DisplayId>Basic Star</DisplayId>
     </Object>
 
 
     <Object type="0xc54" id="Four-Point Star">
         <Class>Equipment</Class>
         <Item/>
-        <Texture><File>lofiObj3</File><Index>0x22c</Index></Texture> 
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x22c</Index>
+        </Texture>
         <SlotType>25</SlotType>
         <Tier>1</Tier>
         <Description>A ninja-star with four razor-sharp points.</Description>
@@ -6614,11 +6622,11 @@
             <EffectInfo name="" description="Drain 10 MP/sec"/>
             <EffectInfo name="When Key Released" description=""/>
         </ExtraTooltipData>
-        <Projectile>  
+        <Projectile>
             <ObjectId>Ninja Star Four-Point</ObjectId>
             <Speed>150</Speed>
-            <MinDamage>160</MinDamage>
-            <MaxDamage>200</MaxDamage>
+            <MinDamage>175</MinDamage>
+            <MaxDamage>275</MaxDamage>
             <LifetimeMS>1000</LifetimeMS>
             <Size>120</Size>
             <PassesCover/>
@@ -6629,12 +6637,17 @@
         <MpEndCost>40</MpEndCost>
         <MultiPhase/>
         <Activate>ShurikenAbility</Activate>
+        <feedPower>10</feedPower>
+        <DisplayId>Four-Point Star</DisplayId>
     </Object>
 
     <Object type="0xc55" id="Spiral Shuriken">
         <Class>Equipment</Class>
         <Item/>
-        <Texture><File>lofiObj3</File><Index>0x22d</Index></Texture>
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x22d</Index>
+        </Texture>
         <SlotType>25</SlotType>
         <Tier>2</Tier>
         <Description>A ninja-star with curved spiraling blades.</Description>
@@ -6645,15 +6658,14 @@
             <EffectInfo name="" description="Drain 10 MP/sec"/>
             <EffectInfo name="When Key Released" description=""/>
         </ExtraTooltipData>
-        <Projectile>  
+        <Projectile>
             <ObjectId>Ninja Star Spiral</ObjectId>
             <Speed>150</Speed>
-            <MinDamage>220</MinDamage>
-            <MaxDamage>280</MaxDamage>
+            <MinDamage>300</MinDamage>
+            <MaxDamage>400</MaxDamage>
             <LifetimeMS>1000</LifetimeMS>
             <Size>120</Size>
             <PassesCover/>
-            
         </Projectile>
         <Usable/>
         <BagType>1</BagType>
@@ -6661,12 +6673,17 @@
         <MpEndCost>50</MpEndCost>
         <MultiPhase/>
         <Activate>ShurikenAbility</Activate>
+        <feedPower>20</feedPower>
+        <DisplayId>Spiral Shuriken</DisplayId>
     </Object>
 
     <Object type="0xc56" id="Silver Star">
         <Class>Equipment</Class>
         <Item/>
-        <Texture><File>lofiObj3</File><Index>0x22e</Index></Texture> 
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x22e</Index>
+        </Texture>
         <SlotType>25</SlotType>
         <Tier>3</Tier>
         <Description>A beautifully crafted shuriken.</Description>
@@ -6677,15 +6694,14 @@
             <EffectInfo name="" description="Drain 10 MP/sec"/>
             <EffectInfo name="When Key Released" description=""/>
         </ExtraTooltipData>
-        <Projectile>  
+        <Projectile>
             <ObjectId>Ninja Star Silver</ObjectId>
             <Speed>150</Speed>
-            <MinDamage>330</MinDamage>
-            <MaxDamage>370</MaxDamage>
+            <MinDamage>400</MinDamage>
+            <MaxDamage>500</MaxDamage>
             <LifetimeMS>1000</LifetimeMS>
             <Size>120</Size>
             <PassesCover/>
-            
         </Projectile>
         <Usable/>
         <BagType>2</BagType>
@@ -6694,12 +6710,17 @@
         <MpEndCost>60</MpEndCost>
         <MultiPhase/>
         <Activate>ShurikenAbility</Activate>
+        <feedPower>45</feedPower>
+        <DisplayId>Silver Star</DisplayId>
     </Object>
 
     <Object type="0xc57" id="Wind Circle">
         <Class>Equipment</Class>
         <Item/>
-        <Texture><File>lofiObj3</File><Index>0x22f</Index></Texture>
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x22f</Index>
+        </Texture>
         <SlotType>25</SlotType>
         <Tier>4</Tier>
         <Description>A sacred shuriken that embodies the power and speed of the wind.</Description>
@@ -6710,15 +6731,14 @@
             <EffectInfo name="" description="Drain 10 MP/sec"/>
             <EffectInfo name="When Key Released" description=""/>
         </ExtraTooltipData>
-        <Projectile>  
+        <Projectile>
             <ObjectId>Ninja Star Wind</ObjectId>
-            <Speed>150</Speed>
-            <MinDamage>420</MinDamage>
-            <MaxDamage>480</MaxDamage>
+            <Speed>170</Speed>
+            <MinDamage>550</MinDamage>
+            <MaxDamage>650</MaxDamage>
             <LifetimeMS>1000</LifetimeMS>
             <Size>120</Size>
             <PassesCover/>
-            
         </Projectile>
         <Usable/>
         <BagType>2</BagType>
@@ -6727,13 +6747,18 @@
         <MpEndCost>70</MpEndCost>
         <MultiPhase/>
         <Activate>ShurikenAbility</Activate>
+        <feedPower>90</feedPower>
+        <DisplayId>Wind Circle</DisplayId>
     </Object>
 
 
     <Object type="0xc58" id="Ice Star">
         <Class>Equipment</Class>
         <Item/>
-        <Texture><File>lofiObj3</File><Index>0x230</Index></Texture> 
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x230</Index>
+        </Texture>
         <SlotType>25</SlotType>
         <Tier>5</Tier>
         <Description>A mystical shuriken formed from ever-frozen ice.</Description>
@@ -6744,15 +6769,14 @@
             <EffectInfo name="" description="Drain 10 MP/sec"/>
             <EffectInfo name="When Key Released" description=""/>
         </ExtraTooltipData>
-        <Projectile>  
+        <Projectile>
             <ObjectId>Ninja Star Ice</ObjectId>
             <Speed>150</Speed>
-            <MinDamage>470</MinDamage>
-            <MaxDamage>530</MaxDamage>
+            <MinDamage>700</MinDamage>
+            <MaxDamage>800</MaxDamage>
             <LifetimeMS>1000</LifetimeMS>
             <Size>120</Size>
             <PassesCover/>
-            
         </Projectile>
         <Usable/>
         <BagType>4</BagType>
@@ -6761,16 +6785,21 @@
         <MpEndCost>85</MpEndCost>
         <MultiPhase/>
         <Activate>ShurikenAbility</Activate>
+        <feedPower>185</feedPower>
+        <DisplayId>Ice Star</DisplayId>
     </Object>
 
 
     <Object type="0xc59" id="Doom Circle">
         <Class>Equipment</Class>
         <Item/>
-        <Texture><File>lofiObj3</File><Index>0x231</Index></Texture>
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x231</Index>
+        </Texture>
         <SlotType>25</SlotType>
         <Tier>6</Tier>
-        <Description>A sacred shuriken that embodies the power and speed of the wind.</Description>
+        <Description>An ancient weapon that spells destruction for all who oppose its master.</Description>
         <Sound>spell/fire_spray</Sound>
         <ExtraTooltipData>
             <EffectInfo name="While Key Held" description=""/>
@@ -6778,11 +6807,11 @@
             <EffectInfo name="" description="Drain 10 MP/sec"/>
             <EffectInfo name="When Key Released" description=""/>
         </ExtraTooltipData>
-        <Projectile>  
+        <Projectile>
             <ObjectId>Ninja Star Doom</ObjectId>
             <Speed>150</Speed>
-            <MinDamage>550</MinDamage>
-            <MaxDamage>650</MaxDamage>
+            <MinDamage>850</MinDamage>
+            <MaxDamage>950</MaxDamage>
             <LifetimeMS>1000</LifetimeMS>
             <Size>120</Size>
             <PassesCover/>
@@ -6794,24 +6823,28 @@
         <MpEndCost>100</MpEndCost>
         <MultiPhase/>
         <Activate>ShurikenAbility</Activate>
+        <feedPower>380</feedPower>
+        <DisplayId>Doom Circle</DisplayId>
     </Object>
 
     
     <Object type="0x916" id="Midnight Star">
         <Class>Equipment</Class>
         <Item/>
-        <Texture><File>lofiObj3</File><Index>0x232</Index></Texture>
+        <Texture>
+            <File>lofiObj3</File>
+            <Index>0x232</Index>
+        </Texture>
         <SlotType>25</SlotType>
-        <Description>A legendary shuriken that sucks the light in around it.</Description> 
+        <Description>A legendary shuriken that absorbs the light around it.</Description>
         <Sound>spell/fire_spray</Sound>
         <ExtraTooltipData>
             <EffectInfo name="While Key Held" description=""/>
             <EffectInfo name="" description="Speedy on self"/>
             <EffectInfo name="" description="Drain 10 MP/sec"/>
             <EffectInfo name="When Key Released" description=""/>
-
         </ExtraTooltipData>
-        <Projectile>  
+        <Projectile>
             <ObjectId>Ninja Star Midnight</ObjectId>
             <Speed>150</Speed>
             <MinDamage>300</MinDamage>
@@ -6820,15 +6853,18 @@
             <Size>120</Size>
             <ConditionEffect duration="4">Paralyzed</ConditionEffect>
             <PassesCover/>
-            
         </Projectile>
         <ConditionEffect duration="4">Paralyzed</ConditionEffect>
         <Usable/>
         <BagType>6</BagType>
+        <FameBonus>6</FameBonus>
         <MpCost>0</MpCost>
         <MpEndCost>90</MpEndCost>
         <MultiPhase/>
         <Activate>ShurikenAbility</Activate>
+        <feedPower>850</feedPower>
+        <Soulbound/>
+        <DisplayId>Midnight Star</DisplayId>
     </Object>
 
 

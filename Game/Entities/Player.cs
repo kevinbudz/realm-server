@@ -511,6 +511,7 @@ namespace RotMG.Game.Entities
                 FameStats.MinutesActive++;
 
             TickRegens();
+            TickNinjaCharge();
             TickProjectiles();
             TickGotoAcks();
             //Standing players send no Moves, so the move-driven sweep

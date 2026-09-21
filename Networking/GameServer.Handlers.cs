@@ -106,10 +106,38 @@ namespace RotMG.Networking
                 return;
             }
 
-            using (PacketReader rdr = new PacketReader(new MemoryStream(data)))
+            //Handshake window: a fresh connection has no Player until
+            //Load/Create runs, but stale client packets (a hit queued
+            //before a portal transfer, a shoot sent before MapInfo) can
+            //arrive first. Every game handler below dereferences
+            //client.Player; drop those instead of NRE-ing into a
+            //disconnect (this turned nexus keybinds into disconnects).
+            //Pong stays allowed so keepalives keep working mid-handshake.
+            if (client.Player == null)
             {
                 switch (id)
                 {
+                case (int)PacketId.Hello:
+                case (int)PacketId.Load:
+                case (int)PacketId.Create:
+                case (int)PacketId.Pong:
+                    break;
+                default:
+                    return;
+                }
+            }
+
+            using (PacketReader rdr = new PacketReader(new MemoryStream(data)))
+            {
+                //No handler below length-checks its reads, so a short body
+                //(wrong client build, crafted frame) threw EndOfStreamException
+                //out of Read into Client.Tick, which disconnected the client
+                //with a stack-trace print. Drop the packet instead; this one
+                //guard covers every current and future handler.
+                try
+                {
+                    switch (id)
+                    {
                     case (int)PacketId.Hello:
                         Hello(client, rdr);
                         break;
@@ -206,6 +234,19 @@ namespace RotMG.Networking
                     case (int)PacketId.Pong:
                         Pong(client, rdr);
                         break;
+                    }
+                }
+                catch (EndOfStreamException)
+                {
+#if DEBUG
+                    Program.Print(PrintType.Error, $"Dropped truncated packet <{id}> ({data.Length}B)");
+#endif
+                }
+                catch (IOException)
+                {
+#if DEBUG
+                    Program.Print(PrintType.Error, $"Dropped unreadable packet <{id}> ({data.Length}B)");
+#endif
                 }
             }
         }
@@ -991,6 +1032,190 @@ namespace RotMG.Networking
             wtr.Write((byte)'\r');
             wtr.Write((byte)'\n');
             return PacketWriter.RentedBytes();
+        }
+
+        //Headless P23: truncated inbound bodies must never throw out of
+        //Read. Regression test for the EndOfStreamException the OpenTK
+        //client's 4-byte PlayerShoot (angle only) triggered: every inbound
+        //handler reads without length checks, so Read must drop short
+        //packets instead of letting Client.Tick disconnect on a stack trace.
+        public static bool VerifyTruncatedInbound()
+        {
+            static bool Fail(string msg)
+            {
+                Program.Print(PrintType.Error, "P23 verify: " + msg);
+                return false;
+            }
+
+            Client client = new Client(new SendState(), new ReceiveState());
+            client.State = ProtocolState.Connected;
+            client.Active = true;
+            client.Id = 2301;
+
+            //Every packet id Read dispatches. Empty bodies throw on the
+            //first read of every handler that parses (Escape/CancelTrade
+            //read nothing and already null-guard the missing player).
+            int[] inboundIds = new int[]
+            {
+                (int)PacketId.Hello,
+                (int)PacketId.Create,
+                (int)PacketId.Load,
+                (int)PacketId.Move,
+                (int)PacketId.InvSwap,
+                (int)PacketId.ShootAck,
+                (int)PacketId.AoeAck,
+                (int)PacketId.PlayerHit,
+                (int)PacketId.SquareHit,
+                (int)PacketId.PlayerShoot,
+                (int)PacketId.EnemyHit,
+                (int)PacketId.PlayerText,
+                (int)PacketId.EditAccountList,
+                (int)PacketId.UseItem,
+                (int)PacketId.GotoAck,
+                (int)PacketId.Escape,
+                (int)PacketId.UsePortal,
+                (int)PacketId.ChooseName,
+                (int)PacketId.InvDrop,
+                (int)PacketId.Teleport,
+                (int)PacketId.Buy,
+                (int)PacketId.RequestTrade,
+                (int)PacketId.ChangeTrade,
+                (int)PacketId.AcceptTrade,
+                (int)PacketId.CancelTrade,
+                (int)PacketId.CreateGuild,
+                (int)PacketId.GuildRemove,
+                (int)PacketId.GuildInvite,
+                (int)PacketId.JoinGuild,
+                (int)PacketId.ChangeGuildRank,
+                (int)PacketId.Reskin,
+                (int)PacketId.Pong,
+            };
+
+            foreach (int id in inboundIds)
+            {
+                try
+                {
+                    Read(client, id, new byte[0]);
+                }
+                catch (Exception ex)
+                {
+                    return Fail($"empty body for packet <{id}> threw {ex.GetType().Name}");
+                }
+            }
+
+            //Exact repro from the report: the OpenTK PlayerShoot carried
+            //only the 4-byte angle, so Position.X had no bytes left to read.
+            try
+            {
+                Read(client, (int)PacketId.PlayerShoot, new byte[] { 0x3F, 0x80, 0x00, 0x00 });
+            }
+            catch (Exception ex)
+            {
+                return Fail($"angle-only PlayerShoot threw {ex.GetType().Name}");
+            }
+
+            //Unknown ids are ignored by the switch; short bodies for them
+            //must be harmless too.
+            try
+            {
+                Read(client, 255, new byte[0]);
+            }
+            catch (Exception ex)
+            {
+                return Fail($"unknown packet id threw {ex.GetType().Name}");
+            }
+
+            if (client.State != ProtocolState.Connected || !client.Active)
+                return Fail("truncated packets changed client state");
+            if (client.PendingCount != 0)
+                return Fail($"truncated packets queued {client.PendingCount} replies");
+
+            Program.Print(PrintType.Info, "P23 verify: truncated inbound packets dropped without throwing");
+            return true;
+        }
+
+        //Headless P25: well-formed game packets arriving before Load/Create
+        //(a hit queued across a portal transfer, a shoot sent before
+        //MapInfo) must be dropped, not NRE on the missing Player. P23 only
+        //covers truncated bodies, which fail before touching the player.
+        public static bool VerifyPrePlayerDrop()
+        {
+            static bool Fail(string msg)
+            {
+                Program.Print(PrintType.Error, "P25 verify: " + msg);
+                return false;
+            }
+
+            Client client = new Client(new SendState(), new ReceiveState());
+            client.State = ProtocolState.Connected;
+            client.Active = true;
+            client.Id = 2501;
+            if (client.Player != null)
+                return Fail("fresh client already has a player");
+
+            //Well-formed bodies sized to each reader so the handler would
+            //reach the player dereference without the guard.
+            int[] ids = new int[]
+            {
+                (int)PacketId.PlayerHit,   // 4B bullet id (the nexus NRE)
+                (int)PacketId.SquareHit,   // 8B time + bullet id
+                (int)PacketId.EnemyHit,    // 12B time + bullet id + target id
+                (int)PacketId.Move,        // 12B time + position
+                (int)PacketId.PlayerShoot, // 17B time + pos + angle + ability
+                (int)PacketId.GotoAck,     // 4B time
+                (int)PacketId.ShootAck,    // 4B time
+                (int)PacketId.AoeAck,      // 12B time + position
+                (int)PacketId.Escape,      // 0B
+                (int)PacketId.UsePortal,   // 4B object id
+                (int)PacketId.Teleport,    // 4B object id
+            };
+            byte[][] bodies = new byte[][]
+            {
+                new byte[] { 0, 0, 2, 180 },
+                new byte[] { 0, 0, 0, 1, 0, 0, 0, 2 },
+                new byte[] { 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3 },
+                new byte[] { 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
+                new byte[] { 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+                new byte[] { 0, 0, 0, 1 },
+                new byte[] { 0, 0, 0, 1 },
+                new byte[] { 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
+                new byte[0],
+                new byte[] { 0, 0, 0, 1 },
+                new byte[] { 0, 0, 0, 1 },
+            };
+
+            for (int i = 0; i < ids.Length; i++)
+            {
+                try
+                {
+                    Read(client, ids[i], bodies[i]);
+                }
+                catch (Exception ex)
+                {
+                    return Fail($"pre-player packet <{ids[i]}> threw {ex.GetType().Name}");
+                }
+            }
+
+            //Pong stays allowed mid-handshake and is a side-effect-free
+            //keepalive: it must still process without throwing.
+            try
+            {
+                Read(client, (int)PacketId.Pong, new byte[] { 0, 0, 0, 1, 0, 0, 0, 2 });
+            }
+            catch (Exception ex)
+            {
+                return Fail($"pre-player Pong threw {ex.GetType().Name}");
+            }
+
+            if (client.Player != null)
+                return Fail("dropped packets created a player");
+            if (client.State != ProtocolState.Connected || !client.Active)
+                return Fail("dropped packets changed client state");
+            if (client.PendingCount != 0)
+                return Fail($"dropped packets queued {client.PendingCount} replies");
+
+            Program.Print(PrintType.Info, "P25 verify: pre-player game packets dropped without throwing");
+            return true;
         }
 
         //Headless P13: the probe packets the DEBUG /p13 command sends must

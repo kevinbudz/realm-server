@@ -61,6 +61,24 @@ namespace RotMG
                 Environment.Exit(ok ? 0 : 1);
             }
 
+            //Pre-Init like the other early verifies: truncated bodies throw
+            //during parse before any handler touches worlds or the database.
+            if (args != null && args.Length > 0 && args[0] == "--p23-verify")
+            {
+                bool ok = GameServer.VerifyTruncatedInbound();
+                DrainWork();
+                Console.WriteLine(ok ? "P23 verify: PASS" : "P23 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p25-verify")
+            {
+                bool ok = GameServer.VerifyPrePlayerDrop();
+                DrainWork();
+                Console.WriteLine(ok ? "P25 verify: PASS" : "P25 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
             if (args != null && args.Length > 0 && (args[0] == "--p14-verify" || args[0] == "--p16-verify"))
             {
                 bool ok = Player.VerifyMoveCorrection();
@@ -177,6 +195,14 @@ namespace RotMG
                 bool ok = AppServer.VerifyCharListCredentials();
                 DrainWork();
                 Console.WriteLine(ok ? "P22 verify: PASS" : "P22 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--p24-verify")
+            {
+                bool ok = Player.VerifyProjectileIdLockstep();
+                DrainWork();
+                Console.WriteLine(ok ? "P24 verify: PASS" : "P24 verify: FAIL");
                 Environment.Exit(ok ? 0 : 1);
             }
 
