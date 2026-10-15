@@ -6,6 +6,7 @@ using Xunit;
 
 namespace RotMG.BehaviorTests;
 
+[Collection("Game resources")]
 public sealed class DatabaseRegistrationTests
 {
     private static readonly string[] PreviouslyMissingTargetEnemies =
@@ -67,8 +68,10 @@ public sealed class DatabaseRegistrationTests
     [Fact]
     public void AllTargetXmlSupportedReferenceEnemyGapsHaveBehaviorModels()
     {
+        // Other tests replace models on the shared database, so count a
+        // freshly loaded database instead.
         TestWorldFactory.Create();
-        BehaviorDb db = Manager.Behaviors;
+        BehaviorDb db = TestWorldFactory.LoadBehaviorDatabase();
 
         Assert.Equal(52, PreviouslyMissingTargetEnemies.Length);
         Assert.Equal(586, db.Models.Count);

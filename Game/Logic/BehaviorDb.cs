@@ -41,17 +41,14 @@ namespace RotMG.Game.Logic
                 }
             }
 
-            RootTransitions = rootTransitions;
-
             // A transition passed directly to db.Init is a root-level phase
-            // transition. Attach it to each root state so the normal state
-            // lifecycle enters, ticks, exits, and resolves it against sibling
-            // root states. Only the active root state's transition list runs.
-            if (rootTransitions.Count > 0 && States.Count > 0)
-            {
-                foreach (State state in States.Values)
-                    state.Transitions.InsertRange(0, rootTransitions);
-            }
+            // transition. Like the reference's unnamed root state, it belongs
+            // to the model rather than to any phase: the entity enters it once,
+            // keeps its timer across phase changes, and resolves its target
+            // against the root states.
+            RootTransitions = rootTransitions;
+            foreach (Transition t in RootTransitions)
+                State.ResolveTransition(States.Values, t);
 
             foreach (State s1 in States.Values)
                 foreach (Transition t in s1.Transitions)

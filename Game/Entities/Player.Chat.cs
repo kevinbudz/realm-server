@@ -65,6 +65,9 @@ namespace RotMG.Game.Entities
                 {
                     if (en.CurrentStates == null)
                         continue;
+                    foreach (Transition transition in en.Behavior.RootTransitions)
+                        if (transition is PlayerTextTransition rootTextTransition)
+                            rootTextTransition.OnChatReceived(this, validText);
                     foreach (State state in en.CurrentStates.ToArray())
                         foreach (Transition transition in state.Transitions)
                             if (transition is PlayerTextTransition textTransition)

@@ -58,6 +58,6 @@ public sealed class SpawnAndTransformTests
         foreach (var behavior in thessal.Behavior.Behaviors)
             behavior.Death(thessal);
 
-        Assert.Single(world.Entities.Values.Cast<Entity>().Concat(world.Statics.Values).Where(e => e.Type == ventType));
+        Assert.Single(world.Entities.Values.Cast<Entity>().Concat(world.Statics.Values), e => e.Type == ventType);
     }
 }

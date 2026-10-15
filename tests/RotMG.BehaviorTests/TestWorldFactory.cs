@@ -45,7 +45,7 @@ internal static class TestWorldFactory
         }
     }
 
-    private static BehaviorDb LoadBehaviorDatabase()
+    public static BehaviorDb LoadBehaviorDatabase()
     {
         var db = new BehaviorDb();
         Assembly assembly = typeof(BehaviorDb).Assembly;
@@ -70,6 +70,9 @@ internal static class TestWorldFactory
         {
             var player = (Player)RuntimeHelpers.GetUninitializedObject(typeof(Player));
             player.Effects = new int[29];
+            // An empty visible set means shots are created without sending
+            // packets to the fake, client-less player.
+            player.Entities = new HashSet<Entity>();
             player.Parent = this;
             player.Position = position;
             player.Id = ++NextObjectId;

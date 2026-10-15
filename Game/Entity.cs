@@ -614,6 +614,8 @@ namespace RotMG.Game
 
                 foreach (Behavior b in Behavior.Behaviors)
                     b.Enter(this);
+                foreach (Transition t in Behavior.RootTransitions)
+                    t.Enter(this);
             }
         }
 
@@ -645,6 +647,7 @@ namespace RotMG.Game
                 }
 
                 //Loop through state transitions
+                bool switched = false;
                 for (int i = 0; i < CurrentStates.Count; i++)
                 {
                     State state = CurrentStates[i];
@@ -653,68 +656,82 @@ namespace RotMG.Game
                     {
                         if (transition.Tick(this))
                         {
-                            // Root transitions are shared across all root
-                            // states. A still-true condition that targets the
-                            // active state is not a phase change: consume it
-                            // without re-entering the same behaviors, then let
-                            // later root or state-local transitions be tested.
-                            if (i == 0 && Behavior.RootTransitions.Contains(transition) &&
-                                transition.TargetState == state.Id)
-                                continue;
-
                             targetState = transition.TargetState;
                             break;
                         }
                     }
 
                     //Switch state if needed
-                    if (targetState != -1)
+                    if (targetState != -1 && TrySwitchState(i, targetState))
                     {
-                        Dictionary<int, State> siblings = i == 0 ? Behavior.States : CurrentStates[i - 1].States;
-                        if (!siblings.ContainsKey(targetState))
-                        {
-#if DEBUG
-                            Program.Print(PrintType.Error, $"Unresolved state target <{targetState}> for <{Desc?.DisplayId}>, staying in <{state.StringId}>.");
-#endif
-                            continue;
-                        }
-
-                        //Exit old behaviors/transitions
-                        for (int k = i; k < CurrentStates.Count; k++) 
-                        {
-                            foreach (Behavior behavior in CurrentStates[k].Behaviors) behavior.Exit(this);
-                            foreach (Transition transition in CurrentStates[k].Transitions) transition.Exit(this);
-                        }
-
-                        //Clear old substates
-                        while (CurrentStates.Count > i)
-                            CurrentStates.RemoveAt(i);
-
-                        //Get new substates
-                        int subIndex = i - 1;
-                        Dictionary<int, State> states = i == 0 ? Behavior.States : CurrentStates[i - 1].States;
-                        while (states != null)
-                        {
-                            subIndex++;
-                            if (states.Count > 0)
-                            {
-                                if (subIndex == i) CurrentStates.Add(states[targetState]);
-                                else CurrentStates.Add(states.Values.First());
-                                states = CurrentStates.Last().States;
-                            }
-                            else states = null;
-                        }
-
-                        //Enter new behaviors/transitions
-                        for (int k = i; k < CurrentStates.Count; k++)
-                        {
-                            foreach (Behavior behavior in CurrentStates[k].Behaviors) behavior.Enter(this);
-                            foreach (Transition transition in CurrentStates[k].Transitions) transition.Enter(this);
-                        }
+                        switched = true;
                         break;
                     }
                 }
+
+                // Root transitions belong to the model, like the reference's
+                // unnamed root state: they persist across root phases and are
+                // tested only after every active phase's own transitions. A
+                // still-true condition that targets the active root phase is
+                // not a phase change.
+                if (!switched && CurrentStates.Count > 0)
+                {
+                    foreach (Transition transition in Behavior.RootTransitions)
+                    {
+                        if (transition.Tick(this) && transition.TargetState != CurrentStates[0].Id)
+                        {
+                            TrySwitchState(0, transition.TargetState);
+                            break;
+                        }
+                    }
+                }
             }
+        }
+
+        private bool TrySwitchState(int i, int targetState)
+        {
+            Dictionary<int, State> siblings = i == 0 ? Behavior.States : CurrentStates[i - 1].States;
+            if (!siblings.ContainsKey(targetState))
+            {
+#if DEBUG
+                Program.Print(PrintType.Error, $"Unresolved state target <{targetState}> for <{Desc?.DisplayId}>, staying in <{CurrentStates[i].StringId}>.");
+#endif
+                return false;
+            }
+
+            //Exit old behaviors/transitions
+            for (int k = i; k < CurrentStates.Count; k++)
+            {
+                foreach (Behavior behavior in CurrentStates[k].Behaviors) behavior.Exit(this);
+                foreach (Transition transition in CurrentStates[k].Transitions) transition.Exit(this);
+            }
+
+            //Clear old substates
+            while (CurrentStates.Count > i)
+                CurrentStates.RemoveAt(i);
+
+            //Get new substates
+            int subIndex = i - 1;
+            Dictionary<int, State> states = siblings;
+            while (states != null)
+            {
+                subIndex++;
+                if (states.Count > 0)
+                {
+                    if (subIndex == i) CurrentStates.Add(states[targetState]);
+                    else CurrentStates.Add(states.Values.First());
+                    states = CurrentStates.Last().States;
+                }
+                else states = null;
+            }
+
+            //Enter new behaviors/transitions
+            for (int k = i; k < CurrentStates.Count; k++)
+            {
+                foreach (Behavior behavior in CurrentStates[k].Behaviors) behavior.Enter(this);
+                foreach (Transition transition in CurrentStates[k].Transitions) transition.Enter(this);
+            }
+            return true;
         }
 
         public void TrySetSV(StatType type, object value)
