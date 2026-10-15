@@ -1,4 +1,5 @@
-﻿using RotMG.Common;
+﻿using System;
+using RotMG.Common;
 using RotMG.Networking;
 using RotMG.Utils;
 
@@ -36,7 +37,7 @@ namespace RotMG.Game.Entities
             owner.FameStats.DamageDealt += damage;
             owner.FameStats.ShotsThatDamage++;
 
-            byte[] packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damage);
+            ReadOnlySpan<byte> packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damage);
             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
                 if (en is Player player && player.Client.Account.AllyDamage && !player.Equals(owner))
                     player.Client.Send(packet);

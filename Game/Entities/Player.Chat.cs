@@ -90,7 +90,7 @@ namespace RotMG.Game.Entities
                 return;
             }
 
-            byte[] packet = GameServer.Text(Name, Id, NumStars, 5, "", validText);
+            ReadOnlySpan<byte> packet = GameServer.Text(Name, Id, NumStars, 5, "", validText);
 
             foreach (Player player in Parent.Players.Values)
                 if (!player.Client.Account.IgnoredIds.Contains(AccountId))

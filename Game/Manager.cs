@@ -878,7 +878,7 @@ namespace RotMG.Game
 
             TotalTimeUnsynced = Math.Max(TotalTimeUnsynced, 1000);
 
-            byte[] reconnect = GameServer.Reconnect(42);
+            byte[] reconnect = GameServer.Reconnect(42).ToArray(); //[W06] a copy: the verify keeps it past the Reconnect call
             if (reconnect == null || reconnect.Length != 5 || reconnect[0] != (byte)GameServer.PacketId.Reconnect)
                 return Fail($"Reconnect wire changed (len={reconnect?.Length})");
             Program.Print(PrintType.Info, "P19 verify: Reconnect still writes PacketId + int gameId");

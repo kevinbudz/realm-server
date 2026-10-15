@@ -973,14 +973,14 @@ namespace RotMG.Game
 
         private void OryxSay(string message)
         {
-            byte[] packet = GameServer.Text("Oryx the Mad God", 0, -1, 0, "", message);
+            ReadOnlySpan<byte> packet = GameServer.Text("Oryx the Mad God", 0, -1, 0, "", message);
             foreach (Player player in _world.Players.Values)
                 player.Client.Send(packet);
         }
 
         private void Announce(string message)
         {
-            byte[] packet = GameServer.Text("", 0, -1, 0, "", message);
+            ReadOnlySpan<byte> packet = GameServer.Text("", 0, -1, 0, "", message);
             foreach (Client client in Manager.Clients.Values.ToArray())
                 if (client.Player != null)
                     client.Send(packet);

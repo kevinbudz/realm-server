@@ -21,6 +21,7 @@ namespace RotMG.Networking
     public class ReceiveState
     {
         public int PacketLength;
+        public int Filled; //[W06] bytes of the current frame (header included) already in PacketBytes
         public readonly byte[] PacketBytes;
         public SocketEventState State;
 
@@ -28,13 +29,6 @@ namespace RotMG.Networking
         {
             PacketBytes = new byte[GameServer.BufferSize];
             PacketLength = GameServer.PrefixLength;
-        }
-
-        public byte[] GetPacketBody()
-        {
-            byte[] packetBody = new byte[PacketLength - GameServer.PrefixLength];
-            Array.Copy(PacketBytes, GameServer.PrefixLength, packetBody, 0, packetBody.Length);
-            return packetBody;
         }
 
         public int GetPacketId()
@@ -46,6 +40,7 @@ namespace RotMG.Networking
         {
             State = SocketEventState.Awaiting;
             PacketLength = 0;
+            Filled = 0;
         }
     }
 
@@ -299,7 +294,7 @@ namespace RotMG.Networking
         //Framed Failure(2, ...) on a raw socket that never entered Client.
         //Used when the pool is empty or the per-IP cap is hit, so the
         //Flash client can show a reason instead of a bare TCP drop.
-        public static byte[] FramePacket(byte[] packet)
+        public static byte[] FramePacket(ReadOnlySpan<byte> packet) //[W06] span input: builders return spans now
         {
             int length = packet.Length + PrefixLengthWithId;
             byte[] buf = new byte[length];
@@ -307,7 +302,7 @@ namespace RotMG.Networking
             buf[1] = (byte)(length >> 16);
             buf[2] = (byte)(length >> 8);
             buf[3] = (byte)length;
-            Buffer.BlockCopy(packet, 0, buf, PrefixLengthWithId, packet.Length);
+            packet.CopyTo(buf.AsSpan(PrefixLengthWithId));
             return buf;
         }
 
@@ -374,7 +369,7 @@ namespace RotMG.Networking
             if (_connected == null)
                 _connected = new Dictionary<string, int>();
 
-            byte[] packet = Failure(FailureForceCloseGame, TooManyConnectionsMessage);
+            ReadOnlySpan<byte> packet = Failure(FailureForceCloseGame, TooManyConnectionsMessage);
             byte[] framed = FramePacket(packet);
             int length = (framed[0] << 24) | (framed[1] << 16) | (framed[2] << 8) | framed[3];
             if (length != framed.Length)

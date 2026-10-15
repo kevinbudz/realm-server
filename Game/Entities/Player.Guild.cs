@@ -36,7 +36,7 @@ namespace RotMG.Game.Entities
         {
             if (string.IsNullOrWhiteSpace(GuildName))
                 return;
-            byte[] packet = GameServer.Text("@" + GuildName, Id, NumStars, 0, "", text);
+            ReadOnlySpan<byte> packet = GameServer.Text("@" + GuildName, Id, NumStars, 0, "", text);
             foreach (Client client in Manager.Clients.Values.ToArray())
             {
                 Player player = client.Player;

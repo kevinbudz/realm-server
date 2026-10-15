@@ -264,7 +264,7 @@ namespace RotMG.Game.Dungeons.Candyland
 
         private void BroadcastTaunt(int objectId, string text)
         {
-            byte[] packet = GameServer.Text("#Cupcake", objectId, -1, 3, "", text);
+            ReadOnlySpan<byte> packet = GameServer.Text("#Cupcake", objectId, -1, 3, "", text);
             foreach (Player player in _world.Players.Values)
                 player.Client.Send(packet);
         }

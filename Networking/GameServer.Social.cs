@@ -1,4 +1,5 @@
-﻿using RotMG.Common;
+﻿using System;
+using RotMG.Common;
 using RotMG.Game;
 using RotMG.Game.Entities;
 using RotMG.Game.Entities.Vendors;
@@ -12,7 +13,7 @@ namespace RotMG.Networking
     //handlers or builders for those here.
     public static partial class GameServer
     {
-        public static void Teleport(Client client, PacketReader rdr)
+        public static void Teleport(Client client, ref SpanReader rdr)
         {
             int objectId = rdr.ReadInt32();
             if (client.Player == null || client.Player.Parent == null)
@@ -20,7 +21,7 @@ namespace RotMG.Networking
             client.Player.TryTeleportTo(objectId); //Checks World.AllowTeleport.
         }
 
-        public static void Buy(Client client, PacketReader rdr)
+        public static void Buy(Client client, ref SpanReader rdr)
         {
             int objectId = rdr.ReadInt32();
             Player player = client.Player;
@@ -38,7 +39,7 @@ namespace RotMG.Networking
             obj.Buy(player);
         }
 
-        public static void RequestTrade(Client client, PacketReader rdr)
+        public static void RequestTrade(Client client, ref SpanReader rdr)
         {
             string name = rdr.ReadString();
             if (client.Player == null || client.Player.Parent == null)
@@ -46,7 +47,7 @@ namespace RotMG.Networking
             client.Player.RequestTrade(name);
         }
 
-        public static void ChangeTrade(Client client, PacketReader rdr)
+        public static void ChangeTrade(Client client, ref SpanReader rdr)
         {
             int count = rdr.ReadInt16();
             bool[] offer = new bool[count];
@@ -57,7 +58,7 @@ namespace RotMG.Networking
             client.Player.ChangeTrade(offer);
         }
 
-        public static void AcceptTrade(Client client, PacketReader rdr)
+        public static void AcceptTrade(Client client, ref SpanReader rdr)
         {
             int myCount = rdr.ReadInt16();
             bool[] myOffer = new bool[myCount];
@@ -72,14 +73,14 @@ namespace RotMG.Networking
             client.Player.AcceptTrade(myOffer, yourOffer);
         }
 
-        public static void CancelTrade(Client client, PacketReader rdr)
+        public static void CancelTrade(Client client, ref SpanReader rdr)
         {
             if (client.Player == null)
                 return;
             client.Player.CancelTrade();
         }
 
-        public static void CreateGuild(Client client, PacketReader rdr)
+        public static void CreateGuild(Client client, ref SpanReader rdr)
         {
             string name = rdr.ReadString();
             Player player = client.Player;
@@ -135,7 +136,7 @@ namespace RotMG.Networking
             }
         }
 
-        public static void GuildInvite(Client client, PacketReader rdr)
+        public static void GuildInvite(Client client, ref SpanReader rdr)
         {
             string name = rdr.ReadString();
             Player player = client.Player;
@@ -169,7 +170,7 @@ namespace RotMG.Networking
             target.Client.Send(InvitedToGuild(client.Account.Name, player.GuildName));
         }
 
-        public static void GuildRemove(Client client, PacketReader rdr)
+        public static void GuildRemove(Client client, ref SpanReader rdr)
         {
             string name = rdr.ReadString();
             Player player = client.Player;
@@ -241,7 +242,7 @@ namespace RotMG.Networking
             player.SendError("Can't remove member. Insufficient privileges.");
         }
 
-        public static void JoinGuild(Client client, PacketReader rdr)
+        public static void JoinGuild(Client client, ref SpanReader rdr)
         {
             string guildName = rdr.ReadString();
             Player player = client.Player;
@@ -282,7 +283,7 @@ namespace RotMG.Networking
                 player.SendError("Could not join guild. (" + result + ")");
         }
 
-        public static void ChangeGuildRank(Client client, PacketReader rdr)
+        public static void ChangeGuildRank(Client client, ref SpanReader rdr)
         {
             string name = rdr.ReadString();
             int rank = rdr.ReadInt32();
@@ -342,7 +343,7 @@ namespace RotMG.Networking
             }
         }
 
-        public static void Reskin(Client client, PacketReader rdr)
+        public static void Reskin(Client client, ref SpanReader rdr)
         {
             int skinId = rdr.ReadInt32();
             Player player = client.Player;
@@ -374,7 +375,7 @@ namespace RotMG.Networking
             player.SkinType = skinId;
         }
 
-        public static byte[] QuestObjId(int objectId)
+        public static ReadOnlySpan<byte> QuestObjId(int objectId)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.QuestObjId);
@@ -382,7 +383,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] BuyResult(int result, string resultString)
+        public static ReadOnlySpan<byte> BuyResult(int result, string resultString)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.BuyResult);
@@ -391,7 +392,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] GuildResult(bool success, string errorText)
+        public static ReadOnlySpan<byte> GuildResult(bool success, string errorText)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.GuildResult);
@@ -400,7 +401,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] InvitedToGuild(string name, string guildName)
+        public static ReadOnlySpan<byte> InvitedToGuild(string name, string guildName)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.InvitedToGuild);
@@ -409,7 +410,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] TradeRequested(string name)
+        public static ReadOnlySpan<byte> TradeRequested(string name)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.TradeRequested);
@@ -417,7 +418,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] TradeStart(TradeItem[] myItems, string yourName, TradeItem[] yourItems)
+        public static ReadOnlySpan<byte> TradeStart(TradeItem[] myItems, string yourName, TradeItem[] yourItems)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.TradeStart);
@@ -431,7 +432,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] TradeChanged(bool[] offer)
+        public static ReadOnlySpan<byte> TradeChanged(bool[] offer)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.TradeChanged);
@@ -441,7 +442,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] TradeAccepted(bool[] myOffer, bool[] yourOffer)
+        public static ReadOnlySpan<byte> TradeAccepted(bool[] myOffer, bool[] yourOffer)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.TradeAccepted);
@@ -454,7 +455,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] TradeDone(int code, string description)
+        public static ReadOnlySpan<byte> TradeDone(int code, string description)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.TradeDone);

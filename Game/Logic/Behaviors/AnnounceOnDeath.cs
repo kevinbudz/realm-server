@@ -1,3 +1,4 @@
+using System;
 using RotMG.Networking;
 
 namespace RotMG.Game.Logic.Behaviors
@@ -15,7 +16,7 @@ namespace RotMG.Game.Logic.Behaviors
         {
             if (host.Parent == null)
                 return;
-            byte[] packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 0, "", Message);
+            ReadOnlySpan<byte> packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 0, "", Message);
             BehaviorHelpers.BroadcastNearby(host, packet);
         }
     }

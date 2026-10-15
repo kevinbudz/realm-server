@@ -78,7 +78,7 @@ namespace RotMG.Game.Logic.Behaviors
             for (int k = 0; k < count; k++)
                 projectiles.Add(new Projectile(host, desc, startId + k, Manager.TotalTime, angle + angleInc * k, host.Position, damage));
 
-            byte[] packet = GameServer.EnemyShoot(startId, host.Id, desc.BulletType, host.Position, angle, (short)damage, (byte)count, angleInc);
+            ReadOnlySpan<byte> packet = GameServer.EnemyShoot(startId, host.Id, desc.BulletType, host.Position, angle, (short)damage, (byte)count, angleInc);
 
             foreach (Entity en in host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius))
             {

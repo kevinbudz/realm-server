@@ -88,8 +88,9 @@ namespace RotMG.Game.Logic.Behaviors
                         Time = Manager.TotalTime + TravelTime
                     };
 
-                    byte[] eff = GameServer.ThrowEffect(host.Id, Color, p, TravelTime);
-                    byte[] aoe = GameServer.Aoe(p, Radius, Damage, Effects[0].Effect, Color);
+                    //Copies: both builders share the scratch, and aoe is captured by the timer lambda below.
+                    byte[] eff = GameServer.ThrowEffect(host.Id, Color, p, TravelTime).ToArray();
+                    byte[] aoe = GameServer.Aoe(p, Radius, Damage, Effects[0].Effect, Color).ToArray();
                     Entity[] players = host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius)
                         .Where(e => (e is Player j) && j.Entities.Contains(host)).ToArray();
 

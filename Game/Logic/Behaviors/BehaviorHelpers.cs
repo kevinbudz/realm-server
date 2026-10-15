@@ -156,14 +156,14 @@ namespace RotMG.Game.Logic.Behaviors
             return entity;
         }
 
-        public static void BroadcastNearby(Entity host, byte[] packet, float? radius = null)
+        public static void BroadcastNearby(Entity host, ReadOnlySpan<byte> packet, float? radius = null)
         {
             foreach (Entity en in host.Parent.PlayerChunks.HitTest(host.Position, radius ?? Player.SightRadius))
                 if (en is Player player)
                     player.Client.Send(packet);
         }
 
-        public static void BroadcastToViewers(Entity host, byte[] packet)
+        public static void BroadcastToViewers(Entity host, ReadOnlySpan<byte> packet)
         {
             foreach (Entity en in host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius))
                 if (en is Player player && player.Entities.Contains(host))

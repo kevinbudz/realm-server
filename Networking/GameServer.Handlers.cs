@@ -92,10 +92,11 @@ namespace RotMG.Networking
         public const int FailureForceCloseGame = 2;
         public const int FailureInvalidTeleportTarget = 3;
 
-        public static void Read(Client client, int id, byte[] data)
+        //[W06] data is the frame body: a span over the pooled receive array, valid for this call only.
+        public static void Read(Client client, int id, ReadOnlySpan<byte> data)
         {
 #if DEBUG
-            Program.Print(PrintType.Debug, $"Packet received <{id}> sendQueue={client.PendingCount} packets/{client.PendingBytes}B <{string.Join(" ,",data.Select(k => k.ToString()).ToArray())}>");
+            Program.Print(PrintType.Debug, $"Packet received <{id}> sendQueue={client.PendingCount} packets/{client.PendingBytes}B <{string.Join(" ,", DebugBytes(data))}>");
 #endif
 
             if (!client.Active || client.Closing)
@@ -127,8 +128,8 @@ namespace RotMG.Networking
                 }
             }
 
-            using (PacketReader rdr = new PacketReader(new MemoryStream(data)))
             {
+                SpanReader rdr = new SpanReader(data); //[W06]
                 //No handler below length-checks its reads, so a short body
                 //(wrong client build, crafted frame) threw EndOfStreamException
                 //out of Read into Client.Tick, which disconnected the client
@@ -139,100 +140,100 @@ namespace RotMG.Networking
                     switch (id)
                     {
                     case (int)PacketId.Hello:
-                        Hello(client, rdr);
+                        Hello(client, ref rdr);
                         break;
                     case (int)PacketId.Create:
-                        Create(client, rdr);
+                        Create(client, ref rdr);
                         break;
                     case (int)PacketId.Load:
-                        Load(client, rdr);
+                        Load(client, ref rdr);
                         break;
                     case (int)PacketId.Move:
-                        Move(client, rdr);
+                        Move(client, ref rdr);
                         break;
                     case (int)PacketId.InvSwap:
-                        InvSwap(client, rdr);
+                        InvSwap(client, ref rdr);
                         break;
                     case (int)PacketId.ShootAck:
-                        ShootAck(client, rdr);
+                        ShootAck(client, ref rdr);
                         break;
                     case (int)PacketId.AoeAck:
-                        AoeAck(client, rdr);
+                        AoeAck(client, ref rdr);
                         break;
                     case (int)PacketId.PlayerHit:
-                        PlayerHit(client, rdr);
+                        PlayerHit(client, ref rdr);
                         break;
                     case (int)PacketId.SquareHit:
-                        SquareHit(client, rdr);
+                        SquareHit(client, ref rdr);
                         break;
                     case (int)PacketId.PlayerShoot:
-                        PlayerShoot(client, rdr);
+                        PlayerShoot(client, ref rdr);
                         break;
                     case (int)PacketId.EnemyHit:
-                        EnemyHit(client, rdr);
+                        EnemyHit(client, ref rdr);
                         break;
                     case (int)PacketId.PlayerText:
-                        PlayerText(client, rdr);
+                        PlayerText(client, ref rdr);
                         break;
                     case (int)PacketId.EditAccountList:
-                        EditAccountList(client, rdr);
+                        EditAccountList(client, ref rdr);
                         break;
                     case (int)PacketId.UseItem:
-                        UseItem(client, rdr);
+                        UseItem(client, ref rdr);
                         break;
                     case (int)PacketId.GotoAck:
-                        GotoAck(client, rdr);
+                        GotoAck(client, ref rdr);
                         break;
                     case (int)PacketId.Escape:
-                        Escape(client, rdr);
+                        Escape(client, ref rdr);
                         break;
                     case (int)PacketId.UsePortal:
-                        UsePortal(client, rdr);
+                        UsePortal(client, ref rdr);
                         break;
                     case (int)PacketId.ChooseName:
-                        ChooseName(client, rdr);
+                        ChooseName(client, ref rdr);
                         break;
                     case (int)PacketId.InvDrop:
-                        InvDrop(client, rdr);
+                        InvDrop(client, ref rdr);
                         break;
                     case (int)PacketId.Teleport:
-                        Teleport(client, rdr);
+                        Teleport(client, ref rdr);
                         break;
                     case (int)PacketId.Buy:
-                        Buy(client, rdr);
+                        Buy(client, ref rdr);
                         break;
                     case (int)PacketId.RequestTrade:
-                        RequestTrade(client, rdr);
+                        RequestTrade(client, ref rdr);
                         break;
                     case (int)PacketId.ChangeTrade:
-                        ChangeTrade(client, rdr);
+                        ChangeTrade(client, ref rdr);
                         break;
                     case (int)PacketId.AcceptTrade:
-                        AcceptTrade(client, rdr);
+                        AcceptTrade(client, ref rdr);
                         break;
                     case (int)PacketId.CancelTrade:
-                        CancelTrade(client, rdr);
+                        CancelTrade(client, ref rdr);
                         break;
                     case (int)PacketId.CreateGuild:
-                        CreateGuild(client, rdr);
+                        CreateGuild(client, ref rdr);
                         break;
                     case (int)PacketId.GuildRemove:
-                        GuildRemove(client, rdr);
+                        GuildRemove(client, ref rdr);
                         break;
                     case (int)PacketId.GuildInvite:
-                        GuildInvite(client, rdr);
+                        GuildInvite(client, ref rdr);
                         break;
                     case (int)PacketId.JoinGuild:
-                        JoinGuild(client, rdr);
+                        JoinGuild(client, ref rdr);
                         break;
                     case (int)PacketId.ChangeGuildRank:
-                        ChangeGuildRank(client, rdr);
+                        ChangeGuildRank(client, ref rdr);
                         break;
                     case (int)PacketId.Reskin:
-                        Reskin(client, rdr);
+                        Reskin(client, ref rdr);
                         break;
                     case (int)PacketId.Pong:
-                        Pong(client, rdr);
+                        Pong(client, ref rdr);
                         break;
                     }
                 }
@@ -248,16 +249,32 @@ namespace RotMG.Networking
                     Program.Print(PrintType.Error, $"Dropped unreadable packet <{id}> ({data.Length}B)");
 #endif
                 }
+                catch (MalformedPacketException e)
+                {
+                    //[W06] A length prefix is negative or runs past the frame: the frame is malformed, so this client is
+                    //disconnected. RequestDisconnect is per client; other clients are not affected.
+                    client.RequestDisconnect($"malformed packet <{id}>: {e.Message}");
+                }
             }
         }
 
-        public static void InvDrop(Client client, PacketReader rdr)
+#if DEBUG
+        private static string[] DebugBytes(ReadOnlySpan<byte> data)
+        {
+            string[] parts = new string[data.Length];
+            for (int i = 0; i < data.Length; i++)
+                parts[i] = data[i].ToString();
+            return parts;
+        }
+#endif
+
+        public static void InvDrop(Client client, ref SpanReader rdr)
         {
             byte slot = rdr.ReadByte();
             client.Player.DropItem(slot);
         }
 
-        public static void Escape(Client client, PacketReader rdr)
+        public static void Escape(Client client, ref SpanReader rdr)
         {
             long hopT0 = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
             Player player = client.Player;
@@ -273,7 +290,7 @@ namespace RotMG.Networking
             if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "BeginTransfer returned (Reconnect queued)"); //[hop]
         }
 
-        public static void GotoAck(Client client, PacketReader rdr)
+        public static void GotoAck(Client client, ref SpanReader rdr)
         {
             int time = rdr.ReadInt32(); 
             client.Player.TryGotoAck(time);
@@ -282,13 +299,13 @@ namespace RotMG.Networking
         //Keepalive reply. Serial/time are consumed so the stream stays
         //aligned; liveness is recorded in Client.DrainInbound for every
         //inbound packet (this one included).
-        public static void Pong(Client client, PacketReader rdr)
+        public static void Pong(Client client, ref SpanReader rdr)
         {
             rdr.ReadInt32();
             rdr.ReadInt32();
         }
 
-        public static void ChooseName(Client client, PacketReader rdr)
+        public static void ChooseName(Client client, ref SpanReader rdr)
         {
             string name = rdr.ReadString();
 
@@ -353,7 +370,7 @@ namespace RotMG.Networking
             });
         }
 
-        public static void UsePortal(Client client, PacketReader rdr)
+        public static void UsePortal(Client client, ref SpanReader rdr)
         {
             int objectId = rdr.ReadInt32();
             TryUsePortal(client, objectId);
@@ -455,15 +472,15 @@ namespace RotMG.Networking
             }
         }
 
-        public static void UseItem(Client client, PacketReader rdr)
+        public static void UseItem(Client client, ref SpanReader rdr)
         {
             int time = rdr.ReadInt32();
-            SlotData slot = new SlotData(rdr);
-            Position usePos = new Position(rdr);
+            SlotData slot = new SlotData(ref rdr);
+            Position usePos = new Position(ref rdr);
             client.Player.TryUseItem(time, slot, usePos);
         }
 
-        public static void EditAccountList(Client client, PacketReader rdr)
+        public static void EditAccountList(Client client, ref SpanReader rdr)
         {
             int accountListId = rdr.ReadInt32();
             bool add = rdr.ReadBoolean();
@@ -509,13 +526,13 @@ namespace RotMG.Networking
             ids.Add(accountId);
         }
 
-        public static void PlayerText(Client client, PacketReader rdr)
+        public static void PlayerText(Client client, ref SpanReader rdr)
         {
             string text = rdr.ReadString(); 
             client.Player.Chat(text);
         }
 
-        public static void EnemyHit(Client client, PacketReader rdr)
+        public static void EnemyHit(Client client, ref SpanReader rdr)
         {
             int time = rdr.ReadInt32();
             int bulletId = rdr.ReadInt32();
@@ -523,43 +540,43 @@ namespace RotMG.Networking
             client.Player.TryHitEnemy(time, bulletId, targetId);
         }
 
-        public static void PlayerShoot(Client client, PacketReader rdr)
+        public static void PlayerShoot(Client client, ref SpanReader rdr)
         {
             int time = rdr.ReadInt32();
-            Position pos = new Position(rdr);
+            Position pos = new Position(ref rdr);
             float angle = rdr.ReadSingle();
             bool ability = rdr.ReadBoolean();
-            byte numShots = rdr.PeekChar() != -1 ? rdr.ReadByte() : (byte)1; 
+            byte numShots = rdr.HasMore ? rdr.ReadByte() : (byte)1; 
             client.Player.TryShoot(time, pos, angle, ability, numShots);
         }
 
-        public static void SquareHit(Client client, PacketReader rdr)
+        public static void SquareHit(Client client, ref SpanReader rdr)
         {
             int time = rdr.ReadInt32();
             int bulletId = rdr.ReadInt32(); 
             client.Player.TryHitSquare(time, bulletId);
         }
 
-        public static void PlayerHit(Client client, PacketReader rdr)
+        public static void PlayerHit(Client client, ref SpanReader rdr)
         {
             int bulletId = rdr.ReadInt32(); 
             client.Player.TryHit(bulletId);
         }
 
-        public static void ShootAck(Client client, PacketReader rdr)
+        public static void ShootAck(Client client, ref SpanReader rdr)
         {
             int time = rdr.ReadInt32(); 
             client.Player.TryShootAck(time);
         }
 
-        public static void AoeAck(Client client, PacketReader rdr)
+        public static void AoeAck(Client client, ref SpanReader rdr)
         {
             int time = rdr.ReadInt32();
-            Position pos = new Position(rdr); 
+            Position pos = new Position(ref rdr); 
             client.Player.TryAckAoe(time, pos);
         }
 
-        public static void Hello(Client client, PacketReader rdr)
+        public static void Hello(Client client, ref SpanReader rdr)
         {
             if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "Hello rx"); //[hop]
             string buildVersion = rdr.ReadString();
@@ -570,7 +587,7 @@ namespace RotMG.Networking
             //small frame naming a 2 GB body would allocate 2 GB. Reject negatives, anything above the
             //server's frame cap (GameServer.BufferSize), and lengths past the bytes left in this packet.
             int mapJsonLength = rdr.ReadInt32();
-            long mapJsonRemaining = rdr.BaseStream.Length - rdr.BaseStream.Position;
+            long mapJsonRemaining = rdr.Remaining;
             if (mapJsonLength < 0 || mapJsonLength > GameServer.BufferSize || mapJsonLength > mapJsonRemaining)
                 return;
             byte[] mapJson = rdr.ReadBytes(mapJsonLength);
@@ -703,7 +720,7 @@ namespace RotMG.Networking
             }
         }
 
-        public static void Create(Client client, PacketReader rdr)
+        public static void Create(Client client, ref SpanReader rdr)
         {
             int classType = rdr.ReadInt16();
             int skinType = rdr.ReadInt16();
@@ -772,7 +789,7 @@ namespace RotMG.Networking
             return world.GetRegion(Region.Spawn).ToPosition();
         }
 
-        public static void Load(Client client, PacketReader rdr)
+        public static void Load(Client client, ref SpanReader rdr)
         {
             int charId = rdr.ReadInt32();
             if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "Load rx"); //[hop]
@@ -817,19 +834,19 @@ namespace RotMG.Networking
             }
         }
 
-        public static void Move(Client client, PacketReader rdr)
+        public static void Move(Client client, ref SpanReader rdr)
         {
             int time = rdr.ReadInt32();
-            Position position = new Position(rdr); 
+            Position position = new Position(ref rdr); 
             client.Player.TryMove(time, position);
         }
 
-        public static void InvSwap(Client client, PacketReader rdr)
+        public static void InvSwap(Client client, ref SpanReader rdr)
         {
             int time = rdr.ReadInt32();
-            Position position = new Position(rdr);
-            SlotData slot1 = new SlotData(rdr);
-            SlotData slot2 = new SlotData(rdr); 
+            Position position = new Position(ref rdr);
+            SlotData slot1 = new SlotData(ref rdr);
+            SlotData slot2 = new SlotData(ref rdr); 
             client.Player.SwapItem(slot1, slot2);
         }
 
@@ -844,7 +861,7 @@ namespace RotMG.Networking
             return length;
         }
 
-        public static byte[] MapInfo(int width, int height, string name, string displayName, uint seed, int background, bool showDisplays, bool allowPlayerTeleport)
+        public static ReadOnlySpan<byte> MapInfo(int width, int height, string name, string displayName, uint seed, int background, bool showDisplays, bool allowPlayerTeleport)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.MapInfo);
@@ -859,7 +876,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] InvResult(int result)
+        public static ReadOnlySpan<byte> InvResult(int result)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.InvResult);
@@ -867,7 +884,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] Failure(int errorId, string description)
+        public static ReadOnlySpan<byte> Failure(int errorId, string description)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Failure);
@@ -876,7 +893,18 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] NameResult(bool success, string errorText)
+        //[W06] Failure as an owned array, built on a detached writer. Client.BeginSlowDisconnect calls it from inside Send,
+        //which can run in the middle of a caller's send loop; the shared scratch used by Failure would rewind that caller's span.
+        public static byte[] OwnedFailure(int errorId, string description)
+        {
+            PacketWriter wtr = PacketWriter.RentDetached();
+            wtr.Write((byte)PacketId.Failure);
+            wtr.Write(errorId);
+            wtr.Write(description);
+            return wtr.ToArray();
+        }
+
+        public static ReadOnlySpan<byte> NameResult(bool success, string errorText)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.NameResult);
@@ -885,7 +913,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] CreateSuccess(int objectId, int charId)
+        public static ReadOnlySpan<byte> CreateSuccess(int objectId, int charId)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.CreateSuccess);
@@ -894,7 +922,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] Update(List<TileData> tiles, List<ObjectDefinition> adds, List<ObjectDrop> drops)
+        public static ReadOnlySpan<byte> Update(List<TileData> tiles, List<ObjectDefinition> adds, List<ObjectDrop> drops)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Update);
@@ -913,7 +941,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] NewTick(List<ObjectStatus> statuses, Dictionary<StatType, object> playerStats)
+        public static ReadOnlySpan<byte> NewTick(List<ObjectStatus> statuses, Dictionary<StatType, object> playerStats)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.NewTick);
@@ -935,7 +963,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] EnemyShoot(int bulletId, int ownerId, byte bulletType, Position startPos, float angle, short damage, byte numShots, float angleInc)
+        public static ReadOnlySpan<byte> EnemyShoot(int bulletId, int ownerId, byte bulletType, Position startPos, float angle, short damage, byte numShots, float angleInc)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.EnemyShoot);
@@ -953,7 +981,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] ShowEffect(ShowEffectIndex effect, int targetObjectId, uint color, Position pos1 = new Position(), Position pos2 = new Position())
+        public static ReadOnlySpan<byte> ShowEffect(ShowEffectIndex effect, int targetObjectId, uint color, Position pos1 = new Position(), Position pos2 = new Position())
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.ShowEffect);
@@ -969,13 +997,13 @@ namespace RotMG.Networking
         //Throw visual whose particle flies for travelTime ms. The client flies
         //1500ms unless pos2 carries another duration, so the default sends
         //the legacy layout and only custom times add the second position.
-        public static byte[] ThrowEffect(int targetObjectId, uint color, Position target, int travelTime)
+        public static ReadOnlySpan<byte> ThrowEffect(int targetObjectId, uint color, Position target, int travelTime)
         {
             Position duration = travelTime == 1500 ? new Position() : new Position(travelTime, 0);
             return ShowEffect(ShowEffectIndex.Throw, targetObjectId, color, target, duration);
         }
 
-        public static byte[] Goto(int objectId, Position pos)
+        public static ReadOnlySpan<byte> Goto(int objectId, Position pos)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Goto);
@@ -984,7 +1012,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] Ping(int serial)
+        public static ReadOnlySpan<byte> Ping(int serial)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Ping);
@@ -992,7 +1020,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] Aoe(Position pos, float radius, int damage, ConditionEffectIndex effect, uint color)
+        public static ReadOnlySpan<byte> Aoe(Position pos, float radius, int damage, ConditionEffectIndex effect, uint color)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Aoe);
@@ -1004,7 +1032,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] Damage(int targetId, ConditionEffectIndex[] effects, int damage)
+        public static ReadOnlySpan<byte> Damage(int targetId, ConditionEffectIndex[] effects, int damage)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Damage);
@@ -1016,7 +1044,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] Death(int accountId, int charId, string killer)
+        public static ReadOnlySpan<byte> Death(int accountId, int charId, string killer)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Death);
@@ -1026,7 +1054,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] AllyShoot(int ownerId, int containerType, float angle)
+        public static ReadOnlySpan<byte> AllyShoot(int ownerId, int containerType, float angle)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.AllyShoot);
@@ -1036,7 +1064,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
         
-        public static byte[] PlaySound(string sound)
+        public static ReadOnlySpan<byte> PlaySound(string sound)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.PlaySound);
@@ -1044,7 +1072,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] Text(string name, int objectId, int numStars, int bubbleTime, string recipent, string text)
+        public static ReadOnlySpan<byte> Text(string name, int objectId, int numStars, int bubbleTime, string recipent, string text)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Text);
@@ -1057,7 +1085,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] AccountList(int accountListId, List<int> accountIds)
+        public static ReadOnlySpan<byte> AccountList(int accountListId, List<int> accountIds)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.AccountList);
@@ -1068,7 +1096,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] ServerPlayerShoot(int bulletId, int ownerId, int containerType, Position startPos, float angle, float angleInc, List<Projectile> projs)
+        public static ReadOnlySpan<byte> ServerPlayerShoot(int bulletId, int ownerId, int containerType, Position startPos, float angle, float angleInc, List<Projectile> projs)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.ServerPlayerShoot);
@@ -1087,7 +1115,7 @@ namespace RotMG.Networking
         //Wire: a single int gameId. Authorization is server-side
         //(Manager.PendingTransfers); a random 32-bit key can be appended
         //on both sides when a client rebuild is planned.
-        public static byte[] Reconnect(int gameId)
+        public static ReadOnlySpan<byte> Reconnect(int gameId)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Reconnect);
@@ -1095,7 +1123,7 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static byte[] Notification(int objectId, string text, uint color)
+        public static ReadOnlySpan<byte> Notification(int objectId, string text, uint color)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Notification);
@@ -1107,7 +1135,7 @@ namespace RotMG.Networking
 
         //Davy Jones key HUD channel (see KeysView in realm-client).
         //Payload mirrors the reference implementation: int type, UTF string.
-        public static byte[] GlobalNotification(int type, string text)
+        public static ReadOnlySpan<byte> GlobalNotification(int type, string text)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.GlobalNotification);
@@ -1126,7 +1154,7 @@ namespace RotMG.Networking
                 @"</cross-domain-policy>");
             wtr.Write((byte)'\r');
             wtr.Write((byte)'\n');
-            return PacketWriter.RentedBytes();
+            return PacketWriter.RentedBytes().ToArray();
         }
 
         //Headless P23: truncated inbound bodies must never throw out of
@@ -1326,9 +1354,9 @@ namespace RotMG.Networking
             }
 
             const int unknownOwnerId = 0x7f0ead01;
-            byte[] shoot = EnemyShoot(0, unknownOwnerId, 0, new Position(1.5f, 2.25f), 0.5f, 7, 1, 0f);
-            using (PacketReader rdr = new PacketReader(new MemoryStream(shoot)))
+            ReadOnlySpan<byte> shoot = EnemyShoot(0, unknownOwnerId, 0, new Position(1.5f, 2.25f), 0.5f, 7, 1, 0f);
             {
+                SpanReader rdr = new SpanReader(shoot); //[W06]
                 if (rdr.ReadByte() != (byte)PacketId.EnemyShoot)
                     return Fail("EnemyShoot id");
                 if (rdr.ReadInt32() != 0)
@@ -1336,12 +1364,12 @@ namespace RotMG.Networking
                 if (rdr.ReadInt32() != unknownOwnerId)
                     return Fail("EnemyShoot ownerId must be the unknown id");
                 rdr.ReadByte();
-                Position pos = new Position(rdr);
+                Position pos = new Position(ref rdr);
                 if (pos.X != 1.5f || pos.Y != 2.25f)
                     return Fail("EnemyShoot position");
                 rdr.ReadSingle();
                 rdr.ReadInt16();
-                if (rdr.BaseStream.Position != rdr.BaseStream.Length)
+                if (rdr.Remaining != 0)
                     return Fail("single-shot EnemyShoot must omit numShots tail");
             }
 
@@ -1351,16 +1379,16 @@ namespace RotMG.Networking
                 Position = new Position(3f, 4f),
                 Stats = new Dictionary<StatType, object> { { StatType.MaxMP, 100 } }
             };
-            byte[] tick = NewTick(new List<ObjectStatus> { status }, new Dictionary<StatType, object>());
-            using (PacketReader rdr = new PacketReader(new MemoryStream(tick)))
+            ReadOnlySpan<byte> tick = NewTick(new List<ObjectStatus> { status }, new Dictionary<StatType, object>());
             {
+                SpanReader rdr = new SpanReader(tick); //[W06]
                 if (rdr.ReadByte() != (byte)PacketId.NewTick)
                     return Fail("NewTick id");
                 if (rdr.ReadInt16() != 1)
                     return Fail("NewTick status count");
                 if (rdr.ReadInt32() != 99)
                     return Fail("NewTick objectId");
-                Position pos = new Position(rdr);
+                Position pos = new Position(ref rdr);
                 if (pos.X != 3f || pos.Y != 4f)
                     return Fail("NewTick position");
                 if (rdr.ReadByte() != 1)
@@ -1369,7 +1397,7 @@ namespace RotMG.Networking
                     return Fail("NewTick stat type must be MaxMP");
                 if (rdr.ReadInt32() != 100)
                     return Fail("NewTick MaxMP value");
-                if (rdr.BaseStream.Position != rdr.BaseStream.Length)
+                if (rdr.Remaining != 0)
                     return Fail("NewTick leftover bytes");
             }
 

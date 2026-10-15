@@ -1,3 +1,4 @@
+using System;
 using RotMG.Common;
 using RotMG.Game.Entities;
 using RotMG.Networking;
@@ -45,7 +46,7 @@ namespace RotMG.Game.Logic.Behaviors
 
             if (KillMessage != null)
             {
-                byte[] packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 3, "", KillMessage);
+                ReadOnlySpan<byte> packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 3, "", KillMessage);
                 BehaviorHelpers.BroadcastNearby(host, packet, 15);
             }
 

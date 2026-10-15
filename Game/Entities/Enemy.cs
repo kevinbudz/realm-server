@@ -26,7 +26,7 @@ namespace RotMG.Game.Entities
                 HasConditionEffect(ConditionEffectIndex.Stasis))
                 return;
 
-            byte[] poison = GameServer.ShowEffect(ShowEffectIndex.Poison, Id, 0xffddff00);
+            ReadOnlySpan<byte> poison = GameServer.ShowEffect(ShowEffectIndex.Poison, Id, 0xffddff00);
             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
                 if (j is Player k && k.Client.Account.Effects)
                     k.Client.Send(poison);
@@ -201,7 +201,7 @@ namespace RotMG.Game.Entities
 
             hitter.FameStats.DamageDealt += damageWithDefense;
 
-            byte[] packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damageWithDefense);
+            ReadOnlySpan<byte> packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damageWithDefense);
             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
                 if (en is Player player && player.Client.Account.AllyDamage && !player.Equals(hitter))
                     player.Client.Send(packet);

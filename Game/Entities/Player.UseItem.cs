@@ -222,8 +222,8 @@ namespace RotMG.Game.Entities
                     case ActivateEffectIndex.VampireBlast: //Maybe optimize this...?
                         if (inRange)
                         {
-                            byte[] line = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xFFFF0000 , target);
-                            byte[] burst = GameServer.ShowEffect(ShowEffectIndex.Burst, Id, 0xFFFF0000, target, new Position(target.X + eff.Radius, target.Y));
+                            byte[] line = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xFFFF0000 , target).ToArray();
+                            byte[] burst = GameServer.ShowEffect(ShowEffectIndex.Burst, Id, 0xFFFF0000, target, new Position(target.X + eff.Radius, target.Y)).ToArray();
                             int lifeSucked = 0;
 
                             List<Entity> enemies = new List<Entity>();
@@ -257,7 +257,7 @@ namespace RotMG.Game.Entities
                                 {
                                     Entity a = enemies[MathUtils.Next(enemies.Count)];
                                     Entity b = players[MathUtils.Next(players.Count)];
-                                    flows.Add(GameServer.ShowEffect(ShowEffectIndex.Flow, b.Id, 0xffffffff, a.Position));
+                                    flows.Add(GameServer.ShowEffect(ShowEffectIndex.Flow, b.Id, 0xffffffff, a.Position).ToArray());
                                 }
                             }
 
@@ -283,7 +283,7 @@ namespace RotMG.Game.Entities
                         {
                             byte[] blast = GameServer.ShowEffect(ShowEffectIndex.Collapse, Id, 0xffffffff, 
                                 target, 
-                                new Position(target.X + 3, target.Y));
+                                new Position(target.X + 3, target.Y)).ToArray();
                             List<byte[]> notifications = new List<byte[]>();
 
                             foreach (Entity j in Parent.EntityChunks.HitTest(target, 3))
@@ -292,14 +292,14 @@ namespace RotMG.Game.Entities
                                 {
                                     if (k.HasConditionEffect(ConditionEffectIndex.StasisImmune))
                                     {
-                                        notifications.Add(GameServer.Notification(k.Id, "Immune", 0xff00ff00));
+                                        notifications.Add(GameServer.Notification(k.Id, "Immune", 0xff00ff00).ToArray());
                                         continue;
                                     }
 
                                     if (k.HasConditionEffect(ConditionEffectIndex.Stasis))
                                         continue;
 
-                                    notifications.Add(GameServer.Notification(k.Id, "Stasis", 0xffff0000));
+                                    notifications.Add(GameServer.Notification(k.Id, "Stasis", 0xffff0000).ToArray());
                                     k.ApplyConditionEffect(ConditionEffectIndex.Stasis, eff.DurationMS);
                                     k.ApplyConditionEffect(ConditionEffectIndex.StasisImmune, eff.DurationMS + 3000);
                                 }
@@ -321,7 +321,7 @@ namespace RotMG.Game.Entities
                     case ActivateEffectIndex.Trap:
                         if (inRange)
                         {
-                            byte[] @throw = GameServer.ShowEffect(ShowEffectIndex.Throw, Id, 0xff9000ff, target);
+                            byte[] @throw = GameServer.ShowEffect(ShowEffectIndex.Throw, Id, 0xff9000ff, target).ToArray();
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
                                 if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
                                     k.Client.Send(@throw);
@@ -349,7 +349,7 @@ namespace RotMG.Game.Entities
                                 {
                                     float x = (int)(MaxAbilityDist * MathF.Cos(angles[i])) + Position.X;
                                     float y = (int)(MaxAbilityDist * MathF.Sin(angles[i])) + Position.Y;
-                                    lines[i] = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xffff0088, new Position(x, y), new Position(350, 0));
+                                    lines[i] = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xffff0088, new Position(x, y), new Position(350, 0)).ToArray();
                                 }
 
                                 foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
@@ -377,7 +377,7 @@ namespace RotMG.Game.Entities
                                 {
                                     pkts.Add(GameServer.ShowEffect(ShowEffectIndex.Lightning, prev.Id, 0xffff0088,
                                         new Position(current.Position.X, current.Position.Y),
-                                        new Position(350, 0)));
+                                        new Position(350, 0)).ToArray());
 
                                     if (i == eff.MaxTargets) 
                                         break;
@@ -411,8 +411,8 @@ namespace RotMG.Game.Entities
                             Placeholder placeholder = new Placeholder();
                             Parent.AddEntity(placeholder, target);
 
-                            byte[] @throw = GameServer.ShowEffect(ShowEffectIndex.Throw, Id, 0xffddff00, target);
-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, placeholder.Id, 0xffddff00, new Position(eff.Radius, 0));
+                            byte[] @throw = GameServer.ShowEffect(ShowEffectIndex.Throw, Id, 0xffddff00, target).ToArray();
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, placeholder.Id, 0xffddff00, new Position(eff.Radius, 0)).ToArray();
 
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
                                 if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
@@ -466,7 +466,7 @@ namespace RotMG.Game.Entities
                         break;
                     case ActivateEffectIndex.HealNova:
                         {
-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0)).ToArray();
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
                             {
                                 if (j is Player k)
@@ -481,7 +481,7 @@ namespace RotMG.Game.Entities
                         break;
                     case ActivateEffectIndex.MagicNova:
                         {
-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0)).ToArray();
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
                             {
                                 if (j is Player k)
@@ -503,7 +503,7 @@ namespace RotMG.Game.Entities
                             ActivateBoosts[statIdx] += statAmount;
                             RecalculateEquipBonuses();
 
-                            byte[] potion = GameServer.ShowEffect(ShowEffectIndex.Heal, Id, 0xffffffff);
+                            byte[] potion = GameServer.ShowEffect(ShowEffectIndex.Heal, Id, 0xffffffff).ToArray();
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
                                 if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
                                     k.Client.Send(potion);
@@ -521,7 +521,7 @@ namespace RotMG.Game.Entities
                             if (statIdx == -1)
                                 break;
                             int statAmount = eff.Amount;
-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0)).ToArray();
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
                             {
                                 if (j is Player k)
@@ -546,7 +546,7 @@ namespace RotMG.Game.Entities
                     case ActivateEffectIndex.ConditionEffectAura:
                         {
                             uint color = eff.Effect == ConditionEffectIndex.Damaging ? 0xffff0000 : 0xffffffff;
-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, color, new Position(eff.Range, 0));
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, color, new Position(eff.Range, 0)).ToArray();
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
                             {
                                 if (j is Player k)
@@ -563,7 +563,7 @@ namespace RotMG.Game.Entities
                         {
                             ApplyConditionEffect(eff.Effect, eff.DurationMS);
 
-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(1, 0));
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(1, 0)).ToArray();
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
                                 if (j is Player k && k.Client.Account.Effects)
                                     k.Client.Send(nova);
@@ -586,7 +586,7 @@ namespace RotMG.Game.Entities
                         foreach (ConditionEffectIndex neg in NegativeEffs)
                             RemoveConditionEffect(neg);
                         {
-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(1, 0));
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(1, 0)).ToArray();
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
                                 if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
                                     k.Client.Send(nova);
@@ -594,7 +594,7 @@ namespace RotMG.Game.Entities
                         break;
                     case ActivateEffectIndex.RemoveNegativeConditions:
                         {
-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
+                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0)).ToArray();
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
                             {
                                 if (j is Player k)
@@ -642,8 +642,8 @@ namespace RotMG.Game.Entities
 
                             AwaitProjectiles(projs);
 
-                            byte[] line = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xFFFF00AA, target);
-                            byte[] nova = GameServer.ServerPlayerShoot(startId, Id, desc.Type, target, 0, angleInc, projs);
+                            byte[] line = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xFFFF00AA, target).ToArray();
+                            byte[] nova = GameServer.ServerPlayerShoot(startId, Id, desc.Type, target, 0, angleInc, projs).ToArray();
 
                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
                             {
@@ -793,7 +793,7 @@ namespace RotMG.Game.Entities
             string dungeon = string.IsNullOrWhiteSpace(portalDesc.DungeonName)
                 ? portalDesc.DisplayId
                 : portalDesc.DungeonName;
-            byte[] notification = GameServer.Notification(Id, dungeon + " opened by " + Name + "!", 0xFF00FF00);
+            byte[] notification = GameServer.Notification(Id, dungeon + " opened by " + Name + "!", 0xFF00FF00).ToArray();
             string info = dungeon + " opened by " + Name + "!";
             foreach (Player player in host.Players.Values)
             {
@@ -926,7 +926,7 @@ namespace RotMG.Game.Entities
 
             SchedulePortalTimeout(host, open, at, portalDesc);
 
-            byte[] notification = GameServer.Notification(Id, "Unlocked by " + Name, 0xFF00FF00);
+            byte[] notification = GameServer.Notification(Id, "Unlocked by " + Name, 0xFF00FF00).ToArray();
             string info = world.GetDisplayName() + " unlocked by " + Name + "!";
             foreach (Player player in host.Players.Values)
             {

@@ -34,7 +34,7 @@ namespace RotMG.Game.Entities
             int elapsed = 10000 - Lifetime.Value;
             if (elapsed % 1000 == 0)
             {
-                byte[] ring = GameServer.ShowEffect(ShowEffectIndex.Ring,
+                ReadOnlySpan<byte> ring = GameServer.ShowEffect(ShowEffectIndex.Ring,
                     Id, 0xff9000ff, new Position(Radius / 2, 0));
                 foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
                     if (j is Player k && (k.Client.Account.Effects || k.Equals(Player)))
@@ -53,7 +53,7 @@ namespace RotMG.Game.Entities
 
         public override void OnLifeEnd()
         {
-            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xff9000ff, new Position(Radius, 0));
+            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xff9000ff, new Position(Radius, 0)).ToArray();
 
             foreach (Entity j in Parent.EntityChunks.HitTest(Position, Radius))
                 if (j is Enemy k && 

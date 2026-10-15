@@ -292,7 +292,7 @@ namespace RotMG.Game.Entities
             }
             if (tellTarget.Client.Account.IgnoredIds.Contains(AccountId))
                 return;
-            byte[] tell = GameServer.Text(Name, Id, NumStars, 0, tellTarget.Name, tellMsg);
+            ReadOnlySpan<byte> tell = GameServer.Text(Name, Id, NumStars, 0, tellTarget.Name, tellMsg);
             tellTarget.Client.Send(tell);
             Client.Send(tell);
         }
@@ -311,7 +311,7 @@ namespace RotMG.Game.Entities
                 SendError("You are muted");
                 return;
             }
-            byte[] local = GameServer.Text(Name, Id, NumStars, 5, "", input);
+            ReadOnlySpan<byte> local = GameServer.Text(Name, Id, NumStars, 5, "", input);
             foreach (Player player in Parent.Players.Values.ToArray())
                 if (!player.Client.Account.IgnoredIds.Contains(AccountId))
                     player.Client.Send(local);

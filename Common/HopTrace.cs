@@ -32,6 +32,8 @@ namespace RotMG.Common
         {
             public long T0;
             public int Done;
+            public long PassBytes; //allocation gate: _passBytes at the Escape (see PassEnd)
+            public int Ticks; //allocation gate: _worldTicks at the Escape
         }
 
         private static readonly object _gate = new object();
@@ -42,6 +44,14 @@ namespace RotMG.Common
         private static int _latestAccount;
         private static long _latestT0;
         private static volatile int _active;
+
+        //Allocation gate (REALM_HOPTRACE only). The main thread runs every world tick and every client Read, so its
+        //main-loop passes are measured with GC.GetAllocatedBytesForCurrentThread(). Main thread only, except that the
+        //IO thread reads _passBytes and _worldTicks in MarkDone (hence the Volatile reads there).
+        private static long _passStart; //allocated bytes on the main thread when the current pass began
+        private static long _passBytes; //total bytes of completed passes
+        private static long _tickPassBytes; //total bytes of completed passes that ran a world tick
+        private static int _worldTicks; //world ticks run since start
 
         public static bool Active => Enabled && _active > 0;
 
@@ -55,10 +65,12 @@ namespace RotMG.Common
             if (!Enabled || client.Account == null)
                 return;
             int acc = client.Account.Id;
+            //Bytes so far: completed passes plus the part of this pass already allocated (the Escape runs inside one).
+            long passBytes = Volatile.Read(ref _passBytes) + (GC.GetAllocatedBytesForCurrentThread() - _passStart);
             lock (_gate)
             {
                 ExpireLocked(at);
-                _epochs[acc] = new Epoch { T0 = at };
+                _epochs[acc] = new Epoch { T0 = at, PassBytes = passBytes, Ticks = _worldTicks };
                 _latestAccount = acc;
                 _latestT0 = at;
                 _active = _epochs.Count;
@@ -123,9 +135,9 @@ namespace RotMG.Common
         }
 
         //IO thread: a watched packet is now in the send buffer.
-        public static int WatchBitFor(byte[] packet)
+        public static int WatchBitFor(ReadOnlySpan<byte> packet) //[W06] span overload: the send path passes frame bytes, not arrays
         {
-            if (!Enabled || packet == null || packet.Length == 0)
+            if (!Enabled || packet.Length == 0)
                 return 0;
             switch (packet[0])
             {
@@ -185,7 +197,31 @@ namespace RotMG.Common
                 _epochs.Remove(acc);
                 _active = _epochs.Count;
                 Program.Print(PrintType.Info, $"[hop] acc={acc} t=+{Ms(epoch.T0, at):F3}ms HOP COMPLETE (first Update and NewTick written)");
+                //Allocation gate: main-thread bytes from the Escape pass to the last completed pass, and the world ticks in between.
+                Program.Print(PrintType.Info, $"[hop] acc={acc} alloc main-thread bytes={Volatile.Read(ref _passBytes) - epoch.PassBytes} world ticks={Volatile.Read(ref _worldTicks) - epoch.Ticks}");
             }
+        }
+
+        //Main thread: start of one main-loop pass (queued work, Database.Tick, Manager.Tick). No-op when tracing is off.
+        public static void PassStart()
+        {
+            if (Enabled)
+                _passStart = GC.GetAllocatedBytesForCurrentThread();
+        }
+
+        //Main thread: end of the pass that PassStart opened. ranTick: a world tick ran during it.
+        public static void PassEnd(bool ranTick)
+        {
+            if (!Enabled)
+                return;
+            long bytes = GC.GetAllocatedBytesForCurrentThread() - _passStart;
+            Interlocked.Add(ref _passBytes, bytes);
+            if (!ranTick)
+                return;
+            Interlocked.Add(ref _tickPassBytes, bytes);
+            int ticks = Interlocked.Increment(ref _worldTicks);
+            if (ticks % 100 == 0)
+                Program.Print(PrintType.Info, $"[hop] world ticks={ticks} avg main-thread bytes per tick={Volatile.Read(ref _tickPassBytes) / ticks}");
         }
 
         //Database.SetKey / GetKey: open = lock wait + connection open, exec = Execute* (includes the WAL commit + fsync for writes).

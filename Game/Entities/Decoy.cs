@@ -45,7 +45,7 @@ namespace RotMG.Game.Entities
 
         public override void OnLifeEnd()
         {
-            byte[] nova = GameServer.ShowEffect(
+            ReadOnlySpan<byte> nova = GameServer.ShowEffect(
                 ShowEffectIndex.Nova,
                 Id,
                 0xffff0000,

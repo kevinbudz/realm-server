@@ -21,8 +21,8 @@ namespace RotMG.Game.Entities
         private const int HealthPotionItemType = 2594;
         private const int MagicPotionItemType = 2595;
 
-        private static byte[] InvalidInvSwap = GameServer.InvResult(1);
-        private static byte[] ValidInvSwap = GameServer.InvResult(0);
+        private static byte[] InvalidInvSwap = GameServer.InvResult(1).ToArray(); //[W06] cached copy: fields cannot hold a span
+        private static byte[] ValidInvSwap = GameServer.InvResult(0).ToArray(); //[W06] cached copy: fields cannot hold a span
 
         //From IContainer :)
         public int[] Inventory { get; set; }
@@ -586,8 +586,8 @@ namespace RotMG.Game.Entities
                 Program.Print(PrintType.Error, "P10 verify: bag slot values mismatch");
                 return false;
             }
-            byte[] fail = GameServer.InvResult(1);
-            byte[] ok = GameServer.InvResult(0);
+            byte[] fail = GameServer.InvResult(1).ToArray();
+            byte[] ok = GameServer.InvResult(0).ToArray();
             if (fail == null || fail.Length != 5 || fail[0] != (byte)GameServer.PacketId.InvResult)
             {
                 Program.Print(PrintType.Error, "P10 verify: InvResult(1) wire layout changed");
