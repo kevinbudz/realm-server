@@ -411,7 +411,8 @@ namespace RotMG.Game.Logic.Database
                 new ConditionalEffect(ConditionEffectIndex.Invincible, true),
                 new State("Idle"),
                 new State("Protect the Guard",
-                    new EntityNotExistsTransition("Snakepit Guard", 40, "Idle")
+                    new EntityNotExistsTransition("Snakepit Guard", 40, "Idle"),
+                    new SnakePitTowerShoot()
                 )
             );
             db.Init("Snakepit Button",

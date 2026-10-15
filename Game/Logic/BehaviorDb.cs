@@ -20,23 +20,35 @@ namespace RotMG.Game.Logic
         public Dictionary<int, State> States;
         public List<Behavior> Behaviors;
         public List<Loot> Loots;
+        public List<Transition> RootTransitions;
 
         public BehaviorModel(params IBehavior[] behaviors)
         {
             States = new Dictionary<int, State>();
             Behaviors = new List<Behavior>();
             Loots = new List<Loot>();
+            List<Transition> rootTransitions = new List<Transition>();
             foreach (IBehavior bh in behaviors)
             {
                 if (bh is Threshold threshold) AddThresholdedLoots(Loots, threshold, 0);
                 else if (bh is Loot) Loots.Add(bh as Loot);
                 if (bh is Behavior) Behaviors.Add(bh as Behavior);
+                if (bh is Transition transition) rootTransitions.Add(transition);
                 if (bh is State)
                 {
                     State state = bh as State;
                     States.Add(state.Id, state);
                 }
             }
+
+            // A transition passed directly to db.Init is a root-level phase
+            // transition. Like the reference's unnamed root state, it belongs
+            // to the model rather than to any phase: the entity enters it once,
+            // keeps its timer across phase changes, and resolves its target
+            // against the root states.
+            RootTransitions = rootTransitions;
+            foreach (Transition t in RootTransitions)
+                State.ResolveTransition(States.Values, t);
 
             foreach (State s1 in States.Values)
                 foreach (Transition t in s1.Transitions)

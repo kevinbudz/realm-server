@@ -57,7 +57,6 @@ namespace RotMG.Game.Logic.Behaviors
 
         public override bool Tick(Entity host)
         {
-            host.StateCooldown[Id] -= Settings.MillisecondsPerTick;
             if (host.StateCooldown[Id] <= 0)
             {
                 if (host.HasConditionEffect(ConditionEffectIndex.Stunned))
@@ -113,6 +112,10 @@ namespace RotMG.Game.Logic.Behaviors
                     host.StateCooldown[Id] += MathUtils.NextIntSnap(-CooldownVariance, CooldownVariance, Settings.MillisecondsPerTick);
                 return true;
             }
+
+            // Match Shoot and the historical cycle behavior: once the timer
+            // reaches zero, resolve on the following behavior tick.
+            host.StateCooldown[Id] -= Settings.MillisecondsPerTick;
             return false;
         }
     }

@@ -14,10 +14,15 @@ namespace RotMG.Game.Logic.Database
         public void Init(BehaviorDb db)
         {
             db.Init("Septavius the Ghost God",
-                new PlayerWithinTransition(8, "transition1"),
                 new ConditionalEffect(ConditionEffectIndex.Invulnerable),
                 new Flash(0x00FF00, 0.25f, 12),
                 new Wander(0.1f),
+                // Waking is an initial phase rather than a root transition:
+                // a root PlayerWithinTransition stays true during the fight
+                // and would keep returning the boss to transition1.
+                new State("Idle",
+                    new PlayerWithinTransition(8, "transition1")
+                ),
                 new State("transition1",
                     new TimedTransition(3000, "spiral")
                 ),

@@ -13,7 +13,7 @@ namespace RotMG.Game.Logic.Transitions
 
         public override bool Tick(Entity host)
         {
-            return host.GetNearestPlayer(Distance) == null && host.GetNearestEntity(Distance) == null;
+            return host.GetNearestPlayer(Distance) == null;
         }
     }
 }
