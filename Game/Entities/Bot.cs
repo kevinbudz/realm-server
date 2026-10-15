@@ -334,7 +334,7 @@ namespace RotMG.Game.Entities
             }
             FameStats.Shots += numShots;
 
-            byte[] packet = GameServer.AllyShoot(Id, weapon.Type, angle);
+            ReadOnlySpan<byte> packet = GameServer.AllyShoot(Id, weapon.Type, angle);
             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
                 if (en is Player player && !(player is Bot) && player.Client.Account.AllyShots)
                     player.Client.Send(packet);

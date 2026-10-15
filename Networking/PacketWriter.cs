@@ -1,82 +1,167 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Net;
+using System.Buffers.Binary;
 using System.Text;
 
 namespace RotMG.Networking
 {
-    public class PacketWriter : BinaryWriter
+    //[W06] Big-endian packet writer over a per-thread scratch buffer (replaces the BinaryWriter over MemoryStream).
+    //
+    //Rent() hands out a ref struct handle to the thread's scratch, so passing it around costs nothing. Builders return
+    //RentedBytes(): a span over the scratch that is valid until the next Rent() on the same thread. Client.Send copies
+    //it into a pooled frame at once, so the usual "build, then send" needs no array. Anything kept, or used after another
+    //builder has run on this thread, must be copied with ToArray(), because that builder rewinds the same scratch.
+    //Builders that can run while another span is still being sent (Client.BeginSlowDisconnect) use RentDetached().
+    //
+    //Wire rules are the old writer's, byte for byte: ints/shorts/uints/ushorts/floats big-endian; bool one byte;
+    //string = u16 BE UTF-8 byte count + bytes; WriteUTF32 = i32 BE of the char count + raw UTF-8 (kept as is).
+    //Long, ulong and double keep BinaryWriter's little-endian order, because the old class did not override them.
+    //The string length is bounds-checked: over 65535 UTF-8 bytes throws instead of silently wrapping the prefix.
+    public ref struct PacketWriter
     {
-        public PacketWriter(Stream input) : base(input, Encoding.UTF8) { }
+        private const int MaxStringBytes = ushort.MaxValue;
 
-        public override void Write(short value)
+        private sealed class Scratch
         {
-            base.Write(IPAddress.NetworkToHostOrder(value));
-        }
-
-        public override void Write(ushort value)
-        {
-            base.Write((ushort)IPAddress.HostToNetworkOrder((short)value));
-        }
-
-        public override void Write(int value)
-        {
-            base.Write(IPAddress.NetworkToHostOrder(value));
-        }
-
-        public override void Write(uint value)
-        {
-            base.Write((uint)IPAddress.NetworkToHostOrder((int)value));
-        }
-
-        public override void Write(float value)
-        {
-            int bits = BitConverter.SingleToInt32Bits(value);
-            base.Write((byte)(bits >> 24));
-            base.Write((byte)(bits >> 16));
-            base.Write((byte)(bits >> 8));
-            base.Write((byte)bits);
+            public byte[] Buf = new byte[1024];
+            public int Length;
         }
 
         [ThreadStatic]
-        private static MemoryStream _scratchStream;
-        [ThreadStatic]
-        private static PacketWriter _scratchWriter;
+        private static Scratch _scratch;
 
-        //Rents a PacketWriter over a per-thread reusable MemoryStream (no per-packet
-        //stream allocation). Not re-entrant: copy RentedBytes() before Rent() again.
+        private readonly Scratch _s;
+
+        private PacketWriter(Scratch s)
+        {
+            _s = s;
+        }
+
         public static PacketWriter Rent()
         {
-            if (_scratchStream == null)
-            {
-                _scratchStream = new MemoryStream(512);
-                _scratchWriter = new PacketWriter(_scratchStream);
-            }
-            else
-            {
-                _scratchStream.SetLength(0);
-                _scratchStream.Position = 0;
-            }
-            return _scratchWriter;
+            Scratch s = _scratch ??= new Scratch();
+            s.Length = 0;
+            return new PacketWriter(s);
         }
 
-        public static byte[] RentedBytes()
+        //A writer with its own buffer, for builders that must not touch the thread's scratch. Read it with ToArray().
+        public static PacketWriter RentDetached()
         {
-            return _scratchStream.ToArray();
+            return new PacketWriter(new Scratch());
         }
 
-        public override void Write(string value)
+        //Span over the bytes written since Rent(). Valid until the next Rent() on this thread.
+        public static ReadOnlySpan<byte> RentedBytes()
         {
-            byte[] data = Encoding.UTF8.GetBytes(value);
-            Write((short)data.Length);
-            base.Write(data);
+            Scratch s = _scratch;
+            return s == null ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>(s.Buf, 0, s.Length);
         }
 
+        public byte[] ToArray()
+        {
+            return _s.Buf.AsSpan(0, _s.Length).ToArray();
+        }
+
+        public int Length => _s.Length;
+
+        //Reserves n bytes at the end and returns them. Grows to the required size, or double the old size if that is larger.
+        private Span<byte> Reserve(int n)
+        {
+            Scratch s = _s;
+            int required = s.Length + n;
+            if (required > s.Buf.Length)
+            {
+                byte[] grown = new byte[Math.Max(required, s.Buf.Length * 2)];
+                Buffer.BlockCopy(s.Buf, 0, grown, 0, s.Length);
+                s.Buf = grown;
+            }
+            Span<byte> span = s.Buf.AsSpan(s.Length, n);
+            s.Length = required;
+            return span;
+        }
+
+        public void Write(byte value)
+        {
+            Reserve(1)[0] = value;
+        }
+
+        public void Write(sbyte value)
+        {
+            Reserve(1)[0] = (byte)value;
+        }
+
+        public void Write(bool value)
+        {
+            Reserve(1)[0] = value ? (byte)1 : (byte)0;
+        }
+
+        public void Write(short value)
+        {
+            BinaryPrimitives.WriteInt16BigEndian(Reserve(2), value);
+        }
+
+        public void Write(ushort value)
+        {
+            BinaryPrimitives.WriteUInt16BigEndian(Reserve(2), value);
+        }
+
+        public void Write(int value)
+        {
+            BinaryPrimitives.WriteInt32BigEndian(Reserve(4), value);
+        }
+
+        public void Write(uint value)
+        {
+            BinaryPrimitives.WriteUInt32BigEndian(Reserve(4), value);
+        }
+
+        public void Write(float value)
+        {
+            BinaryPrimitives.WriteInt32BigEndian(Reserve(4), BitConverter.SingleToInt32Bits(value));
+        }
+
+        //Same as BinaryWriter (little-endian): the old class never overrode these.
+        public void Write(long value)
+        {
+            BinaryPrimitives.WriteInt64LittleEndian(Reserve(8), value);
+        }
+
+        public void Write(ulong value)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(Reserve(8), value);
+        }
+
+        public void Write(double value)
+        {
+            BinaryPrimitives.WriteInt64LittleEndian(Reserve(8), BitConverter.DoubleToInt64Bits(value));
+        }
+
+        public void Write(byte[] value)
+        {
+            Write((ReadOnlySpan<byte>)value);
+        }
+
+        public void Write(ReadOnlySpan<byte> value)
+        {
+            value.CopyTo(Reserve(value.Length));
+        }
+
+        //u16 BE byte count + UTF-8, the same as the old Write(string). A null string throws ArgumentNullException,
+        //as Encoding.UTF8.GetBytes(null) did before.
+        public void Write(string value)
+        {
+            int count = Encoding.UTF8.GetByteCount(value);
+            if (count > MaxStringBytes)
+                throw new ArgumentOutOfRangeException(nameof(value), $"string is {count} UTF-8 bytes; the packet limit is {MaxStringBytes}");
+            Span<byte> dst = Reserve(2 + count);
+            BinaryPrimitives.WriteUInt16BigEndian(dst, (ushort)count);
+            Encoding.UTF8.GetBytes(value.AsSpan(), dst.Slice(2));
+        }
+
+        //Kept as the old writer had it: i32 BE of the char count, then the raw UTF-8 bytes (no length prefix on the bytes).
         public void WriteUTF32(string value)
         {
             Write(value.Length);
-            Write(Encoding.UTF8.GetBytes(value));
+            Encoding.UTF8.GetBytes(value.AsSpan(), Reserve(Encoding.UTF8.GetByteCount(value)));
         }
 
         public void WriteNullTerminatedString(string str)

@@ -1,3 +1,4 @@
+using System;
 using RotMG.Common;
 using RotMG.Game.Entities;
 using RotMG.Networking;
@@ -79,7 +80,7 @@ namespace RotMG.Game.Logic.Behaviors
             }
             taunt = taunt.Replace("{HP}", host.HP.ToString());
 
-            byte[] packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 3, "", taunt);
+            ReadOnlySpan<byte> packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 3, "", taunt);
             if (Broadcast && host.Parent != null)
             {
                 foreach (Player player in host.Parent.Players.Values)

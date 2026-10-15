@@ -381,9 +381,10 @@ namespace RotMG.Game.Entities
 
         private void BroadcastGoto(Position pos, bool withTeleportEffect)
         {
-            byte[] go = GameServer.Goto(Id, pos);
+            //Copies: both builders write the shared scratch, and the loop below sends them after the second call.
+            byte[] go = GameServer.Goto(Id, pos).ToArray();
             byte[] eff = withTeleportEffect
-                ? GameServer.ShowEffect(ShowEffectIndex.Teleport, Id, 0xFFFFFFFF, pos)
+                ? GameServer.ShowEffect(ShowEffectIndex.Teleport, Id, 0xFFFFFFFF, pos).ToArray()
                 : null;
             foreach (Player player in Parent.Players.Values)
             {

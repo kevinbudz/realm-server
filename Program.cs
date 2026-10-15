@@ -230,6 +230,14 @@ namespace RotMG
                 Environment.Exit(ok ? 0 : 1);
             }
 
+            //[W06] Golden bytes for the packet builders, span reader and writer bounds (Networking/W06Golden.cs).
+            if (args != null && args.Length == 1 && args[0] == "--w06-verify")
+            {
+                bool ok = W06Golden.Run();
+                Console.WriteLine(ok ? "W06 verify: PASS" : "W06 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, AppServer.Start);
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, GameServer.Start);
             GameServer.StartIo();
@@ -239,6 +247,7 @@ namespace RotMG
 
             while (!Terminating)
             {
+                HopTrace.PassStart(); //[hop] allocation gate: one pass = queued work, Database.Tick, Manager.Tick
                 while (PendingWork.TryDequeue(out Work work))
                 {
                     try
@@ -273,7 +282,9 @@ namespace RotMG
                 }
 
                 Database.Tick();
+                int worldTicksBefore = Manager.TotalTicks; //[hop]
                 Manager.Tick();
+                HopTrace.PassEnd(Manager.TotalTicks != worldTicksBefore); //[hop]
 
 #if DEBUG
                 Thread.Sleep(2);

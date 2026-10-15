@@ -41,7 +41,7 @@ namespace RotMG.Game.Entities
                 owner.FameStats.DamageDealt += damageWithDefense;
                 owner.FameStats.ShotsThatDamage++; 
                 
-                byte[] packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damageWithDefense);
+                ReadOnlySpan<byte> packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damageWithDefense);
                 foreach (Entity en in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
                     if (en is Player player && player.Client.Account.AllyDamage && !player.Equals(owner))
                         player.Client.Send(packet);

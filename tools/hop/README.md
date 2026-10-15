@@ -70,3 +70,13 @@ Environment overrides: `REALM_HOP_STATE`, `REALM_HOP_DB_ROOT`, `REALM_HOP_CONFIG
 - `analyze.py` exits 0 when no gate is requested or the gate passes, 1 when a gate fails or there are no
   completed hops, and 2 on a usage error.
 - `baseline/` holds the reference runs. Do not overwrite them.
+
+## Wire captures and malformed frames (W06)
+
+- `REALM_PKTCAP=<file>` makes the server write every framed game packet it reads or writes (Common/PacketCapture.cs).
+  The harness scripts pass the environment through, so set it on `run.sh` or `server_ctl.sh start`.
+- `pktdiff.py BASE.bin NEW.bin` compares two captures per packet, after the built-in masks (documented in its
+  docstring). `pktdiff.py --jsonl BASE.jsonl NEW.jsonl` compares `chat_check.py` replies. Exit 0 means no diff.
+- `malformed_check.py --http PORT --tcp PORT --out FILE` sends five malformed frames from one socket each (truncated
+  frame, string length past the payload, negative string length, length < 5, length > 64 KiB). It passes only if each bad
+  socket is closed by the server while a second, well-formed client stays in the Nexus.

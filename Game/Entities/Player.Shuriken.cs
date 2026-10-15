@@ -65,7 +65,7 @@ namespace RotMG.Game.Entities
                     new Projectile(this, desc.Projectile, startId + i, time, a, Position, d)
                 };
 
-                shots.Add(GameServer.ServerPlayerShoot(startId + i, Id, desc.Type, Position, a, 0, p));
+                shots.Add(GameServer.ServerPlayerShoot(startId + i, Id, desc.Type, Position, a, 0, p).ToArray());
                 AwaitProjectiles(p);
             }
 

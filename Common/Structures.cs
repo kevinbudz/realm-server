@@ -136,7 +136,7 @@ namespace RotMG.Common
         public int ObjectId;
         public byte SlotId;
 
-        public SlotData(PacketReader rdr)
+        public SlotData(ref SpanReader rdr)
         {
             ObjectId = rdr.ReadInt32();
             SlotId = rdr.ReadByte();
@@ -150,7 +150,7 @@ namespace RotMG.Common
         public bool Tradeable;
         public bool Included;
 
-        public static TradeItem Read(PacketReader rdr)
+        public static TradeItem Read(ref SpanReader rdr)
         {
             return new TradeItem
             {
@@ -181,7 +181,7 @@ namespace RotMG.Common
             Y = y;
         }
 
-        public Position(PacketReader rdr)
+        public Position(ref SpanReader rdr)
         {
             X = rdr.ReadSingle();
             Y = rdr.ReadSingle();

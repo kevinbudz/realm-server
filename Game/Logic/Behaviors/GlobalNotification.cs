@@ -1,3 +1,4 @@
+using System;
 using RotMG.Game.Entities;
 using RotMG.Networking;
 
@@ -18,7 +19,7 @@ namespace RotMG.Game.Logic.Behaviors
         {
             if (host.Parent == null)
                 return;
-            byte[] packet = GameServer.GlobalNotification(0, Message);
+            ReadOnlySpan<byte> packet = GameServer.GlobalNotification(0, Message);
             foreach (Player player in host.Parent.Players.Values)
                 player.Client.Send(packet);
         }

@@ -372,7 +372,7 @@ namespace RotMG.Game.Entities
             if (heal <= 0) 
                 return;
 
-            byte[] notification = GameServer.Notification(Id, $"+{heal}", magic ? 0xff6084e0 : 0xff00ff00);
+            ReadOnlySpan<byte> notification = GameServer.Notification(Id, $"+{heal}", magic ? 0xff6084e0 : 0xff00ff00);
             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
             {
                 if (en is Player player && 
@@ -404,11 +404,11 @@ namespace RotMG.Game.Entities
             SaveToCharacter();
             Database.Death(killer, Client.Account, Client.Character);
 
-            byte[] death = GameServer.Death(Client.Account.Id, Client.Character.Id, killer);
+            ReadOnlySpan<byte> death = GameServer.Death(Client.Account.Id, Client.Character.Id, killer);
             Client.Send(death);
 
-            byte[] text = GameServer.Text("", 0, -1, 0, "", $"{Name} died at level {Level} killed by {killer}!");
-            byte[] sound = GameServer.PlaySound("quack");
+            byte[] text = GameServer.Text("", 0, -1, 0, "", $"{Name} died at level {Level} killed by {killer}!").ToArray();
+            ReadOnlySpan<byte> sound = GameServer.PlaySound("quack");
 
             foreach (Player p in Parent.Players.Values)
             {
@@ -483,7 +483,7 @@ namespace RotMG.Game.Entities
                 return true;
             }
 
-            byte[] packet = GameServer.Damage(Id, effects.Select(k => k.Effect).ToArray(), damageWithDefense);
+            ReadOnlySpan<byte> packet = GameServer.Damage(Id, effects.Select(k => k.Effect).ToArray(), damageWithDefense);
             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
                 if (en is Player player && player.Client.Account.AllyDamage && !player.Equals(this))
                     player.Client.Send(packet);
@@ -610,8 +610,8 @@ namespace RotMG.Game.Entities
             }
 
             byte[] usePortalBody = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(farPortal.Id));
-            using (PacketReader rdr = new PacketReader(new MemoryStream(usePortalBody)))
-                GameServer.UsePortal(player.Client, rdr);
+            SpanReader portalRdr = new SpanReader(usePortalBody); //[W06]
+            GameServer.UsePortal(player.Client, ref portalRdr);
             if (player.Parent != world || player.IsTransferring || !world.Players.ContainsKey(player.Id))
             {
                 Program.Print(PrintType.Error, "P9 verify FAIL: distant UsePortal was accepted");
@@ -803,7 +803,7 @@ namespace RotMG.Game.Entities
                 }
                 Program.Print(PrintType.Info, "SizeQuake verify: database round-trip kept Size=200, legacy rows default 0");
 
-                byte[] quake = GameServer.ShowEffect(ShowEffectIndex.Jitter, 7, 0);
+                ReadOnlySpan<byte> quake = GameServer.ShowEffect(ShowEffectIndex.Jitter, 7, 0);
                 if (quake == null || quake.Length < 2 || quake[1] != 14)
                 {
                     Program.Print(PrintType.Error, "SizeQuake verify FAIL: quake ShowEffect did not serialize effect id 14");

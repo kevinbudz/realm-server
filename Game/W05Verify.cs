@@ -627,6 +627,10 @@ namespace RotMG.Game
                     Check(false, "dungeon budget: Mad Lab world desc exists");
                     return;
                 }
+                //CreateDungeonWorld draws a random seed, and about 5% of Mad Lab seeds need at most 50 work units
+                //(measured with a throwaway diagnostic, not kept: 50 of seeds 1..1000; 31 of 200 CreateDungeonWorld calls built at 50).
+                //A budget of 0 fails the first step of every seed, so all three attempts throw whatever seed they draw.
+                Generator.MaxWork = 0;
                 int worldsBefore;
                 lock (Manager.SyncRoot)
                     worldsBefore = Manager.Worlds.Count;

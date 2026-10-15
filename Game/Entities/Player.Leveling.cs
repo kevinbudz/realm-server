@@ -60,7 +60,7 @@ namespace RotMG.Game.Entities
             int newClassQuestFame = GetNextClassQuestFame(classStat.BestFame > newFame ? classStat.BestFame : newFame);
             if (newClassQuestFame > NextClassQuestFame)
             {
-                byte[] notification = GameServer.Notification(Id, "Class Quest Complete!", 0xFF00FF00);
+                ReadOnlySpan<byte> notification = GameServer.Notification(Id, "Class Quest Complete!", 0xFF00FF00);
                 foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
                 {
                     if (en is Player player && 
@@ -96,7 +96,7 @@ namespace RotMG.Game.Entities
 
                 if (Level == 20)
                 {
-                    byte[] text = GameServer.Text("", 0, -1, 0, "", $"{Name} achieved level 20");
+                    ReadOnlySpan<byte> text = GameServer.Text("", 0, -1, 0, "", $"{Name} achieved level 20");
                     foreach (Player player in Parent.Players.Values)
                         player.Client.Send(text);
                 }

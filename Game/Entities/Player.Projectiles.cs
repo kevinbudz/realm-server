@@ -460,7 +460,7 @@ namespace RotMG.Game.Entities
                         ShotProjectiles.Add(projectile.Id, projectile);
                     }
 
-                    byte[] packet = GameServer.AllyShoot(Id, desc.Type, attackAngle);
+                    ReadOnlySpan<byte> packet = GameServer.AllyShoot(Id, desc.Type, attackAngle);
                     foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
                         if (en is Player player && player.Client.Account.AllyShots && !player.Equals(this))
                             player.Client.Send(packet);
@@ -489,7 +489,7 @@ namespace RotMG.Game.Entities
                         ShotProjectiles.Add(projectile.Id, projectile);
                     }
 
-                    byte[] packet = GameServer.AllyShoot(Id, desc.Type, attackAngle);
+                    ReadOnlySpan<byte> packet = GameServer.AllyShoot(Id, desc.Type, attackAngle);
                     foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
                         if (en is Player player && player.Client.Account.AllyShots && !player.Equals(this))
                             player.Client.Send(packet);

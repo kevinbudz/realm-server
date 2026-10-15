@@ -3,6 +3,8 @@ using RotMG.Game;
 using RotMG.Game.Entities;
 using RotMG.Utils;
 using System;
+using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
@@ -33,21 +35,25 @@ namespace RotMG.Networking
     public struct InboundPacket
     {
         public int Id;
-        public byte[] Body;
+        public byte[] Body; //pooled; null for an empty body. The tick thread returns it after dispatch.
+        public int Length;
+
+        public ReadOnlySpan<byte> Span => Body == null ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>(Body, 0, Length);
     }
 
-    //One outbound frame waiting for FlushSendInner. Droppable packets are
-    //cosmetics the client can lose without desync (effects, other-player
-    //damage numbers, ally shots). Everything else is protocol state and
-    //must never be silently discarded.
+    //One outbound frame waiting for FlushSendInner. Data is a pooled array holding the whole frame: the 4-byte BE
+    //length prefix, then the packet id and body. Length is the frame size. The IO thread returns Data to ArrayPool
+    //once the frame is staged. Droppable packets are cosmetics the client can lose without desync (effects,
+    //other-player damage numbers, ally shots). Everything else is protocol state and must never be silently discarded.
     public struct OutgoingPacket
     {
         public byte[] Data;
+        public int Length;
         public bool Droppable;
 
-        public static bool IsDroppable(byte[] packet)
+        public static bool IsDroppable(ReadOnlySpan<byte> packet)
         {
-            if (packet == null || packet.Length < 1)
+            if (packet.Length < 1)
                 return false;
             switch ((GameServer.PacketId)packet[0])
             {
@@ -67,7 +73,7 @@ namespace RotMG.Networking
 
         //Speech bubbles (bubbleTime > 0). Chat/info/error lines keep
         //bubbleTime 0 and stay reliable until the byte cap.
-        private static bool IsTextBubble(byte[] packet)
+        private static bool IsTextBubble(ReadOnlySpan<byte> packet)
         {
             int i = 1;
             if (!SkipUtf(packet, ref i))
@@ -76,7 +82,7 @@ namespace RotMG.Networking
             return i < packet.Length && packet[i] != 0;
         }
 
-        private static bool SkipUtf(byte[] packet, ref int i)
+        private static bool SkipUtf(ReadOnlySpan<byte> packet, ref int i)
         {
             if (i + 2 > packet.Length)
                 return false;
@@ -113,6 +119,7 @@ namespace RotMG.Networking
         //[hop] trace state, see Common/HopTrace.cs. Stays 0 unless a traced hop owns this socket.
         public int HopAccount = -1; //-1 = not a traced hop socket (account ids start at 0)
         public int HopMask;
+        public int CaptureId; //[W06] PacketCapture connection number (0 = not captured), set in BeginHandling.
         private List<(int End, int Bit)> _hopMarks; //[hop] IO thread only (under _ioLock)
         //Set by SendFailureAndClose: Read ignores further packets and Tick
         //skips the handshake timeout so Disconnect cannot wipe the Failure
@@ -153,7 +160,8 @@ namespace RotMG.Networking
         private volatile bool _socketDead;
         //Packet that fit-checked but couldn't flush; only the IO thread
         //touches this (concurrent queues have no push-front).
-        private byte[] _held;
+        private OutgoingPacket _held;
+        private bool _hasHeld;
         //Legacy overflow flag still consumed by Tick. Slow-link disconnects
         //now go through _slowDisconnect so Failure can flush before close.
         private volatile bool _sendOverflow;
@@ -340,11 +348,11 @@ namespace RotMG.Networking
                     }
 #endif
                 }
-                _held = null;
+                ReleaseHeld(); //[W06] pooled frames go back to ArrayPool
                 _send.Reset();
                 _receive.Reset();
-                _pending.Clear();
-                while (_inbound.TryDequeue(out _)) { }
+                DrainPending();
+                DrainInboundQueue();
                 _socketDead = false;
                 _sendOverflow = false;
                 _disconnectRequested = false;
@@ -382,6 +390,7 @@ namespace RotMG.Networking
         {
             _socket = socket;
             _socket.Blocking = false;
+            CaptureId = PacketCapture.NextConnection(); //[W06]
             //Nagle + Linux delayed ACK added ~40 ms between back-to-back small writes (e.g. CreateSuccess then the first Update).
             //The IO thread already coalesces each poll's packets into one buffer, so NoDelay only affects the rest.
             _socket.NoDelay = true;
@@ -406,8 +415,8 @@ namespace RotMG.Networking
             _closing = false;
             _droppedCosmetic = 0;
             Volatile.Write(ref _pendingBytes, 0);
-            while (_pending.TryDequeue(out _)) { }
-            while (_inbound.TryDequeue(out _)) { }
+            DrainPending(); //[W06]
+            DrainInboundQueue(); //[W06]
 
             Manager.AddClient(this);
             if (HopTrace.Enabled) HopTrace.Mark(HopAccount, "BeginHandling on main thread"); //[hop]
@@ -479,7 +488,14 @@ namespace RotMG.Networking
             while (budget-- > 0 && _inbound.TryDequeue(out InboundPacket packet))
             {
                 NoteInbound();
-                GameServer.Read(this, packet.Id, packet.Body);
+                try
+                {
+                    GameServer.Read(this, packet.Id, packet.Span);
+                }
+                finally
+                {
+                    ReturnInboundBody(packet); //[W06]
+                }
             }
         }
 
@@ -503,12 +519,28 @@ namespace RotMG.Networking
 
         public void Send(byte[] packet)
         {
-            Send(packet, OutgoingPacket.IsDroppable(packet));
+            if (packet == null)
+                return;
+            Send(new ReadOnlySpan<byte>(packet), OutgoingPacket.IsDroppable(packet));
         }
 
         public void Send(byte[] packet, bool droppable)
         {
-            if (packet == null || packet.Length == 0)
+            if (packet == null)
+                return;
+            Send(new ReadOnlySpan<byte>(packet), droppable);
+        }
+
+        //[W06] Builders return a span over their scratch buffer. The frame is serialized here into a pooled array
+        //(length prefix + packet), so the span can be reused as soon as this returns and no byte[] is allocated per send.
+        public void Send(ReadOnlySpan<byte> packet)
+        {
+            Send(packet, OutgoingPacket.IsDroppable(packet));
+        }
+
+        public void Send(ReadOnlySpan<byte> packet, bool droppable)
+        {
+            if (packet.Length == 0)
                 return;
             if (State == ProtocolState.Disconnected || _slowDisconnect != 0 || _closing)
                 return;
@@ -531,8 +563,11 @@ namespace RotMG.Networking
                 return;
             }
 
+            byte[] frame = ArrayPool<byte>.Shared.Rent(framed);
+            BinaryPrimitives.WriteInt32BigEndian(frame.AsSpan(0, GameServer.PrefixLengthWithId), framed);
+            packet.CopyTo(frame.AsSpan(GameServer.PrefixLengthWithId));
             Interlocked.Add(ref _pendingBytes, framed);
-            _pending.Enqueue(new OutgoingPacket { Data = packet, Droppable = droppable });
+            _pending.Enqueue(new OutgoingPacket { Data = frame, Length = framed, Droppable = droppable });
 #if DEBUG
             LogSendQueueIfStalled();
 #endif
@@ -573,10 +608,11 @@ namespace RotMG.Networking
             Active = false;
             _disconnectReason = "Connection too slow";
 
-            while (_pending.TryDequeue(out _)) { }
+            DrainPending(); //[W06]
             Interlocked.Exchange(ref _pendingBytes, 0);
 
-            byte[] failure = GameServer.Failure(GameServer.FailureForceCloseGame, "Connection too slow");
+            //[W06] Owned copy: this runs inside Send, possibly in a caller's send loop, so it must not use the shared scratch.
+            byte[] failure = GameServer.OwnedFailure(GameServer.FailureForceCloseGame, "Connection too slow");
             Interlocked.Exchange(ref _disconnectFlush, failure);
 
 #if DEBUG
@@ -681,55 +717,112 @@ namespace RotMG.Networking
             }
         }
 
+        //Frames are read a piece at a time into _receive.PacketBytes: the 5-byte header (4-byte length + id) first, then the
+        //rest of the frame. A frame that arrives in pieces waits for the next poll, and the bytes already read are kept.
         private void PollReceiveInner()
         {
-            switch (_receive.State)
+            while (true)
             {
-                case SocketEventState.Awaiting:
-                    if (_socket.Available >= GameServer.PrefixLength)
-                    {
-                        _socket.Receive(_receive.PacketBytes, GameServer.PrefixLength, SocketFlags.None);
-                        _receive.PacketLength = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(_receive.PacketBytes, 0));
-                        _receive.State = SocketEventState.InProgress;
-                        PollReceiveInner();
-                    }
-                    break;
-                case SocketEventState.InProgress:
-                    if (_receive.PacketLength == PolicyFileMagic)
-                    {
-                        _socket.Send(GameServer.PolicyFile, 0, GameServer.PolicyFile.Length, SocketFlags.None);
-                        DrainReceiveBuffer();
-                        _receive.Reset();
-                        _socketDead = true;
+                if (_receive.State == SocketEventState.Awaiting)
+                {
+                    if (!FillReceive(GameServer.PrefixLength))
                         return;
-                    }
+                    _receive.PacketLength = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(_receive.PacketBytes, 0));
+                    _receive.State = SocketEventState.InProgress;
+                }
 
-                    if (_receive.PacketLength < GameServer.PrefixLength ||
-                        _receive.PacketLength > GameServer.BufferSize)
-                    {
-                        _socketDead = true;
-                        return;
-                    }
-
-                    //Only loop when a full packet was actually consumed: a
-                    //fragmented packet must wait for the next poll, otherwise
-                    //this recurses with no progress until the stack overflows.
-                    if ((_socket.Available + GameServer.PrefixLength) < _receive.PacketLength)
-                        break;
-
-                    if (_socket.Available != 0)
-                        _socket.Receive(_receive.PacketBytes, GameServer.PrefixLength, _receive.PacketLength - GameServer.PrefixLength, SocketFlags.None);
-                    _inbound.Enqueue(new InboundPacket { Id = _receive.GetPacketId(), Body = _receive.GetPacketBody() });
+                if (_receive.PacketLength == PolicyFileMagic)
+                {
+                    _socket.Send(GameServer.PolicyFile, 0, GameServer.PolicyFile.Length, SocketFlags.None);
+                    DrainReceiveBuffer();
                     _receive.Reset();
+                    _socketDead = true;
+                    return;
+                }
 
-                    PollReceiveInner();
-                    break;
+                if (_receive.PacketLength < GameServer.PrefixLength ||
+                    _receive.PacketLength > GameServer.BufferSize)
+                {
+                    _socketDead = true;
+                    return;
+                }
+
+                if (!FillReceive(_receive.PacketLength))
+                    return;
+
+                //[W06] The body is copied once into a pooled array: the tick thread dispatches it later, after this
+                //thread has moved on to the next frame in PacketBytes. The tick thread returns the array after dispatch.
+                int id = _receive.GetPacketId();
+                int bodyLength = _receive.PacketLength - GameServer.PrefixLength;
+                byte[] body = null;
+                if (bodyLength > 0)
+                {
+                    body = ArrayPool<byte>.Shared.Rent(bodyLength);
+                    Buffer.BlockCopy(_receive.PacketBytes, GameServer.PrefixLength, body, 0, bodyLength);
+                }
+                if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirInbound, (byte)id, new ReadOnlySpan<byte>(_receive.PacketBytes, GameServer.PrefixLength, bodyLength)); //[W06]
+                _inbound.Enqueue(new InboundPacket { Id = id, Body = body, Length = bodyLength });
+                _receive.Reset();
             }
+        }
+
+        //[W06] Reads from the socket into _receive.PacketBytes until it holds `target` bytes of the current frame (the
+        //header included). Returns false when the frame is still incomplete or the socket is dead. A frame the peer stops
+        //sending in the middle is never completed: when the peer closes (FIN), the socket is readable with nothing to read,
+        //and that marks the client dead. Before this, a truncated frame waited for bytes that would never come.
+        private bool FillReceive(int target)
+        {
+            while (_receive.Filled < target)
+            {
+                int available = _socket.Available;
+                if (available == 0)
+                {
+                    if (_socket.Poll(0, SelectMode.SelectRead))
+                        _socketDead = true;
+                    return false;
+                }
+                int n = _socket.Receive(_receive.PacketBytes, _receive.Filled, Math.Min(available, target - _receive.Filled), SocketFlags.None);
+                if (n <= 0)
+                {
+                    _socketDead = true;
+                    return false;
+                }
+                _receive.Filled += n;
+            }
+            return true;
+        }
+
+        //[W06] Pool hygiene: whichever thread dequeues an entry is the only one that returns its array.
+        private void DrainPending()
+        {
+            while (_pending.TryDequeue(out OutgoingPacket outgoing))
+                ArrayPool<byte>.Shared.Return(outgoing.Data);
+        }
+
+        private void DrainInboundQueue()
+        {
+            while (_inbound.TryDequeue(out InboundPacket packet))
+                ReturnInboundBody(packet);
+        }
+
+        //IO thread only (under _ioLock).
+        private void ReleaseHeld()
+        {
+            if (_hasHeld)
+                ArrayPool<byte>.Shared.Return(_held.Data);
+            _held = default;
+            _hasHeld = false;
+        }
+
+        private static void ReturnInboundBody(InboundPacket packet)
+        {
+            if (packet.Body != null)
+                ArrayPool<byte>.Shared.Return(packet.Body);
         }
 
         //[hop] IO thread (under _ioLock): a watched packet was copied into the send buffer.
         //Its end offset is timestamped once the kernel accepts that many bytes.
-        private void HopNoteBuffered(byte[] packet, int end)
+        private void HopNoteBuffered(ReadOnlySpan<byte> packet, int end)
         {
             int bit = HopTrace.WatchBitFor(packet);
             if (bit == 0 || (Volatile.Read(ref HopMask) & bit) == 0)
@@ -797,7 +890,7 @@ namespace RotMG.Networking
             if (_send.State == SocketEventState.Awaiting)
             {
                 byte[] disconnect = Interlocked.Exchange(ref _disconnectFlush, null);
-                if (disconnect == null && _held == null && _pending.IsEmpty)
+                if (disconnect == null && !_hasHeld && _pending.IsEmpty)
                     return;
 
                 _send.EnsureBuffer();
@@ -808,7 +901,7 @@ namespace RotMG.Networking
                 if (disconnect != null)
                 {
                     //Failure-first: do not coalesce the abandoned backlog.
-                    _held = null;
+                    ReleaseHeld();
                     int length = disconnect.Length + GameServer.PrefixLengthWithId;
                     if (length > buf.Length)
                     {
@@ -820,50 +913,49 @@ namespace RotMG.Networking
                     buf[2] = (byte)(length >> 8);
                     buf[3] = (byte)length;
                     Buffer.BlockCopy(disconnect, 0, buf, GameServer.PrefixLengthWithId, disconnect.Length);
+                    if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirOutbound, disconnect[0], new ReadOnlySpan<byte>(disconnect, 1, disconnect.Length - 1)); //[W06]
                     total = length;
                 }
                 else
                 {
-                    int queued = _pending.Count + (_held == null ? 0 : 1);
+                    int queued = _pending.Count + (_hasHeld ? 1 : 0);
                     while (queued-- > 0)
                     {
-                        byte[] packet;
-                        if (_held != null)
+                        OutgoingPacket outgoing;
+                        if (_hasHeld)
                         {
-                            packet = _held;
-                            _held = null;
+                            outgoing = _held;
+                            _held = default;
+                            _hasHeld = false;
                         }
-                        else if (!_pending.TryDequeue(out OutgoingPacket outgoing))
+                        else if (!_pending.TryDequeue(out outgoing))
                             break;
                         else
-                        {
-                            packet = outgoing.Data;
-                            AccountDequeued(packet.Length + GameServer.PrefixLengthWithId);
-                        }
-                        int length = packet.Length + GameServer.PrefixLengthWithId;
+                            AccountDequeued(outgoing.Length);
+
+                        int length = outgoing.Length;
                         if (total + length > buf.Length)
                         {
                             if (total == 0)
                             {
-                                //Single packet larger than the pooled buffer: rent an
+                                //Single frame larger than the pooled buffer: rent an
                                 //exact-size buffer for this flush (returned on Reset).
                                 _send.Grow(length);
                                 buf = _send.Data;
                             }
                             else
                             {
-                                _held = packet;
+                                _held = outgoing;
+                                _hasHeld = true;
                                 break;
                             }
                         }
-                        buf[total] = (byte)(length >> 24);
-                        buf[total + 1] = (byte)(length >> 16);
-                        buf[total + 2] = (byte)(length >> 8);
-                        buf[total + 3] = (byte)length;
-                        Buffer.BlockCopy(packet, 0, buf, total + GameServer.PrefixLengthWithId, packet.Length);
-                        total += length;
+                        Buffer.BlockCopy(outgoing.Data, 0, buf, total, length);
+                        if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirOutbound, outgoing.Data[GameServer.PrefixLength - 1], new ReadOnlySpan<byte>(outgoing.Data, GameServer.PrefixLength, length - GameServer.PrefixLength)); //[W06]
                         if (HopTrace.Enabled && Volatile.Read(ref HopMask) != 0) //[hop]
-                            HopNoteBuffered(packet, total); //[hop]
+                            HopNoteBuffered(new ReadOnlySpan<byte>(outgoing.Data, GameServer.PrefixLengthWithId, length - GameServer.PrefixLengthWithId), total + length); //[hop]
+                        total += length;
+                        ArrayPool<byte>.Shared.Return(outgoing.Data);
                     }
                 }
 
@@ -934,8 +1026,8 @@ namespace RotMG.Networking
                 return false;
             }
 
-            byte[] bubble = GameServer.Text("n", 1, 0, 5, "", "hi");
-            byte[] info = GameServer.Text("", 0, -1, 0, "", "hello");
+            byte[] bubble = GameServer.Text("n", 1, 0, 5, "", "hi").ToArray();
+            byte[] info = GameServer.Text("", 0, -1, 0, "", "hello").ToArray();
             if (!OutgoingPacket.IsDroppable(bubble))
                 return Fail("Text bubble should be droppable");
             if (OutgoingPacket.IsDroppable(info))
@@ -963,7 +1055,7 @@ namespace RotMG.Networking
             keep.Active = true;
             keep.Id = 1;
 
-            byte[] createSuccess = GameServer.CreateSuccess(42, 7);
+            byte[] createSuccess = GameServer.CreateSuccess(42, 7).ToArray();
             keep.Send(createSuccess);
 
             byte[] tick = Dummy(GameServer.PacketId.NewTick, 8);
@@ -971,7 +1063,8 @@ namespace RotMG.Networking
                 keep.Send(tick);
             if (keep.PendingCount != 301)
                 return Fail($"drop-oldest still active: queued {keep.PendingCount} after 301 reliable packets");
-            if (!keep._pending.TryPeek(out OutgoingPacket head) || head.Data[0] != (byte)GameServer.PacketId.CreateSuccess)
+            //[W06] Data is the whole frame (length prefix first), so the packet id is at PrefixLength - 1.
+            if (!keep._pending.TryPeek(out OutgoingPacket head) || head.Data[GameServer.PrefixLength - 1] != (byte)GameServer.PacketId.CreateSuccess)
                 return Fail("CreateSuccess was dropped from the head of the queue");
             Program.Print(PrintType.Info, "P3 verify: 301 reliable packets kept (old cap was 256), head is CreateSuccess");
 
@@ -1247,22 +1340,23 @@ namespace RotMG.Networking
                 wtr.Write(user);
                 wtr.Write(pass);
                 wtr.Write(0);
-                return PacketWriter.RentedBytes();
+                return PacketWriter.RentedBytes().ToArray();
             }
 
             static bool PeekFailure(Client client, int expectedId, string expectedText, string label)
             {
-                if (!client._pending.TryPeek(out OutgoingPacket head) || head.Data == null || head.Data.Length < 1)
+                //[W06] Data is the whole frame: length prefix, then the id, then the body.
+                if (!client._pending.TryPeek(out OutgoingPacket head) || head.Data == null || head.Length < GameServer.PrefixLength)
                 {
                     Program.Print(PrintType.Error, $"P7/P8 verify: {label}: queue empty");
                     return false;
                 }
-                if (head.Data[0] != (byte)GameServer.PacketId.Failure)
+                if (head.Data[GameServer.PrefixLength - 1] != (byte)GameServer.PacketId.Failure)
                 {
-                    Program.Print(PrintType.Error, $"P7/P8 verify: {label}: packet id {head.Data[0]}");
+                    Program.Print(PrintType.Error, $"P7/P8 verify: {label}: packet id {head.Data[GameServer.PrefixLength - 1]}");
                     return false;
                 }
-                using (PacketReader rdr = new PacketReader(new MemoryStream(head.Data, 1, head.Data.Length - 1)))
+                using (PacketReader rdr = new PacketReader(new MemoryStream(head.Data, GameServer.PrefixLength, head.Length - GameServer.PrefixLength)))
                 {
                     int errorId = rdr.ReadInt32();
                     string text = rdr.ReadString();
