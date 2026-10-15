@@ -1,6 +1,0 @@
-- [Hop latency finding](hop-latency-finding.md) — Escape->nexus ~1.1 s -> W02 ~72 ms -> W04 ~10 ms -> W03 ~10 ms; NoDelay applied; world-tick cost under hop churn is the open item
-- [Headless hop harness](headless-hop-harness.md) — run.sh/server_ctl.sh, dup_login.py, soak.py, tick_period.py + tick env hooks, verify flags need throwaway cwd, DB on ext4, bool XML
-- [W03 writer overlay](w03-writer-overlay.md) — read-your-writes overlay in GetKey, outcome-gated bundles, PendingJoin token, soak.py clone gotchas (login name changes on rename)
-- [Projectile path parity](projectile-path-parity.md) — W09 client-math facts: Speed integer() truncation, negative-id AS3 parity, golden harness, bots cannot soak TryHitEnemy
-- [Log sink verification](log-sink-verification.md) — W13 file-sink proof: /proc per-thread io accounting, rollover/rotation/drop knobs, verify-flag guard, hop DB fs check
-- [Chat command harness](chat-command-harness.md) — W11 chat_check.py: rank seeding via kv, per-IP registration, Nexus-only script, /legendary hang, reply diff masking

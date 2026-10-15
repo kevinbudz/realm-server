@@ -74,35 +74,6 @@ namespace RotMG.Common
         Hexed = 1UL << 24,
     }
 
-    public static class ConditionEffectsLayout
-    {
-        public static bool Verify()
-        {
-            foreach (ConditionEffectIndex idx in Enum.GetValues(typeof(ConditionEffectIndex)))
-            {
-                if (!Enum.TryParse(idx.ToString(), out ConditionEffects flag))
-                {
-                    Program.Print(PrintType.Error, $"P21 verify FAIL: missing ConditionEffects.{idx}");
-                    return false;
-                }
-                ulong expected = idx == ConditionEffectIndex.Nothing ? 0UL : 1UL << ((int)idx - 1);
-                if ((ulong)flag != expected)
-                {
-                    Program.Print(PrintType.Error, $"P21 verify FAIL: ConditionEffects.{idx}={(ulong)flag} expected {expected}");
-                    return false;
-                }
-            }
-            if (Enum.IsDefined(typeof(ConditionEffects), "NinjaSpeedy") ||
-                Enum.IsDefined(typeof(ConditionEffects), "StunImmume"))
-            {
-                Program.Print(PrintType.Error, "P21 verify FAIL: leftover client-unknown ConditionEffects member");
-                return false;
-            }
-            Program.Print(PrintType.Info, "P21 verify: ConditionEffects bits match ConditionEffectIndex / ConditionEffect.as");
-            return true;
-        }
-    }
-
     public enum ConditionEffectIndex
     {
         Nothing = 0,

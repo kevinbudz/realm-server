@@ -46,7 +46,7 @@ namespace RotMG
             GameServer.Init();
             Manager.Init();
             //[W05] Discover chat commands at startup (main thread), not on the first command.
-            Program.Print(PrintType.Info, $"Chat commands registered: {RotMG.Game.Commands.CommandTable.Warm()}");
+            RotMG.Game.Commands.CommandTable.Warm();
 
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, AppServer.Start);
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, GameServer.Start);
