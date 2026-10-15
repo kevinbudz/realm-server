@@ -16,6 +16,10 @@ The coverage inventory identifies **52 reference enemy definitions** whose IDs e
 
 Among target XML-supported gaps, 34 Highland enemy definitions have no target database module, and the target realm population still schedules several of them. This is the clearest player-facing coverage issue in the audit. A separate target-specific mismatch registers `Thessal Dropper` without a target XML object; the death transform that references it silently cannot resolve its destination. The semantic reports also identify concrete encounter and loot differences across the shared definitions; these remain source-to-source comparisons, not claims about which revision is historically correct.
 
+## Implementation behavior follow-up
+
+[Underlying movement and attack implementations](implementation-comparison/README.md) can change pursuit, wandering, and repeat-fire cadence beneath similarly configured enemy definitions. The follow-up finds no general unslowed movement speed multiplier, but does identify conditional slowed-speed, movement-priority, target-selection, and one-tick repeat-fire differences. It also records corrections to earlier interpretation.
+
 ## Detailed reports
 
 - [Named event bosses and Oryx](bosses.md)
