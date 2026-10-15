@@ -1,4 +1,4 @@
-﻿using RotMG.Common;
+using RotMG.Common;
 using RotMG.Game.Entities;
 using RotMG;
 using RotMG.Game.Entities.Vendors;
@@ -165,8 +165,49 @@ namespace RotMG.Game
         }
 
         public int UpdateCount;
-        public Dictionary<StatType, object> SVs;
-        public Dictionary<StatType, object> NewSVs;
+        //[W07] Typed stats (Game/StatTable.cs): Present is the full set sent in Update, Dirty is the diff sent in NewTick.
+        public readonly StatTable SVs = new StatTable();
+
+        //[W08] Serialized ObjectStatus, shared by every receiver of one broadcast phase (World.BroadcastGen; a fresh gen
+        //otherwise). Built once per phase under this entity's lock. The other receivers reference the same bytes, so an
+        //entity seen by N players is serialized once per phase instead of N times. The blobs are pooled by the world and
+        //released when the phase ends (World.ReleaseWireBlobs), so no entity keeps bytes between ticks.
+        internal WireBlob _fullWire, _deltaWire;
+
+        //form is GetObjectStatus's argument: false gives the Full bytes (Update adds, player NewTicks), true the Delta bytes
+        //(other entities' NewTicks). The bytes are receiver-independent: id, position and the stat mask snapshot at build time.
+        internal ArraySegment<byte> SharedStatus(bool form, long gen)
+        {
+            WireBlob blob = form ? _deltaWire : _fullWire;
+            if (blob == null || System.Threading.Volatile.Read(ref blob.Gen) != gen)
+            {
+                lock (this)
+                {
+                    blob = form ? _deltaWire : _fullWire;
+                    if (blob == null)
+                    {
+                        World world = Parent;
+                        blob = world != null ? world.TakeWireBlob(this) : new WireBlob();
+                        if (form)
+                            _deltaWire = blob;
+                        else
+                            _fullWire = blob;
+                    }
+                    if (blob.Gen != gen)
+                    {
+                        RotMG.Networking.PacketWriter wtr = RotMG.Networking.PacketWriter.Rent();
+                        GetObjectStatus(form).Write(wtr);
+                        ReadOnlySpan<byte> bytes = RotMG.Networking.PacketWriter.RentedBytes();
+                        if (blob.Buf.Length < bytes.Length)
+                            blob.Buf = new byte[Math.Max(bytes.Length, 2 * blob.Buf.Length)];
+                        bytes.CopyTo(blob.Buf);
+                        blob.Len = bytes.Length;
+                        System.Threading.Volatile.Write(ref blob.Gen, gen);
+                    }
+                }
+            }
+            return new ArraySegment<byte>(blob.Buf, 0, blob.Len);
+        }
 
         public Entity(ushort type, int? lifetime = null)
         {
@@ -176,8 +217,6 @@ namespace RotMG.Game
 #endif
             Type = type;
             Desc = Resources.Type2Object[type];
-            SVs = new Dictionary<StatType, object>();
-            NewSVs = new Dictionary<StatType, object>();
             Position = new Position(-1, -1);
             Effects = new int[MaxEfffects];
 
@@ -708,20 +747,33 @@ namespace RotMG.Game
             }
         }
 
-        public void TrySetSV(StatType type, object value)
+        public void TrySetSV(StatType type, int value)
         {
-            if (SVs.TryGetValue(type, out object current) && current.Equals(value)) //Don't send duplicate stats.
+            if (SVs.Has(type) && SVs.GetInt(type) == value) //Don't send duplicate stats.
                 return;
 
-            SVs[type] = value;
-            NewSVs[type] = value;
+            SVs.SetInt(type, value);
             UpdateCount++;
         }
 
-        public void SetSV(StatType type, object value) //Can be useful if you need to resend the same stat value.
+        public void TrySetSV(StatType type, string value)
         {
-            SVs[type] = value;
-            NewSVs[type] = value;
+            if (SVs.Has(type) && string.Equals(SVs.GetString(type), value)) //Don't send duplicate stats (null equals null).
+                return;
+
+            SVs.SetString(type, value);
+            UpdateCount++;
+        }
+
+        public void SetSV(StatType type, int value) //Can be useful if you need to resend the same stat value.
+        {
+            SVs.SetInt(type, value);
+            UpdateCount++;
+        }
+
+        public void SetSV(StatType type, string value)
+        {
+            SVs.SetString(type, value);
             UpdateCount++;
         }
 
@@ -741,12 +793,7 @@ namespace RotMG.Game
 
         public virtual ObjectStatus GetObjectStatus(bool newTick)
         {
-            return new ObjectStatus
-            {
-                Id = Id,
-                Position = Position,
-                Stats = newTick ? NewSVs : SVs
-            };
+            return newTick ? ObjectStatus.Delta(Id, Position, SVs) : ObjectStatus.Full(Id, Position, SVs);
         }
 
         public virtual ObjectDrop GetObjectDrop()
@@ -767,7 +814,6 @@ namespace RotMG.Game
                 CurrentStates.Clear();
             }
             SVs.Clear();
-            NewSVs.Clear();
             Parent = null;
         }
 

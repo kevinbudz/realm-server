@@ -1,8 +1,9 @@
-//[W06] Env-gated wire tap for the byte-identical capture gate (tools/hop/pktdiff.py decodes it).
+//[W06] Env-gated wire tap for the byte-identical capture gate.
 //REALM_PKTCAP=<file> records every framed game packet the server reads or writes, per connection and in order.
 //File: magic "PKTCAP1\n", then one record per frame: u32 LE conn, u8 dir ('I' inbound, 'O' outbound),
 //u32 LE length, then the frame bytes (packet id + body, without the 4-byte length prefix).
-//Records are written from the IO thread only (frame read / frame staged for the socket). Unset, Enabled is
+//Records are written under the owning Client's _ioLock (frame read / frame staged for the socket), so one connection's
+//records stay in order even though completions run on the threadpool. Unset, Enabled is
 //false, NextConnection returns 0 and Record returns at once.
 using System;
 using System.IO;

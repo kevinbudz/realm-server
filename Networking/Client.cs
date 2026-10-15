@@ -30,7 +30,7 @@ namespace RotMG.Networking
     }
 
     //One framed inbound packet waiting for handler dispatch on the tick
-    //thread. The IO thread only frames; GameServer.Read stays tick-threaded
+    //thread. Socket completions only frame; GameServer.Read stays tick-threaded
     //so game logic never runs concurrently.
     public struct InboundPacket
     {
@@ -41,8 +41,8 @@ namespace RotMG.Networking
         public ReadOnlySpan<byte> Span => Body == null ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>(Body, 0, Length);
     }
 
-    //One outbound frame waiting for FlushSendInner. Data is a pooled array holding the whole frame: the 4-byte BE
-    //length prefix, then the packet id and body. Length is the frame size. The IO thread returns Data to ArrayPool
+    //One outbound frame waiting for the send chain (StageLocked). Data is a pooled array holding the whole frame: the 4-byte BE
+    //length prefix, then the packet id and body. Length is the frame size. The send chain returns Data to ArrayPool
     //once the frame is staged. Droppable packets are cosmetics the client can lose without desync (effects,
     //other-player damage numbers, ally shots). Everything else is protocol state and must never be silently discarded.
     public struct OutgoingPacket
@@ -120,7 +120,7 @@ namespace RotMG.Networking
         public int HopAccount = -1; //-1 = not a traced hop socket (account ids start at 0)
         public int HopMask;
         public int CaptureId; //[W06] PacketCapture connection number (0 = not captured), set in BeginHandling.
-        private List<(int End, int Bit)> _hopMarks; //[hop] IO thread only (under _ioLock)
+        private List<(int End, int Bit)> _hopMarks; //[hop] send chain only (under _ioLock)
         //Set by SendFailureAndClose: Read ignores further packets and Tick
         //skips the handshake timeout so Disconnect cannot wipe the Failure
         //before the 1 s flush window.
@@ -139,13 +139,13 @@ namespace RotMG.Networking
         internal const int MaxPendingBytes = 4 * 1024 * 1024;
         //Hello -> Load/Create must finish within this window or Tick
         //returns the pooled slot. Also covers idle TCP and stuck policy
-        //sockets if the IO thread never saw "<pol".
+        //sockets whose first bytes never arrive.
         public const int HandshakeTimeoutMs = 5000;
         //First 4 bytes of "<policy-file-request/>" as a big-endian int.
         private const int PolicyFileMagic = 1014001516;
         private Socket _socket;
         //Concurrent: parallel world broadcast enqueues from worker threads
-        //while FlushSend dequeues on the IO thread.
+        //while the send chain dequeues under _ioLock.
         private ConcurrentQueue<OutgoingPacket> _pending;
         private int _pendingBytes;
         private int _droppedCosmetic;
@@ -154,11 +154,11 @@ namespace RotMG.Networking
         //Failure is staged in _disconnectFlush so it leaves before close.
         private volatile int _slowDisconnect;
         private byte[] _disconnectFlush;
-        //Framed inbound packets (IO thread produces, tick thread consumes)
-        //plus a death flag set by the IO thread when the socket dies.
+        //Framed inbound packets (receive completions produce, tick thread consumes)
+        //plus a death flag set by a completion when the socket dies.
         private readonly ConcurrentQueue<InboundPacket> _inbound = new ConcurrentQueue<InboundPacket>();
         private volatile bool _socketDead;
-        //Packet that fit-checked but couldn't flush; only the IO thread
+        //Packet that fit-checked but couldn't flush; only the send chain
         //touches this (concurrent queues have no push-front).
         private OutgoingPacket _held;
         private bool _hasHeld;
@@ -168,12 +168,21 @@ namespace RotMG.Networking
         private volatile bool _disconnectRequested;
         private volatile string _disconnectReason;
         private volatile bool _closing;
-        //Shared by FlushSend/PollReceive (IO thread) and FinishDisconnect
+        //Shared by the send chain and receive completions (threadpool) and FinishDisconnect
         //(main thread): socket close and pooled-buffer return never race
         //a mid-copy flush.
         private readonly object _ioLock = new object();
         private SendState _send;
         private ReceiveState _receive;
+        //[W10] Socket-event state. Fresh SAEAs per connection (BeginHandling). _recvInFlight/_sendInFlight are guarded
+        //by _ioLock. _sendKick is the send-chain token (KickSend/ReleaseSendChain). _teardownClaim makes FinishDisconnect
+        //run once per connection.
+        private SocketAsyncEventArgs _recvArgs;
+        private SocketAsyncEventArgs _sendArgs;
+        private bool _recvInFlight;
+        private bool _sendInFlight;
+        private int _sendKick;
+        private int _teardownClaim;
         private int _handshakeStartedAt;
         private int _lastInboundAt;
 
@@ -214,7 +223,7 @@ namespace RotMG.Networking
 
         //Main-thread teardown. Worker threads must use RequestDisconnect;
         //DEBUG asserts, RELEASE defers so a missed site cannot recycle a
-        //buffer the IO thread is still writing.
+        //buffer a send is still reading.
         public void Disconnect()
         {
             Program.AssertMainThread("Client.Disconnect");
@@ -253,6 +262,8 @@ namespace RotMG.Networking
         {
             Program.AssertMainThread("Client.Disconnect");
             if (State == ProtocolState.Disconnected)
+                return;
+            if (Interlocked.Exchange(ref _teardownClaim, 1) != 0) //[W10] idempotent: one teardown per connection
                 return;
             bool hopOldSocket = HopTrace.Enabled && Reconnecting && HopAccount >= 0; //[hop]
 #if DEBUG
@@ -349,7 +360,7 @@ namespace RotMG.Networking
 #endif
                 }
                 ReleaseHeld(); //[W06] pooled frames go back to ArrayPool
-                _send.Reset();
+                TeardownSendLocked(); //[W10] returns the send buffer unless a SendAsync is still reading it
                 _receive.Reset();
                 DrainPending();
                 DrainInboundQueue();
@@ -388,43 +399,68 @@ namespace RotMG.Networking
 
         public void BeginHandling(Socket socket, string ip)
         {
-            _socket = socket;
-            _socket.Blocking = false;
-            CaptureId = PacketCapture.NextConnection(); //[W06]
-            //Nagle + Linux delayed ACK added ~40 ms between back-to-back small writes (e.g. CreateSuccess then the first Update).
-            //The IO thread already coalesces each poll's packets into one buffer, so NoDelay only affects the rest.
-            _socket.NoDelay = true;
+            try
+            {
+                socket.Blocking = false;
+                //Nagle + Linux delayed ACK added ~40 ms between back-to-back small writes (e.g. CreateSuccess then the first Update).
+                //Each send flush is coalesced into one write, so NoDelay only affects the rest.
+                socket.NoDelay = true;
+            }
+            catch (Exception)
+            {
+                //[W10] The peer is already gone. Nothing is registered yet, so release the IP and the pooled slot here.
+                GameServer.CloseSocket(socket);
+                GameServer.ReleaseIp(ip);
+                GameServer.AddBack(this);
+                return;
+            }
 
-            State = ProtocolState.Handshaked;
-            IP = ip;
-            Active = true;
-            Reconnecting = false;
-            PendingJoin = null;
-            HandoffCharacter = null;
-            DCTime = -1;
-            //TickWatch, not TotalTimeUnsynced: the latter is 0 until the
-            //first Manager.Tick, and Init can already be >5 s in.
-            _handshakeStartedAt = (int)Manager.TickWatch.ElapsedMilliseconds;
-            _lastInboundAt = _handshakeStartedAt;
-            _socketDead = false;
-            _sendOverflow = false;
-            _disconnectRequested = false;
-            _disconnectReason = null;
-            _slowDisconnect = 0;
-            _disconnectFlush = null;
-            _closing = false;
-            _droppedCosmetic = 0;
-            Volatile.Write(ref _pendingBytes, 0);
-            DrainPending(); //[W06]
-            DrainInboundQueue(); //[W06]
+            lock (_ioLock)
+            {
+                _socket = socket;
+                CaptureId = PacketCapture.NextConnection(); //[W06]
+                State = ProtocolState.Handshaked;
+                IP = ip;
+                Active = true;
+                Reconnecting = false;
+                PendingJoin = null;
+                HandoffCharacter = null;
+                DCTime = -1;
+                //TickWatch, not TotalTimeUnsynced: the latter is 0 until the
+                //first Manager.Tick, and Init can already be >5 s in.
+                _handshakeStartedAt = (int)Manager.TickWatch.ElapsedMilliseconds;
+                _lastInboundAt = _handshakeStartedAt;
+                _socketDead = false;
+                _sendOverflow = false;
+                _disconnectRequested = false;
+                _disconnectReason = null;
+                _slowDisconnect = 0;
+                _disconnectFlush = null;
+                _closing = false;
+                _droppedCosmetic = 0;
+                Volatile.Write(ref _pendingBytes, 0);
+                DrainPending(); //[W06]
+                DrainInboundQueue(); //[W06]
+                _receive.Reset();
+                _send.Reset();
+                //[W10] New socket-event objects per connection, so a completion from an earlier connection cannot match them.
+                _recvArgs = new SocketAsyncEventArgs();
+                _recvArgs.Completed += OnReceiveCompleted;
+                _sendArgs = new SocketAsyncEventArgs();
+                _sendArgs.Completed += OnSendCompleted;
+                Volatile.Write(ref _teardownClaim, 0);
+            }
 
             Manager.AddClient(this);
             if (HopTrace.Enabled) HopTrace.Mark(HopAccount, "BeginHandling on main thread"); //[hop]
+
+            lock (_ioLock)
+                ReceiveLoopLocked(); //[W10] the first read is armed once the client is registered
         }
 
-        //Tick-thread half: no socket calls here. The IO thread frames
+        //Tick-thread half: no socket calls here. Receive completions frame
         //inbound packets and flushes outbound ones; this only dispatches
-        //framed packets to handlers and acts on IO-thread death flags.
+        //framed packets to handlers and acts on death flags.
         public void Tick()
         {
             try
@@ -568,12 +604,13 @@ namespace RotMG.Networking
             packet.CopyTo(frame.AsSpan(GameServer.PrefixLengthWithId));
             Interlocked.Add(ref _pendingBytes, framed);
             _pending.Enqueue(new OutgoingPacket { Data = frame, Length = framed, Droppable = droppable });
+            KickSend(); //[W10] the send chain writes it on the threadpool, never the caller
 #if DEBUG
             LogSendQueueIfStalled();
 #endif
         }
 
-        //Queue Failure, ignore further inbound, close after the IO thread
+        //Queue Failure, ignore further inbound, close after the send chain
         //has a second to flush. Immediate Disconnect() clears _pending and
         //the client never sees the reason (P7).
         public const int FailureCloseDelayMs = 1000;
@@ -597,7 +634,7 @@ namespace RotMG.Networking
 
         //Discard the backlog so Failure can leave the NIC before the
         //socket closes. Staged in _disconnectFlush (not the FIFO) so
-        //FlushSendInner writes it first instead of behind up to 4 MiB.
+        //StageLocked writes it first instead of behind up to 4 MiB.
         private void BeginSlowDisconnect()
         {
             if (State == ProtocolState.Disconnected)
@@ -614,6 +651,7 @@ namespace RotMG.Networking
             //[W06] Owned copy: this runs inside Send, possibly in a caller's send loop, so it must not use the shared scratch.
             byte[] failure = GameServer.OwnedFailure(GameServer.FailureForceCloseGame, "Connection too slow");
             Interlocked.Exchange(ref _disconnectFlush, failure);
+            KickSend(); //[W10] Failure goes out now, not on the next flush
 
 #if DEBUG
             Program.Print(PrintType.Debug, $"Send queue overflow client {Id}: disconnecting, Failure staged first");
@@ -660,46 +698,161 @@ namespace RotMG.Networking
         }
 #endif
 
-        //IO-thread half: frame available bytes into inbound packets. Never
-        //touches game state and never dispatches handlers; fatal framing
-        //only raises _socketDead for the tick thread to act on.
-        public void PollReceive()
+        //[W10] Socket-event state, all guarded by _ioLock. A connection has at most one read and one send in flight.
+        //IoQuiescent tells the accept side when a pooled client's buffers are free to reuse.
+        public bool IoQuiescent
         {
-            lock (_ioLock)
+            get
             {
-                if (State == ProtocolState.Disconnected)
+                lock (_ioLock)
+                    return !_recvInFlight && !_sendInFlight;
+            }
+        }
+
+        //[W10] Receive chain. One ReceiveAsync is in flight per connection, into _receive.PacketBytes from Filled to the end
+        //of the buffer. A completion appends the bytes, frames every complete packet into the inbound queue (the tick thread
+        //dispatches them, as before), keeps the partial tail at the front, and arms the next read. Everything runs under
+        //_ioLock, so Disconnect and a completion never touch the buffer at the same time.
+        //Framing is validated inside the try in ConsumeReceiveLocked: a bad length marks this client dead, and no other.
+        private bool CanReceiveLocked()
+        {
+            return !_socketDead && _socket != null && State != ProtocolState.Disconnected;
+        }
+
+        //Lock held. Arms reads until one is pending. A read that completes synchronously is consumed here.
+        private void ReceiveLoopLocked()
+        {
+            SocketAsyncEventArgs args = _recvArgs;
+            while (CanReceiveLocked())
+            {
+                int room = GameServer.BufferSize - _receive.Filled;
+                if (room <= 0)
+                {
+                    //Cannot happen: a full buffer always holds a complete packet, and FrameReceivedLocked consumes it.
+                    _socketDead = true;
                     return;
+                }
+                args.SetBuffer(_receive.PacketBytes, _receive.Filled, room);
+                _recvInFlight = true;
+                bool pending;
                 try
                 {
-                    //Keep draining after the policy reply so a late
-                    //"<policy-file-request/>\0" tail is not sitting in the
-                    //buffer when Tick closes (that would RST).
-                    if (_socketDead)
-                    {
-                        DrainReceiveBuffer();
-                        return;
-                    }
-                    //Peer FIN: SelectRead && Available==0. Connected stays
-                    //true until an I/O, so without this a client that closes
-                    //holds its IP slot until the handshake timeout.
-                    if (_socket.Poll(0, SelectMode.SelectRead) && _socket.Available == 0)
-                    {
-                        _socketDead = true;
-                        return;
-                    }
-                    PollReceiveInner();
+                    pending = _socket.ReceiveAsync(args);
                 }
-                catch (ObjectDisposedException)
+                catch (Exception)
                 {
+                    //ObjectDisposed or SocketException: the connection is gone.
+                    _recvInFlight = false;
                     _socketDead = true;
+                    return;
                 }
-                catch (SocketException)
+                if (pending)
+                    return;
+                _recvInFlight = false;
+                if (!ConsumeReceiveLocked(args))
+                    return;
+            }
+        }
+
+        //Receive completion (threadpool). A completion from an earlier connection is ignored.
+        private void OnReceiveCompleted(object sender, SocketAsyncEventArgs e)
+        {
+            //SocketAsyncEventArgs completions pass the Socket as sender, so the SAEA is matched by the argument (e).
+            lock (_ioLock)
+            {
+                if (!ReferenceEquals(e, _recvArgs))
+                    return;
+                _recvInFlight = false;
+                if (!CanReceiveLocked())
+                    return; //closed by Disconnect (the read was aborted) or already dead: drop the bytes
+                try
+                {
+                    if (ConsumeReceiveLocked(e))
+                        ReceiveLoopLocked();
+                }
+                catch (Exception)
                 {
                     _socketDead = true;
                 }
             }
         }
 
+        //Lock held. True when reading should continue. A FIN (0 bytes) or a socket error ends the connection.
+        private bool ConsumeReceiveLocked(SocketAsyncEventArgs e)
+        {
+            if (e.SocketError != SocketError.Success || e.BytesTransferred <= 0)
+            {
+                _socketDead = true;
+                return false;
+            }
+            _receive.Filled += e.BytesTransferred;
+            try
+            {
+                FrameReceivedLocked();
+            }
+            catch (Exception)
+            {
+                _socketDead = true; //malformed framing, or a failed policy reply
+            }
+            return !_socketDead;
+        }
+
+        //Lock held. Frames every complete packet in the buffer, then keeps the partial tail at the front. The layout is the
+        //same as before: 4-byte big-endian length (counting itself), packet id, body. A header equal to the policy-request
+        //magic is answered, as before.
+        private void FrameReceivedLocked()
+        {
+            byte[] buf = _receive.PacketBytes;
+            int end = _receive.Filled;
+            int pos = 0;
+            while (end - pos >= GameServer.PrefixLength)
+            {
+                int length = BinaryPrimitives.ReadInt32BigEndian(new ReadOnlySpan<byte>(buf, pos, 4));
+                if (length == PolicyFileMagic)
+                {
+                    ServePolicyLocked();
+                    return;
+                }
+                if (length < GameServer.PrefixLength || length > GameServer.BufferSize)
+                {
+                    _socketDead = true;
+                    return;
+                }
+                if (end - pos < length)
+                    break;
+
+                //[W06] The body is copied once into a pooled array: the tick thread dispatches it later, after this
+                //thread has moved on to the next frame in PacketBytes. The tick thread returns the array after dispatch.
+                int id = buf[pos + GameServer.PrefixLengthWithId];
+                int bodyLength = length - GameServer.PrefixLength;
+                byte[] body = null;
+                if (bodyLength > 0)
+                {
+                    body = ArrayPool<byte>.Shared.Rent(bodyLength);
+                    Buffer.BlockCopy(buf, pos + GameServer.PrefixLength, body, 0, bodyLength);
+                }
+                if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirInbound, (byte)id, new ReadOnlySpan<byte>(buf, pos + GameServer.PrefixLength, bodyLength)); //[W06]
+                _inbound.Enqueue(new InboundPacket { Id = id, Body = body, Length = bodyLength });
+                pos += length;
+            }
+
+            int rest = end - pos;
+            if (pos > 0 && rest > 0)
+                Buffer.BlockCopy(buf, pos, buf, 0, rest);
+            _receive.Filled = rest;
+        }
+
+        //Lock held. Sends the policy file, drains what the peer sent so the close does not reset the connection, and marks
+        //the client dead. Same sequence as the pre-W10 IO thread.
+        private void ServePolicyLocked()
+        {
+            _socket.Send(GameServer.PolicyFile, 0, GameServer.PolicyFile.Length, SocketFlags.None);
+            DrainReceiveBuffer();
+            _receive.Reset();
+            _socketDead = true;
+        }
+
+        //Lock held. Reads and discards whatever is already in the kernel buffer.
         private void DrainReceiveBuffer()
         {
             if (_socket == null)
@@ -717,81 +870,6 @@ namespace RotMG.Networking
             }
         }
 
-        //Frames are read a piece at a time into _receive.PacketBytes: the 5-byte header (4-byte length + id) first, then the
-        //rest of the frame. A frame that arrives in pieces waits for the next poll, and the bytes already read are kept.
-        private void PollReceiveInner()
-        {
-            while (true)
-            {
-                if (_receive.State == SocketEventState.Awaiting)
-                {
-                    if (!FillReceive(GameServer.PrefixLength))
-                        return;
-                    _receive.PacketLength = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(_receive.PacketBytes, 0));
-                    _receive.State = SocketEventState.InProgress;
-                }
-
-                if (_receive.PacketLength == PolicyFileMagic)
-                {
-                    _socket.Send(GameServer.PolicyFile, 0, GameServer.PolicyFile.Length, SocketFlags.None);
-                    DrainReceiveBuffer();
-                    _receive.Reset();
-                    _socketDead = true;
-                    return;
-                }
-
-                if (_receive.PacketLength < GameServer.PrefixLength ||
-                    _receive.PacketLength > GameServer.BufferSize)
-                {
-                    _socketDead = true;
-                    return;
-                }
-
-                if (!FillReceive(_receive.PacketLength))
-                    return;
-
-                //[W06] The body is copied once into a pooled array: the tick thread dispatches it later, after this
-                //thread has moved on to the next frame in PacketBytes. The tick thread returns the array after dispatch.
-                int id = _receive.GetPacketId();
-                int bodyLength = _receive.PacketLength - GameServer.PrefixLength;
-                byte[] body = null;
-                if (bodyLength > 0)
-                {
-                    body = ArrayPool<byte>.Shared.Rent(bodyLength);
-                    Buffer.BlockCopy(_receive.PacketBytes, GameServer.PrefixLength, body, 0, bodyLength);
-                }
-                if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirInbound, (byte)id, new ReadOnlySpan<byte>(_receive.PacketBytes, GameServer.PrefixLength, bodyLength)); //[W06]
-                _inbound.Enqueue(new InboundPacket { Id = id, Body = body, Length = bodyLength });
-                _receive.Reset();
-            }
-        }
-
-        //[W06] Reads from the socket into _receive.PacketBytes until it holds `target` bytes of the current frame (the
-        //header included). Returns false when the frame is still incomplete or the socket is dead. A frame the peer stops
-        //sending in the middle is never completed: when the peer closes (FIN), the socket is readable with nothing to read,
-        //and that marks the client dead. Before this, a truncated frame waited for bytes that would never come.
-        private bool FillReceive(int target)
-        {
-            while (_receive.Filled < target)
-            {
-                int available = _socket.Available;
-                if (available == 0)
-                {
-                    if (_socket.Poll(0, SelectMode.SelectRead))
-                        _socketDead = true;
-                    return false;
-                }
-                int n = _socket.Receive(_receive.PacketBytes, _receive.Filled, Math.Min(available, target - _receive.Filled), SocketFlags.None);
-                if (n <= 0)
-                {
-                    _socketDead = true;
-                    return false;
-                }
-                _receive.Filled += n;
-            }
-            return true;
-        }
-
         //[W06] Pool hygiene: whichever thread dequeues an entry is the only one that returns its array.
         private void DrainPending()
         {
@@ -805,7 +883,7 @@ namespace RotMG.Networking
                 ReturnInboundBody(packet);
         }
 
-        //IO thread only (under _ioLock).
+        //Send chain only (under _ioLock).
         private void ReleaseHeld()
         {
             if (_hasHeld)
@@ -820,7 +898,7 @@ namespace RotMG.Networking
                 ArrayPool<byte>.Shared.Return(packet.Body);
         }
 
-        //[hop] IO thread (under _ioLock): a watched packet was copied into the send buffer.
+        //[hop] Send chain (under _ioLock): a watched packet was copied into the send buffer.
         //Its end offset is timestamped once the kernel accepts that many bytes.
         private void HopNoteBuffered(ReadOnlySpan<byte> packet, int end)
         {
@@ -831,7 +909,7 @@ namespace RotMG.Networking
             (_hopMarks ??= new List<(int End, int Bit)>()).Add((end, bit));
         }
 
-        //[hop] IO thread: sentUpTo buffer bytes reached the kernel.
+        //[hop] Send chain (under _ioLock): sentUpTo buffer bytes reached the kernel.
         private void HopWritten(int sentUpTo)
         {
             if (_hopMarks == null || _hopMarks.Count == 0)
@@ -845,593 +923,268 @@ namespace RotMG.Networking
             _hopMarks.RemoveRange(0, n);
         }
 
-        //IO-thread half of the old StartSend: coalesce everything queued
-        //into the pooled buffer and push it with socket sends. The socket is
-        //non-blocking (see BeginHandling), so a full kernel buffer just
-        //defers the remainder to a later poll instead of stalling anyone.
-        //Only the IO thread touches _send/_held.
-        public void FlushSend()
+        //[W10] Send chain. Send() queues the frame and calls KickSend, which runs the chain on the threadpool. The caller never
+        //makes the syscall, so the tick thread stays off the socket, as it was when the IO thread owned sends. At most one
+        //SendAsync is in flight per connection. _sendKick is the chain token: a kick takes it, and it goes back only when the
+        //chain has nothing left to send. A completion keeps the token while it continues the chain, so one party at a time
+        //stages or sends. Staging (coalescing) is the old FlushSendInner, so the bytes on the wire are unchanged.
+        private static readonly WaitCallback RunSendChainCallback = state => ((Client)state).RunSendChain();
+
+        private void KickSend()
         {
-            lock (_ioLock)
+            if (_socket == null || State == ProtocolState.Disconnected)
+                return;
+            if (Interlocked.CompareExchange(ref _sendKick, 1, 0) != 0)
+                return;
+            ThreadPool.UnsafeQueueUserWorkItem(RunSendChainCallback, this);
+        }
+
+        //Threadpool entry. The kick has taken the token.
+        private void RunSendChain()
+        {
+            bool pending = false;
+            try
             {
-                if (State == ProtocolState.Disconnected)
-                {
-                    _send.ReturnPooledBuffer();
+                lock (_ioLock)
+                    pending = DriveSendLocked();
+            }
+            catch (Exception)
+            {
+                lock (_ioLock)
+                    _socketDead = true;
+            }
+            if (!pending)
+                ReleaseSendChain();
+        }
+
+        //Token holder, nothing in flight. Gives the token back, or keeps it while work remains.
+        private void ReleaseSendChain()
+        {
+            while (true)
+            {
+                Interlocked.Exchange(ref _sendKick, 0);
+                if (!HasSendWork())
                     return;
-                }
+                if (Interlocked.CompareExchange(ref _sendKick, 1, 0) != 0)
+                    return; //a kick took the token between the release and this retake
+                bool pending;
                 try
                 {
-                    _send.MarkInUse();
-                    try
-                    {
-                        FlushSendInner();
-                    }
-                    finally
-                    {
-                        _send.MarkIdle();
-                    }
+                    lock (_ioLock)
+                        pending = DriveSendLocked();
                 }
-                catch (ObjectDisposedException)
+                catch (Exception)
+                {
+                    lock (_ioLock)
+                        _socketDead = true;
+                    Interlocked.Exchange(ref _sendKick, 0);
+                    return;
+                }
+                if (pending)
+                    return; //the in-flight send's completion now owns the token
+            }
+        }
+
+        //Work exists only on a connected socket.
+        private bool HasSendWork()
+        {
+            return _socket != null && (!_pending.IsEmpty || Volatile.Read(ref _disconnectFlush) != null);
+        }
+
+        //SendAsync completion (threadpool). A completion from an earlier connection is ignored.
+        private void OnSendCompleted(object sender, SocketAsyncEventArgs e)
+        {
+            bool release = false;
+            //SocketAsyncEventArgs completions pass the Socket as sender, so the SAEA is matched by the argument (e).
+            lock (_ioLock)
+            {
+                if (!ReferenceEquals(e, _sendArgs))
+                    return;
+                try
+                {
+                    _sendInFlight = false;
+                    _send.MarkIdle();
+                    bool pending = ConsumeSendLocked(e) && DriveSendLocked();
+                    if (State == ProtocolState.Disconnected)
+                        TeardownSendLocked(); //[W10] the abort completed: nothing is in flight now, return the buffer
+                    release = !pending;
+                }
+                catch (Exception)
                 {
                     _socketDead = true;
-                }
-                catch (SocketException ex)
-                {
-                    //WouldBlock just means the kernel buffer is full; the
-                    //remainder goes out on a later poll. Anything else kills it.
-                    if (ex.SocketErrorCode != SocketError.WouldBlock)
-                        _socketDead = true;
+                    release = true;
                 }
             }
+            if (release)
+                ReleaseSendChain();
         }
 
-        private void FlushSendInner()
+        //Lock held, token held. Returns true while a SendAsync is in flight (its completion continues the chain). Otherwise the
+        //caller gives the token back.
+        private bool DriveSendLocked()
         {
-            if (_send.State == SocketEventState.Awaiting)
+            while (true)
             {
-                byte[] disconnect = Interlocked.Exchange(ref _disconnectFlush, null);
-                if (disconnect == null && !_hasHeld && _pending.IsEmpty)
-                    return;
-
-                _send.EnsureBuffer();
-                _send.MarkInUse();
-                byte[] buf = _send.Data;
-                int total = 0;
-
-                if (disconnect != null)
+                if (_sendInFlight)
+                    return true;
+                if (_socket == null || _sendArgs == null)
+                    return false;
+                //Only a disconnect stops the chain here. A peer FIN (_socketDead) still flushes what is queued, as the IO thread
+                //did before; a real send error ends the chain through the SendAsync catch or ConsumeSendLocked.
+                if (State == ProtocolState.Disconnected)
                 {
-                    //Failure-first: do not coalesce the abandoned backlog.
-                    ReleaseHeld();
-                    int length = disconnect.Length + GameServer.PrefixLengthWithId;
-                    if (length > buf.Length)
-                    {
-                        _send.Grow(length);
-                        buf = _send.Data;
-                    }
-                    buf[0] = (byte)(length >> 24);
-                    buf[1] = (byte)(length >> 16);
-                    buf[2] = (byte)(length >> 8);
-                    buf[3] = (byte)length;
-                    Buffer.BlockCopy(disconnect, 0, buf, GameServer.PrefixLengthWithId, disconnect.Length);
-                    if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirOutbound, disconnect[0], new ReadOnlySpan<byte>(disconnect, 1, disconnect.Length - 1)); //[W06]
-                    total = length;
+                    DrainSendLocked();
+                    return false;
                 }
-                else
+                if (_send.BytesWritten >= _send.PacketLength)
                 {
-                    int queued = _pending.Count + (_hasHeld ? 1 : 0);
-                    while (queued-- > 0)
-                    {
-                        OutgoingPacket outgoing;
-                        if (_hasHeld)
-                        {
-                            outgoing = _held;
-                            _held = default;
-                            _hasHeld = false;
-                        }
-                        else if (!_pending.TryDequeue(out outgoing))
-                            break;
-                        else
-                            AccountDequeued(outgoing.Length);
-
-                        int length = outgoing.Length;
-                        if (total + length > buf.Length)
-                        {
-                            if (total == 0)
-                            {
-                                //Single frame larger than the pooled buffer: rent an
-                                //exact-size buffer for this flush (returned on Reset).
-                                _send.Grow(length);
-                                buf = _send.Data;
-                            }
-                            else
-                            {
-                                _held = outgoing;
-                                _hasHeld = true;
-                                break;
-                            }
-                        }
-                        Buffer.BlockCopy(outgoing.Data, 0, buf, total, length);
-                        if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirOutbound, outgoing.Data[GameServer.PrefixLength - 1], new ReadOnlySpan<byte>(outgoing.Data, GameServer.PrefixLength, length - GameServer.PrefixLength)); //[W06]
-                        if (HopTrace.Enabled && Volatile.Read(ref HopMask) != 0) //[hop]
-                            HopNoteBuffered(new ReadOnlySpan<byte>(outgoing.Data, GameServer.PrefixLengthWithId, length - GameServer.PrefixLengthWithId), total + length); //[hop]
-                        total += length;
-                        ArrayPool<byte>.Shared.Return(outgoing.Data);
-                    }
-                }
-
-                if (total == 0)
-                    return;
-
-                _send.PacketLength = total;
-                _send.BytesWritten = 0;
-                _send.State = SocketEventState.InProgress;
-            }
-
-            try
-            {
-                int written = _socket.Send(_send.Data, _send.BytesWritten, _send.PacketLength - _send.BytesWritten, SocketFlags.None);
-                if (written < _send.PacketLength - _send.BytesWritten)
-                {
-                    _send.BytesWritten += written;
-                    if (HopTrace.Enabled) HopWritten(_send.BytesWritten); //[hop]
-                }
-                else
-                {
-                    if (HopTrace.Enabled) HopWritten(_send.PacketLength); //[hop]
                     _send.Reset();
+                    if (!StageLocked())
+                        return false;
                 }
-            }
-            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.WouldBlock)
-            {
-                //Kernel buffer full; the remainder goes out on a later tick.
-            }
-        }
 
-        //Holds _ioLock and marks the send buffer in-use, mimicking FlushSend
-        //mid-copy so Disconnect must wait instead of returning the rent.
-        public void DebugSimulateFlushHold(int holdMs)
-        {
-            lock (_ioLock)
-            {
-                _send.EnsureBuffer();
+                _sendArgs.SetBuffer(_send.Data, _send.BytesWritten, _send.PacketLength - _send.BytesWritten);
+                _sendInFlight = true;
                 _send.MarkInUse();
+                bool pending;
                 try
                 {
-                    int n = Math.Min(16, _send.Data.Length);
-                    Buffer.BlockCopy(_send.Data, 0, _send.Data, 0, n);
-                    if (holdMs > 0)
-                        Thread.Sleep(holdMs);
+                    pending = _socket.SendAsync(_sendArgs);
                 }
-                finally
+                catch (Exception)
                 {
+                    _sendInFlight = false;
                     _send.MarkIdle();
+                    _socketDead = true;
+                    DrainSendLocked();
+                    return false;
                 }
-            }
-        }
+                if (pending)
+                    return true;
 
-        //Headless: never drop protocol-state packets, drop cosmetics at
-        //2 MiB, disconnect with Failure staged first at 4 MiB.
-        public static bool VerifySendBackpressure()
-        {
-            static byte[] Dummy(GameServer.PacketId id, int extra)
-            {
-                byte[] packet = new byte[1 + extra];
-                packet[0] = (byte)id;
-                return packet;
-            }
-
-            static bool Fail(string msg)
-            {
-                Program.Print(PrintType.Error, "P3 verify: " + msg);
-                return false;
-            }
-
-            byte[] bubble = GameServer.Text("n", 1, 0, 5, "", "hi").ToArray();
-            byte[] info = GameServer.Text("", 0, -1, 0, "", "hello").ToArray();
-            if (!OutgoingPacket.IsDroppable(bubble))
-                return Fail("Text bubble should be droppable");
-            if (OutgoingPacket.IsDroppable(info))
-                return Fail("info Text should not be droppable");
-            if (!OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.ShowEffect, 8)))
-                return Fail("ShowEffect should be droppable");
-            if (!OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.Damage, 8)))
-                return Fail("Damage should be droppable");
-            if (!OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.AllyShoot, 8)))
-                return Fail("AllyShoot should be droppable");
-            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.Update, 8)))
-                return Fail("Update must not be droppable");
-            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.Goto, 8)))
-                return Fail("Goto must not be droppable");
-            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.EnemyShoot, 8)))
-                return Fail("EnemyShoot must not be droppable");
-            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.MapInfo, 8)))
-                return Fail("MapInfo must not be droppable");
-            if (OutgoingPacket.IsDroppable(Dummy(GameServer.PacketId.CreateSuccess, 8)))
-                return Fail("CreateSuccess must not be droppable");
-            Program.Print(PrintType.Info, "P3 verify: droppable tagging");
-
-            Client keep = new Client(new SendState(), new ReceiveState());
-            keep.State = ProtocolState.Connected;
-            keep.Active = true;
-            keep.Id = 1;
-
-            byte[] createSuccess = GameServer.CreateSuccess(42, 7).ToArray();
-            keep.Send(createSuccess);
-
-            byte[] tick = Dummy(GameServer.PacketId.NewTick, 8);
-            for (int i = 0; i < 300; i++)
-                keep.Send(tick);
-            if (keep.PendingCount != 301)
-                return Fail($"drop-oldest still active: queued {keep.PendingCount} after 301 reliable packets");
-            //[W06] Data is the whole frame (length prefix first), so the packet id is at PrefixLength - 1.
-            if (!keep._pending.TryPeek(out OutgoingPacket head) || head.Data[GameServer.PrefixLength - 1] != (byte)GameServer.PacketId.CreateSuccess)
-                return Fail("CreateSuccess was dropped from the head of the queue");
-            Program.Print(PrintType.Info, "P3 verify: 301 reliable packets kept (old cap was 256), head is CreateSuccess");
-
-            Client cosmetics = new Client(new SendState(), new ReceiveState());
-            cosmetics.State = ProtocolState.Connected;
-            cosmetics.Active = true;
-            cosmetics.Id = 2;
-            byte[] effect = Dummy(GameServer.PacketId.ShowEffect, 1024);
-            int effectFramed = effect.Length + GameServer.PrefixLengthWithId;
-            while (cosmetics.PendingBytes + effectFramed <= DroppablePendingBytes)
-                cosmetics.Send(effect);
-            int cappedCount = cosmetics.PendingCount;
-            int cappedBytes = cosmetics.PendingBytes;
-            for (int i = 0; i < 1000; i++)
-                cosmetics.Send(effect);
-            if (cosmetics.PendingCount != cappedCount || cosmetics.PendingBytes != cappedBytes)
-                return Fail($"cosmetics queued past soft cap: {cosmetics.PendingCount} packets / {cosmetics.PendingBytes} bytes");
-            if (cosmetics.DroppedCosmeticCount < 1000)
-                return Fail($"expected 1000 dropped cosmetics, got {cosmetics.DroppedCosmeticCount}");
-
-            byte[] update = Dummy(GameServer.PacketId.Update, 1024);
-            cosmetics.Send(update);
-            if (cosmetics.PendingCount != cappedCount + 1)
-                return Fail("reliable Update was refused at the cosmetic watermark");
-            Program.Print(PrintType.Info, $"P3 verify: cosmetics capped at {cappedBytes} bytes, Update still queued");
-
-            Client overflow = new Client(new SendState(), new ReceiveState());
-            overflow.State = ProtocolState.Connected;
-            overflow.Active = true;
-            overflow.Id = 3;
-            overflow.Send(createSuccess);
-            byte[] filler = Dummy(GameServer.PacketId.NewTick, 1024);
-            int fillerFramed = filler.Length + GameServer.PrefixLengthWithId;
-            while (overflow.PendingBytes + fillerFramed <= MaxPendingBytes)
-                overflow.Send(filler);
-            overflow.Send(filler);
-            if (overflow._slowDisconnect == 0)
-                return Fail("reliable overflow did not start slow-disconnect");
-            if (overflow._disconnectFlush == null || overflow._disconnectFlush[0] != (byte)GameServer.PacketId.Failure)
-                return Fail("Failure was not staged first on overflow");
-            if (overflow.PendingCount != 0)
-                return Fail($"backlog was not discarded for Failure-first flush ({overflow.PendingCount} left)");
-            overflow.Send(filler);
-            if (overflow.PendingCount != 0)
-                return Fail("Send after overflow still queued");
-
-            overflow._send.EnsureBuffer();
-            byte[] disconnect = Interlocked.Exchange(ref overflow._disconnectFlush, null);
-            if (disconnect == null)
-                return Fail("disconnect flush was consumed unexpectedly");
-            int length = disconnect.Length + GameServer.PrefixLengthWithId;
-            byte[] buf = overflow._send.Data;
-            buf[0] = (byte)(length >> 24);
-            buf[1] = (byte)(length >> 16);
-            buf[2] = (byte)(length >> 8);
-            buf[3] = (byte)length;
-            Buffer.BlockCopy(disconnect, 0, buf, GameServer.PrefixLengthWithId, disconnect.Length);
-            if (buf[4] != (byte)GameServer.PacketId.Failure)
-                return Fail("framed disconnect packet is not Failure");
-            using (PacketReader rdr = new PacketReader(new MemoryStream(disconnect, 1, disconnect.Length - 1)))
-            {
-                int errorId = rdr.ReadInt32();
-                string text = rdr.ReadString();
-                if (errorId != 2 || text != "Connection too slow")
-                    return Fail($"Failure payload {errorId}/{text}");
-            }
-            Program.Print(PrintType.Info, "P3 verify: overflow discards backlog, stages Failure(2, Connection too slow) first");
-            return true;
-        }
-
-        //Headless stand-in for "DEBUG server, 3+ worlds, frequent kicks":
-        //RequestDisconnect from Parallel.ForEach over live worlds, Tick
-        //teardown on the main thread, ClientSnapshot under SyncRoot while a
-        //worker mutates Clients, and the ArrayPool in-use check.
-        public static bool VerifyDisconnectThreading()
-        {
-            int worldCount;
-            lock (Manager.SyncRoot)
-                worldCount = Manager.Worlds.Count;
-            if (worldCount < 3)
-            {
-                Program.Print(PrintType.Error, $"P15 verify: expected 3+ worlds, have {worldCount}");
-                return false;
-            }
-            Program.Print(PrintType.Info, $"P15 verify: {worldCount} worlds");
-
-            List<World> worlds;
-            lock (Manager.SyncRoot)
-                worlds = new List<World>(Manager.Worlds.Values);
-
-            const int clientCount = 48;
-            List<Client> clients = new List<Client>(clientCount);
-            for (int i = 0; i < clientCount; i++)
-            {
-                Client c = new Client(new SendState(), new ReceiveState());
-                c.State = ProtocolState.Connected;
-                c.Active = true;
-                Manager.AddClient(c);
-                clients.Add(c);
-            }
-
-            Parallel.ForEach(worlds, world =>
-            {
-                foreach (Client c in clients)
-                    c.RequestDisconnect("p15-verify world " + world.Id);
-            });
-
-            foreach (Client c in clients)
-            {
-                c.Tick();
-                if (c.State != ProtocolState.Disconnected)
+                _sendInFlight = false;
+                _send.MarkIdle();
+                if (!ConsumeSendLocked(_sendArgs))
                 {
-                    Program.Print(PrintType.Error, "P15 verify: Tick did not tear down a requested disconnect");
+                    DrainSendLocked();
                     return false;
                 }
             }
-            Program.Print(PrintType.Info, $"P15 verify: {clientCount} RequestDisconnect teardowns from {worldCount} worker worlds");
+        }
 
-#if DEBUG
-            Client workerKick = new Client(new SendState(), new ReceiveState());
-            workerKick.State = ProtocolState.Connected;
-            workerKick.Active = true;
-            Manager.AddClient(workerKick);
-            Exception workerEx = null;
-            Thread worker = new Thread(() =>
-            {
-                try { workerKick.Disconnect(); }
-                catch (Exception e) { workerEx = e; }
-            });
-            worker.IsBackground = true;
-            worker.Start();
-            worker.Join();
-            if (workerEx == null)
-            {
-                Program.Print(PrintType.Error, "P15 verify: worker Disconnect() did not assert");
-                workerKick.RequestDisconnect();
-                workerKick.Tick();
+        //Lock held, nothing in flight. Coalesces queued frames (and a pending Failure-first flush) into the pooled send buffer.
+        //Returns false when there is nothing to send. Frames are coalesced in queue order and capped at the buffer size, as before.
+        private bool StageLocked()
+        {
+            byte[] disconnect = Interlocked.Exchange(ref _disconnectFlush, null);
+            if (disconnect == null && !_hasHeld && _pending.IsEmpty)
                 return false;
-            }
-            workerKick.RequestDisconnect();
-            workerKick.Tick();
-            Program.Print(PrintType.Info, "P15 verify: worker Disconnect() asserted");
-#endif
 
-            Client hold = new Client(new SendState(), new ReceiveState());
-            hold.State = ProtocolState.Connected;
-            hold.Active = true;
-            Manager.AddClient(hold);
-            Exception holdEx = null;
-            Thread io = new Thread(() =>
-            {
-                try { hold.DebugSimulateFlushHold(80); }
-                catch (Exception e) { holdEx = e; }
-            });
-            io.IsBackground = true;
-            io.Start();
-            Thread.Sleep(20);
-            try { hold.Disconnect(); }
-            catch (Exception e) { holdEx = holdEx ?? e; }
-            io.Join();
-            if (holdEx != null)
-            {
-                Program.Print(PrintType.Error, $"P15 verify: flush-hold Disconnect threw {holdEx}");
-                return false;
-            }
-            if (hold.State != ProtocolState.Disconnected)
-            {
-                Program.Print(PrintType.Error, "P15 verify: flush-hold Disconnect did not complete");
-                return false;
-            }
-            Program.Print(PrintType.Info, "P15 verify: Disconnect waited on IO flush without ArrayPool return");
+            _send.EnsureBuffer();
+            byte[] buf = _send.Data;
+            int total = 0;
 
-#if DEBUG
-            SendState pooled = new SendState();
-            pooled.EnsureBuffer();
-            pooled.MarkInUse();
-            bool threw = false;
-            try { pooled.ReturnPooledBuffer(); }
-            catch (Exception) { threw = true; }
-            if (!threw)
+            if (disconnect != null)
             {
-                Program.Print(PrintType.Error, "P15 verify: in-use buffer return did not throw");
-                return false;
-            }
-            pooled.MarkIdle();
-            try { pooled.ReturnPooledBuffer(); }
-            catch (Exception e)
-            {
-                Program.Print(PrintType.Error, $"P15 verify: idle buffer return threw {e}");
-                return false;
-            }
-            Program.Print(PrintType.Info, "P15 verify: ArrayPool in-use check fires, idle return is clean");
-#endif
-
-            Client dummy = new Client(new SendState(), new ReceiveState());
-            dummy.State = ProtocolState.Connected;
-            Exception snapshotEx = null;
-            Thread mutator = new Thread(() =>
-            {
-                try
+                //Failure-first: do not coalesce the abandoned backlog.
+                ReleaseHeld();
+                int length = disconnect.Length + GameServer.PrefixLengthWithId;
+                if (length > buf.Length)
                 {
-                    for (int i = 0; i < 20000; i++)
+                    _send.Grow(length);
+                    buf = _send.Data;
+                }
+                buf[0] = (byte)(length >> 24);
+                buf[1] = (byte)(length >> 16);
+                buf[2] = (byte)(length >> 8);
+                buf[3] = (byte)length;
+                Buffer.BlockCopy(disconnect, 0, buf, GameServer.PrefixLengthWithId, disconnect.Length);
+                if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirOutbound, disconnect[0], new ReadOnlySpan<byte>(disconnect, 1, disconnect.Length - 1)); //[W06]
+                total = length;
+            }
+            else
+            {
+                int queued = _pending.Count + (_hasHeld ? 1 : 0);
+                while (queued-- > 0)
+                {
+                    OutgoingPacket outgoing;
+                    if (_hasHeld)
                     {
-                        lock (Manager.SyncRoot)
+                        outgoing = _held;
+                        _held = default;
+                        _hasHeld = false;
+                    }
+                    else if (!_pending.TryDequeue(out outgoing))
+                        break;
+                    else
+                        AccountDequeued(outgoing.Length);
+
+                    int length = outgoing.Length;
+                    if (total + length > buf.Length)
+                    {
+                        if (total == 0)
                         {
-                            Manager.Clients[int.MaxValue] = dummy;
-                            Manager.Clients.Remove(int.MaxValue);
+                            //Single frame larger than the pooled buffer: rent an
+                            //exact-size buffer for this flush (returned on Reset).
+                            _send.Grow(length);
+                            buf = _send.Data;
+                        }
+                        else
+                        {
+                            _held = outgoing;
+                            _hasHeld = true;
+                            break;
                         }
                     }
-                }
-                catch (Exception e) { snapshotEx = e; }
-            });
-            mutator.IsBackground = true;
-            mutator.Start();
-            try
-            {
-                for (int i = 0; i < 20000; i++)
-                {
-                    lock (Manager.SyncRoot)
-                    {
-                        List<Client> snap = new List<Client>();
-                        snap.AddRange(Manager.Clients.Values);
-                    }
+                    Buffer.BlockCopy(outgoing.Data, 0, buf, total, length);
+                    if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirOutbound, outgoing.Data[GameServer.PrefixLength - 1], new ReadOnlySpan<byte>(outgoing.Data, GameServer.PrefixLength, length - GameServer.PrefixLength)); //[W06]
+                    if (HopTrace.Enabled && Volatile.Read(ref HopMask) != 0) //[hop]
+                        HopNoteBuffered(new ReadOnlySpan<byte>(outgoing.Data, GameServer.PrefixLengthWithId, length - GameServer.PrefixLengthWithId), total + length); //[hop]
+                    total += length;
+                    ArrayPool<byte>.Shared.Return(outgoing.Data);
                 }
             }
-            catch (Exception e) { snapshotEx = snapshotEx ?? e; }
-            mutator.Join();
-            if (snapshotEx != null)
-            {
-                Program.Print(PrintType.Error, $"P15 verify: ClientSnapshot raced ({snapshotEx.Message})");
-                return false;
-            }
-            Program.Print(PrintType.Info, "P15 verify: ClientSnapshot.AddRange under SyncRoot never threw");
 
-            Exception tickEx = null;
-            for (int i = 0; i < 80; i++)
-            {
-                Client c = new Client(new SendState(), new ReceiveState());
-                c.State = ProtocolState.Connected;
-                c.Active = true;
-                Manager.AddClient(c);
-                ThreadPool.QueueUserWorkItem(_ => c.RequestDisconnect("p15-soak"));
-                c.RequestDisconnect("p15-soak");
-                try { Manager.Tick(); }
-                catch (Exception e)
-                {
-                    tickEx = e;
-                    break;
-                }
-            }
-            if (tickEx != null)
-            {
-                Program.Print(PrintType.Error, $"P15 verify: Manager.Tick threw {tickEx}");
+            if (total == 0)
                 return false;
-            }
-            Program.Print(PrintType.Info, "P15 verify: Manager.Tick soak with worker RequestDisconnect did not throw");
+
+            _send.PacketLength = total;
+            _send.BytesWritten = 0;
+            _send.State = SocketEventState.InProgress;
             return true;
         }
 
-        public static bool VerifyHandshakeFailure()
+        //Lock held, a send just completed or failed. False when the connection failed (the caller marks it dead).
+        private bool ConsumeSendLocked(SocketAsyncEventArgs e)
         {
-            static bool Fail(string msg)
+            if (e.SocketError != SocketError.Success || e.BytesTransferred <= 0)
             {
-                Program.Print(PrintType.Error, "P7/P8 verify: " + msg);
+                _socketDead = true;
                 return false;
             }
-
-            static byte[] HelloBody(string version, int gameId, string user, string pass)
-            {
-                PacketWriter wtr = PacketWriter.Rent();
-                wtr.Write(version);
-                wtr.Write(gameId);
-                wtr.Write(user);
-                wtr.Write(pass);
-                wtr.Write(0);
-                return PacketWriter.RentedBytes().ToArray();
-            }
-
-            static bool PeekFailure(Client client, int expectedId, string expectedText, string label)
-            {
-                //[W06] Data is the whole frame: length prefix, then the id, then the body.
-                if (!client._pending.TryPeek(out OutgoingPacket head) || head.Data == null || head.Length < GameServer.PrefixLength)
-                {
-                    Program.Print(PrintType.Error, $"P7/P8 verify: {label}: queue empty");
-                    return false;
-                }
-                if (head.Data[GameServer.PrefixLength - 1] != (byte)GameServer.PacketId.Failure)
-                {
-                    Program.Print(PrintType.Error, $"P7/P8 verify: {label}: packet id {head.Data[GameServer.PrefixLength - 1]}");
-                    return false;
-                }
-                using (PacketReader rdr = new PacketReader(new MemoryStream(head.Data, GameServer.PrefixLength, head.Length - GameServer.PrefixLength)))
-                {
-                    int errorId = rdr.ReadInt32();
-                    string text = rdr.ReadString();
-                    if (errorId != expectedId || text != expectedText)
-                    {
-                        Program.Print(PrintType.Error, $"P7/P8 verify: {label}: Failure({errorId}, {text})");
-                        return false;
-                    }
-                }
-                return true;
-            }
-
-            if (Settings.MillisecondsPerTick <= 0 || string.IsNullOrEmpty(Settings.BuildVersion))
-                return Fail("Settings not loaded");
-            if (Settings.BuildVersion != "1.0.0")
-                return Fail($"BuildVersion {Settings.BuildVersion}, expected 1.0.0");
-            Program.Print(PrintType.Info, $"P8 verify: Settings.BuildVersion={Settings.BuildVersion}");
-
-            Client close = new Client(new SendState(), new ReceiveState());
-            close.State = ProtocolState.Handshaked;
-            close.Active = true;
-            close.Id = 7001;
-            close.SendFailureAndClose(GameServer.FailureForceCloseGame, "Failed to load character.");
-            if (close.State == ProtocolState.Disconnected)
-                return Fail("SendFailureAndClose disconnected immediately (Failure would not flush)");
-            if (!close.Closing || close.Active)
-                return Fail("Closing flag/Active not set");
-            if (close.PendingCount != 1)
-                return Fail($"expected 1 queued Failure, have {close.PendingCount}");
-            if (!PeekFailure(close, GameServer.FailureForceCloseGame, "Failed to load character.", "SendFailureAndClose"))
-                return false;
-
-            close.SendFailureAndClose(GameServer.FailureForceCloseGame, "again");
-            if (close.PendingCount != 1)
-                return Fail("second SendFailureAndClose queued another packet");
-            close.Send(GameServer.Text("", 0, -1, 0, "", "nope"));
-            if (close.PendingCount != 1)
-                return Fail("Send after Closing still queued");
-
-            byte[] extraHello = HelloBody(Settings.BuildVersion, Manager.NexusId, "nouser", "nopass");
-            GameServer.Read(close, (int)GameServer.PacketId.Hello, extraHello);
-            if (close.PendingCount != 1 || close.State != ProtocolState.Handshaked)
-                return Fail("Read processed a packet after Closing");
-            Program.Print(PrintType.Info, "P7 verify: SendFailureAndClose queues Failure(2), stays connected, Read/Send ignored");
-
-            Client mismatch = new Client(new SendState(), new ReceiveState());
-            mismatch.State = ProtocolState.Handshaked;
-            mismatch.Active = true;
-            mismatch.Id = 7002;
-            mismatch.IP = "p8-verify";
-            byte[] badVersion = HelloBody("0.0.1", Manager.NexusId, "nouser", "nopass");
-            using (PacketReader rdr = new PacketReader(new MemoryStream(badVersion)))
-                GameServer.Hello(mismatch, rdr);
-            if (mismatch.State == ProtocolState.Disconnected)
-                return Fail("version mismatch disconnected immediately");
-            if (!mismatch.Closing)
-                return Fail("version mismatch did not set Closing");
-            if (!PeekFailure(mismatch, GameServer.FailureIncorrectVersion, Settings.BuildVersion, "version mismatch"))
-                return false;
-            Program.Print(PrintType.Info, "P8 verify: Hello with 0.0.1 sends Failure(1, BuildVersion) and waits to flush");
-
-            Client badLogin = new Client(new SendState(), new ReceiveState());
-            badLogin.State = ProtocolState.Handshaked;
-            badLogin.Active = true;
-            badLogin.Id = 7003;
-            badLogin.IP = "p7-verify";
-            byte[] badCreds = HelloBody(Settings.BuildVersion, Manager.NexusId, "nouser", "nopass");
-            using (PacketReader rdr = new PacketReader(new MemoryStream(badCreds)))
-                GameServer.Hello(badLogin, rdr);
-            if (badLogin.State == ProtocolState.Disconnected)
-                return Fail("invalid account disconnected immediately");
-            if (!PeekFailure(badLogin, GameServer.FailureForceCloseGame, "Invalid account.", "invalid account"))
-                return false;
-            Program.Print(PrintType.Info, "P7 verify: Hello with matching version + bad password sends Failure(2, Invalid account.)");
+            _send.BytesWritten += e.BytesTransferred;
+            if (HopTrace.Enabled) HopWritten(_send.BytesWritten); //[hop]
             return true;
+        }
+
+        //Lock held, nothing in flight: the connection is dead or disconnected, so drop what was queued.
+        private void DrainSendLocked()
+        {
+            ReleaseHeld();
+            DrainPending();
+            Interlocked.Exchange(ref _disconnectFlush, null);
+            Interlocked.Exchange(ref _pendingBytes, 0);
+            TeardownSendLocked();
+        }
+
+        //Lock held. Returns the pooled send buffer. While a SendAsync is in flight the kernel may still be reading it, so this
+        //does nothing: the completion calls it again once nothing is in flight.
+        private void TeardownSendLocked()
+        {
+            if (_sendInFlight)
+                return;
+            _send.Reset();
+            _send.ReturnPooledBuffer();
         }
     }
 

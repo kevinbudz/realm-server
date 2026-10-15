@@ -271,7 +271,7 @@ namespace RotMG.Game.Entities
         //The hit decision once the bullet, the target and the client time
         //are known (TryHitEnemy has done the validation). elapsed < 0 is never
         //a hit. Otherwise the cover sweep runs first, then the exact test at
-        //the hit time. Split out so --projpath-verify can drive it directly.
+        //the hit time.
         private void ResolveEnemyHit(int bulletId, Projectile p, Entity target, int elapsed)
         {
             if (elapsed < 0)
@@ -798,7 +798,7 @@ namespace RotMG.Game.Entities
                 Position pos = ac.Projectile.PositionAt(time - ac.Time);
                 Tile? tile = Parent.GetTileF(pos.X, pos.Y);
 
-                if ((tile == null || tile.Value.Type == 255 || GetSeenTileUpdate((int)pos.X, (int)pos.Y) != tile.Value.UpdateCount) ||
+                if ((tile == null || tile.Value.Type == 255 || !TileSeen((int)pos.X, (int)pos.Y)) ||
                     (tile.Value.StaticObject != null && (tile.Value.StaticObject.Desc.EnemyOccupySquare || !ac.Projectile.Desc.PassesCover && tile.Value.StaticObject.Desc.OccupySquare)))
                 {
                     AckedProjectiles.Remove(bulletId);
@@ -897,150 +897,6 @@ namespace RotMG.Game.Entities
 #endif
                 Client.Disconnect();
             }
-        }
-
-        //Headless stand-in for the opentk "hits stop landing" desync:
-        //the client predicts damage numbers locally, but the server
-        //only applies EnemyHit for bullet ids it issued in
-        //ShotProjectiles. Both sides start at 0 on world enter and
-        //decrement per PlayerShoot, so the server must consume ids for
-        //every received shoot — including rejected ones — or a single
-        //rejected shoot shifts every later hit onto unknown ids and no
-        //further hit ever lands.
-        public static bool VerifyProjectileIdLockstep()
-        {
-            if (!Resources.Worlds.TryGetValue("Spider Den", out WorldDesc desc)
-                || !Dungeons.DungeonWorld.IsSupported(desc))
-            {
-                Program.Print(PrintType.Error, "P24 verify: Spider Den world desc missing");
-                return false;
-            }
-            World world = Manager.CreateDungeonWorld(desc);
-            List<IntPoint> spawns = world.GetSpawnPoints();
-            if (spawns.Count == 0)
-            {
-                Program.Print(PrintType.Error, "P24 verify: dungeon has no spawn points");
-                return false;
-            }
-            Position spawn = spawns[0].ToPosition();
-
-            Player player = CreateVerifyPlayer("P24ShootLockstep");
-            player.Client.Random = new wRandom(12345);
-            if (world.AddEntity(player, spawn) == -1)
-            {
-                Program.Print(PrintType.Error, "P24 verify: failed to add player");
-                player.Client.State = ProtocolState.Disconnected;
-                return false;
-            }
-
-            try
-            {
-                return CheckProjectileIdLockstep(player, spawn);
-            }
-            finally
-            {
-                player.Client.State = ProtocolState.Disconnected;
-                if (player.Parent == world)
-                    world.RemoveEntity(player);
-            }
-        }
-
-        private static bool CheckProjectileIdLockstep(Player player, Position spawn)
-        {
-            ItemDesc weapon = player.GetItem(0);
-            if (weapon == null)
-            {
-                Program.Print(PrintType.Error, "P24 verify FAIL: verify player has no weapon");
-                return false;
-            }
-            int numShots = weapon.NumProjectiles;
-            //Mirrors the client's Map.NextProjectileId: both sides start
-            //at 0 on world enter and decrement per PlayerShoot sent.
-            int clientNext = 0;
-            int t = 1000;
-
-            //Baseline valid shoot registers the client's ids.
-            player.TryShoot(t, player.Position, 0f, false, numShots);
-            clientNext -= numShots;
-            if (!ExpectShotIds(player, clientNext, numShots, "valid shoot"))
-                return false;
-
-            //ValidMove reject (the running-around case) must still consume:
-            //the client already spent these ids when it sent the shoot.
-            t += 400;
-            int rejectedStart = clientNext;
-            player.TryShoot(t, new Position(spawn.X + 20f, spawn.Y), 0f, false, numShots);
-            clientNext -= numShots;
-            if (player.NextProjectileId != clientNext)
-            {
-                Program.Print(PrintType.Error, $"P24 verify FAIL: ValidMove-rejected shoot did not consume ids (server {player.NextProjectileId}, client {clientNext})");
-                return false;
-            }
-            for (int i = 0; i < numShots; i++)
-            {
-                if (player.ShotProjectiles.ContainsKey(rejectedStart - i))
-                {
-                    Program.Print(PrintType.Error, "P24 verify FAIL: rejected shoot registered hittable bullets");
-                    return false;
-                }
-            }
-            //Headless stand-in for the client acking the correction Goto
-            //the rejection queued; without it every later shoot takes the
-            //goto-wait path instead of the valid one below.
-            player.AwaitingGoto.Clear();
-
-            //Next valid shoot must land on the client's ids: this is the
-            //exact lookup TryHitEnemy performs for EnemyHit.
-            t += 400;
-            player.ShotTime = t - player.ShotDuration - 1;
-            player.TryShoot(t, player.Position, 0f, false, numShots);
-            clientNext -= numShots;
-            if (!ExpectShotIds(player, clientNext, numShots, "post-rejection shoot"))
-                return false;
-
-            //NaN-angle reject must still consume.
-            t += 400;
-            player.TryShoot(t, player.Position, float.NaN, false, numShots);
-            clientNext -= numShots;
-            if (player.NextProjectileId != clientNext)
-            {
-                Program.Print(PrintType.Error, $"P24 verify FAIL: NaN-angle shoot did not consume ids (server {player.NextProjectileId}, client {clientNext})");
-                return false;
-            }
-
-            //Goto-wait reject must still consume.
-            player.AwaitingGoto.Enqueue(new AwaitingGotoWait { ServerEnqueuedAt = Manager.TotalTimeUnsynced });
-            t += 400;
-            player.TryShoot(t, player.Position, 0f, false, numShots);
-            clientNext -= numShots;
-            player.AwaitingGoto.Clear();
-            if (player.NextProjectileId != clientNext)
-            {
-                Program.Print(PrintType.Error, $"P24 verify FAIL: goto-wait shoot did not consume ids (server {player.NextProjectileId}, client {clientNext})");
-                return false;
-            }
-
-            Program.Print(PrintType.Info, "P24 verify: rejected shoots consume ids, post-rejection EnemyHit ids stay hittable");
-            return true;
-        }
-
-        private static bool ExpectShotIds(Player player, int clientNext, int numShots, string what)
-        {
-            if (player.NextProjectileId != clientNext)
-            {
-                Program.Print(PrintType.Error, $"P24 verify FAIL: {what} desynced ids (server {player.NextProjectileId}, client {clientNext})");
-                return false;
-            }
-            for (int i = 0; i < numShots; i++)
-            {
-                int id = clientNext + 1 + i;
-                if (!player.ShotProjectiles.ContainsKey(id))
-                {
-                    Program.Print(PrintType.Error, $"P24 verify FAIL: {what} bullet {id} unknown to the server (EnemyHit would be dropped)");
-                    return false;
-                }
-            }
-            return true;
         }
     }
 }

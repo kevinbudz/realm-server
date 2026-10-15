@@ -67,13 +67,24 @@ namespace RotMG.Game.Entities
             SightRays = sightRays.ToArray();
         }
 
-        //Last tile UpdateCount sent to this client, keyed by packed tile
-        //coords. Only ~700 sight tiles are ever stored, instead of a
-        //W*H array (16 MiB per player in a 2048x2048 Realm).
-        public Dictionary<long, int> TileUpdates;
-        private static long TileKey(int x, int y) => ((long)x << 32) | (uint)y;
-        private int GetSeenTileUpdate(int x, int y) => TileUpdates.TryGetValue(TileKey(x, y), out int v) ? v : 0;
-        private void SetSeenTileUpdate(int x, int y, int v) => TileUpdates[TileKey(x, y)] = v;
+        //[W08] Tiles this client was sent at their current UpdateCount: one bit per world tile (TileSeenBits), sized to
+        //the world at Init and never grown. It replaces the Dictionary of last-sent versions, which grew with every tile
+        //revealed and was never pruned. Null before Init, after Dispose, and for bots (they never send, so they hold none).
+        private TileSeenBits _tileSent;
+        //True when this client was sent the tile at its current version. Same question as the old per-tile version compare.
+        internal bool TileSeen(int x, int y) => _tileSent != null && _tileSent.Get(x, y);
+        //Called by World.BumpTile for every player in the world when a tile's version changes.
+        internal void ForgetTile(int x, int y) => _tileSent?.Clear(x, y);
+        //The W05 teleport check marks a tile as seen at a given version. The bit is set only when v is the tile's current
+        //version, which is what the old dictionary held right after the sight loop sent it.
+        private void SetSeenTileUpdate(int x, int y, int v)
+        {
+            Tile? tile = Parent.GetTile(x, y);
+            if (tile != null && tile.Value.UpdateCount == v)
+                _tileSent.Set(x, y);
+            else
+                _tileSent.Clear(x, y);
+        }
         public Dictionary<int, int> EntityUpdates;
         public HashSet<Entity> Entities;
         public HashSet<IntPoint> CalculatedSightCircle;
@@ -94,9 +105,10 @@ namespace RotMG.Game.Entities
         private readonly List<Entity> _dropScratch = new List<Entity>();
         //Reused per-tick packet buffers: Update/NewTick serialize
         //synchronously, so these never escape the call.
-        private readonly List<ObjectStatus> _statusScratch = new List<ObjectStatus>();
+        //[W08] Inside a broadcast phase these hold the entity bytes shared with the other receivers (Entity.SharedStatus).
+        private readonly List<StatusEntry> _statusScratch = new List<StatusEntry>();
         private readonly List<TileData> _tilesScratch = new List<TileData>();
-        private readonly List<ObjectDefinition> _addsScratch = new List<ObjectDefinition>();
+        private readonly List<AddEntry> _addsScratch = new List<AddEntry>();
         private readonly List<ObjectDrop> _dropsScratch = new List<ObjectDrop>();
 
         //Join frame (W04): the joiner's first Update and NewTick, sent when Load/Create adds the player
@@ -113,39 +125,68 @@ namespace RotMG.Game.Entities
             SendNewTick();
         }
 
+        //Phase gen for the shared serialized statuses: the world's broadcast phase when called from Tick, zero otherwise.
+        //Zero (a direct call, such as the join frame) serializes each status into the packet, with no cache.
+        private long WireGen()
+        {
+            return Parent?.BroadcastGen ?? 0;
+        }
+
+        private static StatusEntry StatusOf(Entity en, bool form, long gen)
+        {
+            return gen != 0 ? StatusEntry.FromShared(en.SharedStatus(form, gen)) : StatusEntry.Direct(en.GetObjectStatus(form));
+        }
+
         public virtual void SendNewTick()
         {
             HandleQuest();
             _newTickCount++;
+            long gen = WireGen();
             _statusScratch.Clear();
             foreach (Entity en in Entities)
             {
                 if (EntityUpdates[en.Id] != en.UpdateCount)
                 {
+                    //[W08] Same forms as before: players send Full, other entities Delta (GetObjectStatus(true)).
+                    //The bytes are built once per phase and shared by every receiver.
                     if (en is Player && en != this && !_nearPlayerIds.Contains(en.Id))
                     {
                         //Far presence: round-robin slice only. Full stats keep
                         //every send self-contained, so no delta is ever lost
-                        //across skipped ticks (NewSVs are cleared globally).
+                        //across skipped ticks (SVs.Dirty is cleared globally).
                         if ((_newTickCount + en.Id) % FarPlayerTickDivisor != 0)
                             continue;
-                        _statusScratch.Add(en.GetObjectStatus(false));
+                        _statusScratch.Add(StatusOf(en, false, gen));
                     }
                     else if (en is Player)
-                        _statusScratch.Add(en.GetObjectStatus(false));
+                        _statusScratch.Add(StatusOf(en, false, gen));
                     else
-                        _statusScratch.Add(en.GetObjectStatus(true));
+                        _statusScratch.Add(StatusOf(en, true, gen));
                     EntityUpdates[en.Id] = en.UpdateCount;
                 }
             }
 
-            Client.Send(GameServer.NewTick(_statusScratch, PrivateSVs));
+            Client.Send(GameServer.NewTickShared(_statusScratch, PrivateSVs));
             PrivateSVs.Clear();
             AwaitingMoves = CreditNewTick(AwaitingMoves);
+            ReleaseDirectWire();
+        }
+
+        //Full status for an add (shared bytes inside a phase). GetObjectDefinition runs first, as before: it can change the
+        //entity (ConnectedObject sets its Connect stat there), and the status must be taken after that.
+        private void AddShared(Entity en, long gen)
+        {
+            ObjectDefinition def = en.GetObjectDefinition();
+            _addsScratch.Add(new AddEntry
+            {
+                ObjectType = def.ObjectType,
+                Status = gen != 0 ? StatusEntry.FromShared(en.SharedStatus(false, gen)) : StatusEntry.Direct(def.ObjectStatus)
+            });
         }
 
         public virtual void SendUpdate()
         {
+            long gen = WireGen();
             long trSight = Manager.TickTraceEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             bool nUpdate = ShouldCalculateSightCircle();
             HashSet<IntPoint> sight = Parent.BlockSight == 0 ? SightCircle :
@@ -177,7 +218,7 @@ namespace RotMG.Game.Entities
                     if (tile == null)
                         continue;
 
-                    if (GetSeenTileUpdate(x, y) != tile.Value.UpdateCount)
+                    if (!TileSeen(x, y))
                     {
                         _tilesScratch.Add(new TileData
                         {
@@ -186,12 +227,12 @@ namespace RotMG.Game.Entities
                             Y = (short)y
                         });
 
-                        SetSeenTileUpdate(x, y, tile.Value.UpdateCount);
+                        _tileSent.Set(x, y);
                     }
 
                     if (tile.Value.StaticObject != null && Entities.Add(tile.Value.StaticObject))
                     {
-                        _addsScratch.Add(tile.Value.StaticObject.GetObjectDefinition());
+                        AddShared(tile.Value.StaticObject, gen);
                         EntityUpdates.Add(tile.Value.StaticObject.Id, tile.Value.StaticObject.UpdateCount);
                     }
                 }
@@ -213,7 +254,7 @@ namespace RotMG.Game.Entities
                 _nearPlayerIds.Add(en.Id);
                 if (Entities.Add(en))
                 {
-                    _addsScratch.Add(en.GetObjectDefinition());
+                    AddShared(en, gen);
                     EntityUpdates.Add(en.Id, en.UpdateCount);
                 }
             }
@@ -232,7 +273,7 @@ namespace RotMG.Game.Entities
                 {
                     if (Entities.Add(p))
                     {
-                        _addsScratch.Add(p.GetObjectDefinition());
+                        AddShared(p, gen);
                         EntityUpdates.Add(p.Id, p.UpdateCount);
                     }
                 }
@@ -252,7 +293,7 @@ namespace RotMG.Game.Entities
                 int dy = (int)en.Position.Y - (int)Position.Y;
                 if (sight.Contains(new IntPoint(dx, dy)) && Entities.Add(en))
                 {
-                    _addsScratch.Add(en.GetObjectDefinition());
+                    AddShared(en, gen);
                     EntityUpdates.Add(en.Id, en.UpdateCount);
                 }
             }
@@ -263,7 +304,7 @@ namespace RotMG.Game.Entities
             //yields questEntity unconditionally.
             if (Quest != null && Quest.Parent == Parent && Entities.Add(Quest))
             {
-                _addsScratch.Add(Quest.GetObjectDefinition());
+                AddShared(Quest, gen);
                 EntityUpdates.Add(Quest.Id, Quest.UpdateCount);
             }
 
@@ -325,9 +366,19 @@ namespace RotMG.Game.Entities
 
             if (_tilesScratch.Count > 0 || _addsScratch.Count > 0 || _dropsScratch.Count > 0)
             {
-                Client.Send(GameServer.Update(_tilesScratch, _addsScratch, _dropsScratch));
+                Client.Send(GameServer.UpdateShared(_tilesScratch, _addsScratch, _dropsScratch));
                 FameStats.TilesUncovered += _tilesScratch.Count;
             }
+            ReleaseDirectWire();
+        }
+
+        //[W08] A direct SendUpdate/SendNewTick (the join frame) owns the serialized statuses it filled: they are
+        //released once its packet is sent. Inside a broadcast phase the phase releases them instead.
+        private void ReleaseDirectWire()
+        {
+            World world = Parent;
+            if (world != null && world.BroadcastGen == 0)
+                world.ReleaseWireBlobs();
         }
 
         //Retention box is symmetric on both axes. realm-src-master's

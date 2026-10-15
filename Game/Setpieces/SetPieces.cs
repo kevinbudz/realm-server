@@ -178,8 +178,7 @@ namespace RotMG.Game.Setpieces
                         continue;
                     world.RemoveStatic(wx, wy);
                     world.Tiles[wx, wy].Type = src.GroundType;
-                    world.Tiles[wx, wy].UpdateCount++;
-                    world.UpdateCount++;
+                    world.BumpTile(wx, wy);
                     if (src.Region != Region.None)
                     {
                         world.Tiles[wx, wy].Region = src.Region;
@@ -187,8 +186,7 @@ namespace RotMG.Game.Setpieces
                         if (!world.Map.Regions.TryGetValue(src.Region, out list))
                             world.Map.Regions[src.Region] = list = new List<IntPoint>();
                         list.Add(new IntPoint(wx, wy));
-                        world.Tiles[wx, wy].UpdateCount++;
-                        world.UpdateCount++;
+                        world.BumpTile(wx, wy);
                     }
                     if (src.ObjectType == 0xff)
                         continue;
@@ -205,8 +203,7 @@ namespace RotMG.Game.Setpieces
                         world.Tiles[wx, wy].StaticObject = staticObject;
                         if (entity.Desc.BlocksSight)
                             world.Tiles[wx, wy].BlocksSight = true;
-                        world.Tiles[wx, wy].UpdateCount++;
-                        world.UpdateCount++;
+                        world.BumpTile(wx, wy);
                     }
                 }
         }
@@ -281,8 +278,7 @@ namespace RotMG.Game.Setpieces
                 return false;
             world.RemoveStatic(x, y);
             world.Tiles[x, y].Type = desc.Type;
-            world.Tiles[x, y].UpdateCount++;
-            world.UpdateCount++;
+            world.BumpTile(x, y);
             return true;
         }
 
@@ -309,8 +305,7 @@ namespace RotMG.Game.Setpieces
                 world.Tiles[x, y].StaticObject = staticObject;
                 if (entity.Desc.BlocksSight)
                     world.Tiles[x, y].BlocksSight = true;
-                world.Tiles[x, y].UpdateCount++;
-                world.UpdateCount++;
+                world.BumpTile(x, y);
             }
             return entity;
         }

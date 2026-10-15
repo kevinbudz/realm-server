@@ -60,39 +60,67 @@ namespace RotMG.Common
         }
     }
 
+    //[W08] One entity status in an Update add or a NewTick. Inside a broadcast phase it carries the bytes shared by every
+    //receiver (Entity.SharedStatus). Outside one (the join frame, direct calls) it carries the status itself, serialized
+    //into the packet as before, so that path builds no cache. Writes the same bytes either way.
+    public struct StatusEntry
+    {
+        public bool Shared;
+        public ArraySegment<byte> Bytes;
+        public ObjectStatus Status;
+
+        public static StatusEntry FromShared(ArraySegment<byte> bytes) => new StatusEntry { Shared = true, Bytes = bytes };
+        public static StatusEntry Direct(ObjectStatus status) => new StatusEntry { Shared = false, Status = status };
+
+        public void Write(PacketWriter wtr)
+        {
+            if (Shared)
+                wtr.Write(new ReadOnlySpan<byte>(Bytes.Array, Bytes.Offset, Bytes.Count));
+            else
+                Status.Write(wtr);
+        }
+    }
+
+    //[W08] An Update add: the type, then its status (StatusEntry). Writes the same bytes as ObjectDefinition.Write.
+    public struct AddEntry
+    {
+        public ushort ObjectType;
+        public StatusEntry Status;
+    }
+
+    //[W07] Stats are a StatTable (typed slots); Mask is the snapshot of which ones this status carries: every
+    //present stat (Full, SVs) or the ones changed since the last clear (Delta, NewSVs). The wire order is StatType order.
     public struct ObjectStatus
     {
         public int Id;
         public Position Position;
-        public Dictionary<StatType, object> Stats;
+        public StatTable Stats;
+        public StatMask Mask;
+
+        public static ObjectStatus Full(int id, Position position, StatTable stats)
+        {
+            return new ObjectStatus { Id = id, Position = position, Stats = stats, Mask = stats.Present };
+        }
+
+        public static ObjectStatus Delta(int id, Position position, StatTable stats)
+        {
+            return new ObjectStatus { Id = id, Position = position, Stats = stats, Mask = stats.Dirty };
+        }
 
         public void Write(PacketWriter wtr)
         {
             wtr.Write(Id);
             Position.Write(wtr);
 
-            wtr.Write((byte)Stats.Count);
-            foreach (KeyValuePair<StatType, object> k in Stats)
-            {
-                wtr.Write((byte)k.Key);
-                if (IsStringStat(k.Key))
-                    //A cleared string stat (GuildName after a leave or kick) is null: send "" so the client clears it
-                    //and the tick is not aborted (W05; Encoding.GetBytes(null) threw inside the world tick).
-                    wtr.Write((string)k.Value ?? "");
-                else 
-                    wtr.Write((int)k.Value);
-            }
+            StatMask mask = Mask;
+            wtr.Write((byte)mask.Count);
+            for (int s = mask.NextSet(0); s >= 0; s = mask.NextSet(s + 1))
+                Stats.WriteStat(wtr, s);
         }
 
         public static bool IsStringStat(StatType stat)
         {
-            switch (stat)
-            {
-                case StatType.Name:
-                case StatType.GuildName:
-                    return true;
-            }
-            return false;
+            return StatTable.IsString(stat);
         }
     }
 

@@ -20,26 +20,16 @@ namespace RotMG.Networking
 
     public class ReceiveState
     {
-        public int PacketLength;
-        public int Filled; //[W06] bytes of the current frame (header included) already in PacketBytes
+        public int Filled; //[W10] bytes in PacketBytes not yet framed: a partial packet at the tail, kept for the next read
         public readonly byte[] PacketBytes;
-        public SocketEventState State;
 
         public ReceiveState()
         {
             PacketBytes = new byte[GameServer.BufferSize];
-            PacketLength = GameServer.PrefixLength;
-        }
-
-        public int GetPacketId()
-        {
-            return PacketBytes[4];
         }
 
         public void Reset()
         {
-            State = SocketEventState.Awaiting;
-            PacketLength = 0;
             Filled = 0;
         }
     }
@@ -52,7 +42,7 @@ namespace RotMG.Networking
 
         public byte[] Data; //Pooled single-flush buffer (BufferSize), rented lazily.
 #if DEBUG
-        //Set while FlushSendInner is copying or socket.Send'ing this buffer.
+        //Set while the send chain stages or SendAsync is reading this buffer.
         //ReturnPooledBuffer throws if it would recycle a still-referenced rent.
         internal volatile byte[] InUseBuffer;
 #endif
@@ -89,7 +79,7 @@ namespace RotMG.Networking
                 ReturnPooledBuffer();
         }
 
-        //IO thread owns pooled-buffer lifetime: call under Client._ioLock
+        //The send chain owns pooled-buffer lifetime: call under Client._ioLock
         //when State is Disconnected, or from Reset for an oversized flush.
         public void ReturnPooledBuffer()
         {
@@ -97,7 +87,7 @@ namespace RotMG.Networking
                 return;
 #if DEBUG
             if (InUseBuffer != null && object.ReferenceEquals(InUseBuffer, Data))
-                throw new Exception("ArrayPool: returning send buffer still referenced by FlushSend");
+                throw new Exception("ArrayPool: returning send buffer still referenced by a SendAsync");
 #endif
             ArrayPool<byte>.Shared.Return(Data);
             Data = null;
@@ -154,135 +144,153 @@ namespace RotMG.Networking
             Thread.Sleep(200);
         }
 
-        private static bool _ioRunning;
-        private static Thread _ioThread;
+        //[W10] No IO thread. Accepts, receives and sends are completion-driven (SocketAsyncEventArgs). Start() listens and
+        //arms the accept loop, and Program also calls StartIo(). Whichever runs first does the work; the other returns.
+        private static int _accepting; //Interlocked: 1 once the listener is listening
 
-        //Dedicated socket thread: frames inbound bytes and flushes outbound
-        //queues at ~1kHz so syscalls and memcpy never run on the tick
-        //thread. Handler dispatch stays in Client.Tick (tick thread), so no
-        //game logic runs here; per-client errors only flag the client.
         public static void StartIo()
         {
-            if (_ioThread != null)
+            if (Interlocked.Exchange(ref _accepting, 1) != 0)
                 return;
-            _ioRunning = true;
-            _ioThread = new Thread(IoLoop)
-            {
-                IsBackground = true,
-                Name = "GameServerIo",
-                Priority = ThreadPriority.AboveNormal
-            };
-            _ioThread.Start();
+            _listener.Listen((int)(Settings.MaxClients * 1.2f));
+            Program.Print(PrintType.Info, $"Started GameServer listening at <{_listener.LocalEndPoint}>");
+
+            SocketAsyncEventArgs args = new SocketAsyncEventArgs();
+            args.Completed += OnAcceptCompleted;
+            ArmAccept(args);
         }
 
         public static void StopIo()
         {
-            _ioRunning = false;
-            try { _ioThread?.Join(2000); } catch { }
-            _ioThread = null;
-        }
-
-        private static void IoLoop()
-        {
-            while (_ioRunning)
-            {
-                try
-                {
-                    Client[] snapshot = Manager.SnapshotClients();
-                    foreach (Client client in snapshot)
-                    {
-                        try
-                        {
-                            client.PollReceive();
-                            client.FlushSend();
-                        }
-                        catch { }
-                    }
-                }
-                catch { }
-                Thread.Sleep(1);
-            }
+            //Closing the listener aborts the pending accept. Its completion sees _terminating and stops the loop.
+            try { _listener?.Close(); } catch { }
         }
 
         public static void Start()
         {
-            _listener.Listen((int)(Settings.MaxClients * 1.2f));
-            Program.Print(PrintType.Info, $"Started GameServer listening at <{_listener.LocalEndPoint}>");
+            StartIo();
+        }
 
+        //Accept loop. AcceptAsync completes on a threadpool thread. A completion that happens synchronously is handled
+        //inline, not by recursion. There is no per-accept sleep any more (the old Thread.Sleep(10) capped accepts at 100/s).
+        private static void ArmAccept(SocketAsyncEventArgs args)
+        {
             while (!_terminating)
             {
+                args.AcceptSocket = null;
+                bool pending;
                 try
                 {
-                    //Wait for a client to connect and validate the connection.
-                    Socket skt = _listener.Accept();
-                    long hopAccept = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
-
-                    List<Client> queueBack = new List<Client>();
-                    while (_addBack.TryDequeue(out Client add))
-                    {
-                        if (!(Manager.TotalTimeUnsynced - add.DCTime > AddBackMinDelay))
-                            queueBack.Add(add);
-                        else
-                            _clients.Enqueue(add);
-                    }
-
-                    foreach (Client q in queueBack)
-                        _addBack.Enqueue(q);
-
-#if DEBUG
-                    if (skt == null || !skt.Connected)
-                    {
-                        Program.Print(PrintType.Warn, "<Socket connection aborted>");
-                        continue;
-                    }
-#endif
-
-#if DEBUG
-                    Program.Print(PrintType.Debug, $"Client connected from <{skt.RemoteEndPoint}>");
-#endif
-
-                    Client client;
-                    if (!_clients.TryDequeue(out client))
-                    {
-#if DEBUG
-                        Program.Print(PrintType.Warn, $"No pooled client available, aborted connection from <{skt.RemoteEndPoint}>");
-#endif
-                        RejectSocket(skt, ServerFullMessage);
-                        continue;
-                    }
-
-                    string ip = skt.RemoteEndPoint.ToString().Split(':')[0];
-                    if (!TryAcquireIp(ip))
-                    {
-#if DEBUG
-                        Program.Print(PrintType.Warn, $"Too many clients connected, disconnecting <{skt.RemoteEndPoint}>");
-#endif
-                        _clients.Enqueue(client);
-                        RejectSocket(skt, TooManyConnectionsMessage);
-                        continue;
-                    }
-
-                    if (HopTrace.Enabled) HopTrace.Accepted(client, hopAccept); //[hop]
-                    Program.PushWork(() =>
-                    {
-                        client.BeginHandling(skt, ip);
-                    });
-
-                    Thread.Sleep(10);
+                    pending = _listener.AcceptAsync(args);
                 }
-#if DEBUG
                 catch (Exception ex)
                 {
+                    if (_terminating || ex is ObjectDisposedException)
+                        return;
+#if DEBUG
                     Program.Print(PrintType.Error, ex.ToString());
-                }
 #endif
-#if RELEASE
-                catch
-                {
-
+                    Thread.Sleep(10); //transient (for example descriptor exhaustion): back off instead of spinning
+                    continue;
                 }
-#endif
+                if (pending)
+                    return;
+                HandleAccept(args);
             }
+        }
+
+        private static void OnAcceptCompleted(object sender, SocketAsyncEventArgs e)
+        {
+            HandleAccept(e);
+            ArmAccept(e);
+        }
+
+        private static void HandleAccept(SocketAsyncEventArgs e)
+        {
+            Socket skt = e.AcceptSocket;
+            if (skt == null)
+            {
+                if (e.SocketError != SocketError.Success && !_terminating)
+                    Thread.Sleep(10);
+                return;
+            }
+            if (e.SocketError != SocketError.Success || _terminating)
+            {
+                CloseSocket(skt);
+                return;
+            }
+            try
+            {
+                Admit(skt);
+            }
+            catch (Exception ex)
+            {
+                //Admit hands the socket off only as its last step, so on an exception the socket is still ours.
+#if DEBUG
+                Program.Print(PrintType.Error, ex.ToString());
+#else
+                _ = ex;
+#endif
+                CloseSocket(skt);
+            }
+        }
+
+        //Admission for one accepted socket. A rejected socket is closed here. An admitted one belongs to the main thread from
+        //the PushWork hand-off on. Nothing is registered (pool slot, IP count) until the peer address is known.
+        private static void Admit(Socket skt)
+        {
+            long hopAccept = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
+            IPEndPoint remote = (IPEndPoint)skt.RemoteEndPoint;
+            string ip = remote.Address.ToString(); //[W10] was Split(':')[0]: every IPv6 peer shared the key "["
+            DrainAddBack();
+
+            if (!_clients.TryDequeue(out Client client))
+            {
+#if DEBUG
+                Program.Print(PrintType.Warn, $"No pooled client available, aborted connection from <{remote}>");
+#endif
+                RejectSocket(skt, ServerFullMessage);
+                return;
+            }
+            if (!TryAcquireIp(ip))
+            {
+#if DEBUG
+                Program.Print(PrintType.Warn, $"Too many clients connected, disconnecting <{remote}>");
+#endif
+                _clients.Enqueue(client);
+                RejectSocket(skt, TooManyConnectionsMessage);
+                return;
+            }
+#if DEBUG
+            Program.Print(PrintType.Debug, $"Client connected from <{remote}>");
+#endif
+            if (HopTrace.Enabled) HopTrace.Accepted(client, hopAccept); //[hop]
+            Program.PushWork(() =>
+            {
+                client.BeginHandling(skt, ip);
+            });
+        }
+
+        //Returns disconnected clients to the pool once their wait is over AND their last receive and send have completed.
+        //A client whose socket operations are still in flight stays queued: its SAEAs and buffers are still in use.
+        private static void DrainAddBack()
+        {
+            List<Client> queueBack = new List<Client>();
+            while (_addBack.TryDequeue(out Client add))
+            {
+                if (Manager.TotalTimeUnsynced - add.DCTime > AddBackMinDelay && add.IoQuiescent)
+                    _clients.Enqueue(add);
+                else
+                    queueBack.Add(add);
+            }
+
+            foreach (Client q in queueBack)
+                _addBack.Enqueue(q);
+        }
+
+        internal static void CloseSocket(Socket skt)
+        {
+            try { skt.Close(); } catch { }
         }
 
         public static void AddBack(Client client)
@@ -355,72 +363,6 @@ namespace RotMG.Networking
             lock (_connectedLock)
             {
                 return _connected.TryGetValue(ip, out int n) ? n : 0;
-            }
-        }
-
-        public static bool VerifyIpAccounting()
-        {
-            static bool Fail(string msg)
-            {
-                Program.Print(PrintType.Error, "P18 verify: " + msg);
-                return false;
-            }
-
-            if (_connected == null)
-                _connected = new Dictionary<string, int>();
-
-            ReadOnlySpan<byte> packet = Failure(FailureForceCloseGame, TooManyConnectionsMessage);
-            byte[] framed = FramePacket(packet);
-            int length = (framed[0] << 24) | (framed[1] << 16) | (framed[2] << 8) | framed[3];
-            if (length != framed.Length)
-                return Fail($"framed length prefix {length} != {framed.Length}");
-            if (framed[4] != (byte)PacketId.Failure)
-                return Fail("framed packet is not Failure");
-            using (PacketReader rdr = new PacketReader(new MemoryStream(framed, 5, framed.Length - 5)))
-            {
-                int errorId = rdr.ReadInt32();
-                string text = rdr.ReadString();
-                if (errorId != 2 || text != TooManyConnectionsMessage)
-                    return Fail($"Failure payload {errorId}/{text}");
-            }
-            Program.Print(PrintType.Info, "P18 verify: framed Failure(2, Too many connections from your address)");
-
-            int oldCap = Settings.MaxClientsPerIp;
-            Settings.MaxClientsPerIp = 4;
-            string ip = "p18-verify";
-            try
-            {
-                while (CountConnected(ip) > 0)
-                    ReleaseIp(ip);
-
-                for (int i = 0; i < 4; i++)
-                {
-                    if (!TryAcquireIp(ip))
-                        return Fail($"acquire {i} of 4 failed");
-                }
-                if (TryAcquireIp(ip))
-                    return Fail("5th acquire succeeded at cap 4");
-                if (CountConnected(ip) != 4)
-                    return Fail($"count {CountConnected(ip)} after cap, expected 4");
-
-                ReleaseIp(ip);
-                if (CountConnected(ip) != 3)
-                    return Fail("ReleaseIp did not decrement immediately");
-                if (!TryAcquireIp(ip))
-                    return Fail("acquire after immediate release failed (old bug: held until pool recycle)");
-                if (CountConnected(ip) != 4)
-                    return Fail("count after re-acquire");
-
-                while (CountConnected(ip) > 0)
-                    ReleaseIp(ip);
-                Program.Print(PrintType.Info, "P18 verify: cap 4 rejects the 5th, ReleaseIp frees a slot immediately");
-                return true;
-            }
-            finally
-            {
-                while (CountConnected(ip) > 0)
-                    ReleaseIp(ip);
-                Settings.MaxClientsPerIp = oldCap;
             }
         }
     }

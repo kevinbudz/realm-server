@@ -52,8 +52,7 @@ namespace RotMG.Game
                 if (_nexus.GetTile(x, y) != null && _nexus.AddEntity(portal, new Position(x + 0.5f, y + 0.5f)) != -1)
                 {
                     _nexus.Tiles[x, y].StaticObject = portal;
-                    _nexus.Tiles[x, y].UpdateCount++;
-                    _nexus.UpdateCount++;
+                    _nexus.BumpTile(x, y);
                     return portal;
                 }
             }
@@ -119,8 +118,7 @@ namespace RotMG.Game
             {
                 _nexus.Tiles[x, y].StaticObject = null;
                 _nexus.Tiles[x, y].BlocksSight = false;
-                _nexus.Tiles[x, y].UpdateCount++;
-                _nexus.UpdateCount++;
+                _nexus.BumpTile(x, y);
             }
         }
 

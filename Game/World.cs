@@ -83,7 +83,6 @@ namespace RotMG.Game
         //Statics whose Behavior resolved in Init, in Statics dictionary order (StaticObject.StaticOrder). World.Tick
         //used to scan all of Statics for these.
         private readonly List<StaticObject> _behaviorStatics = new List<StaticObject>();
-        internal IReadOnlyList<StaticObject> BehaviorStatics => _behaviorStatics;
 
         public World(IGameMap map, WorldDesc desc)
             : this(map, desc.Id, desc.DisplayName, desc.Background)
@@ -432,9 +431,19 @@ namespace RotMG.Game
             //Through the indexer: Tile is a struct, so a GetTile local
             //would be a copy and writes to it would be lost.
             Tiles[x, y].Type = type;
-            Tiles[x, y].UpdateCount++;
+            BumpTile(x, y);
+        }
 
+        //[W08] The only place a tile version changes (see BumpTile). It bumps the tile and the world's UpdateCount (the
+        //sight cache key), and clears the tile's "already sent" bit for every player in this world, so each player re-sends
+        //a changed tile exactly when its old per-player UpdateCount comparison would have. Players outside this world hold
+        //no state for it. Runs only on the world's own thread (entity ticks, joins, or main-thread work between ticks).
+        internal void BumpTile(int x, int y)
+        {
+            Tiles[x, y].UpdateCount++;
             UpdateCount++;
+            foreach (Player player in Players.Values)
+                player.ForgetTile(x, y);
         }
 
         //public IntPoint CastLine(int x, int y, int x2, int y2)
@@ -497,10 +506,9 @@ namespace RotMG.Game
             StaticObject next = new StaticObject(type);
             Tiles[x, y].StaticObject = next;
             Tiles[x, y].BlocksSight = next.Desc.BlocksSight;
-            Tiles[x, y].UpdateCount++;
+            BumpTile(x, y);
             AddEntity(next, new Position(x + 0.5f, y + 0.5f));
 
-            UpdateCount++;
             NudgePlayersOffBlockedTile(x, y);
         }
 
@@ -514,9 +522,7 @@ namespace RotMG.Game
                 RemoveEntity(prev);
                 Tiles[x, y].StaticObject = null;
                 Tiles[x, y].BlocksSight = false;
-                Tiles[x, y].UpdateCount++;
-
-                UpdateCount++;
+                BumpTile(x, y);
             }
         }
 
@@ -615,8 +621,7 @@ namespace RotMG.Game
                 if (Tiles[(int)at.X, (int)at.Y].StaticObject == null)
                 {
                     Tiles[(int)at.X, (int)at.Y].StaticObject = staticObj;
-                    Tiles[(int)at.X, (int)at.Y].UpdateCount++;
-                    UpdateCount++;
+                    BumpTile((int)at.X, (int)at.Y);
                     NudgePlayersOffBlockedTile((int)at.X, (int)at.Y);
                 }
                 //Statics with behaviors (e.g. Dr Terrible Bubble, Monster
@@ -696,8 +701,7 @@ namespace RotMG.Game
                 if (tile != null && tile.Value.StaticObject == staticObj)
                 {
                     Tiles[(int)en.Position.X, (int)en.Position.Y].StaticObject = null;
-                    Tiles[(int)en.Position.X, (int)en.Position.Y].UpdateCount++;
-                    UpdateCount++;
+                    BumpTile((int)en.Position.X, (int)en.Position.Y);
                 }
                 en.Dispose();
                 return;
@@ -788,16 +792,7 @@ namespace RotMG.Game
                 _activeEntities.Add(st);
 
             long trActive = trace ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
-            //Player broadcast parallelizes cleanly: each worker touches only
-            //its own player's mutable state while world state is read-only
-            //here (entity ticks run sequentially below). PacketWriter.Rent
-            //is per-thread, Client.Send is ConcurrentQueue-backed, and
-            //overflow disconnects are deferred to the main thread's Tick.
-            if (Players.Count >= ParallelBroadcastThreshold)
-                Parallel.ForEach(Players.Values, player => player.SendUpdate());
-            else
-                foreach (Player player in Players.Values)
-                    player.SendUpdate();
+            BroadcastUpdates();
 
             long trUpdate = trace ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             //Tick logic first
@@ -819,18 +814,13 @@ namespace RotMG.Game
                 }
             long trEntities = trace ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
 
-            //Send NewTick to players (same independence as SendUpdate above)
-            if (Players.Count >= ParallelBroadcastThreshold)
-                Parallel.ForEach(Players.Values, player => player.SendNewTick());
-            else
-                foreach (Player player in Players.Values)
-                    player.SendNewTick();
+            BroadcastNewTicks();
 
             long trNewTick = trace ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             //Clear new stats
             foreach (Entity en in _activeEntities)
                 if (en.TickEntity())
-                    en.NewSVs.Clear();
+                    en.SVs.ClearDirty();
 
             ChatMessages.Clear();
             if (trace)
@@ -847,6 +837,93 @@ namespace RotMG.Game
                         $"clear={ms(trNewTick, trEnd):F1} players={Players.Count} active={_activeEntities.Count} statics={Statics.Count} " +
                         "top=" + string.Join(",", TraceTypeMs.OrderByDescending(kv => kv.Value).Take(3).Select(kv => $"[{kv.Key} {kv.Value:F1}ms]")));
                 }
+            }
+        }
+
+        //[W08] Broadcast phases of Tick. Player broadcast parallelizes cleanly: each worker touches only its own player's
+        //mutable state while world state is read-only here (entity ticks run sequentially in Tick, between the phases).
+        //PacketWriter.Rent is per-thread, Client.Send is ConcurrentQueue-backed, and overflow disconnects are deferred to
+        //the main thread's Tick. BroadcastGen names the phase, so the players share each entity's serialized status
+        //(Entity.SharedStatus); it is zero outside a phase, and the join frame then builds its own bytes.
+        private static long _wireGenCounter;
+        internal long BroadcastGen;
+
+        internal static long NextWireGen() => System.Threading.Interlocked.Increment(ref _wireGenCounter);
+
+        //Entities that filled a serialized status during the current phase (or direct call), and the pool of their blobs.
+        private readonly object _wireLock = new object();
+        private readonly List<Entity> _wireFilled = new List<Entity>();
+        private readonly Stack<WireBlob> _wirePool = new Stack<WireBlob>();
+
+        //Called by Entity.SharedStatus under the entity's lock. Returns a blob (pooled when possible) that the entity keeps
+        //until ReleaseWireBlobs.
+        internal WireBlob TakeWireBlob(Entity entity)
+        {
+            lock (_wireLock)
+            {
+                _wireFilled.Add(entity);
+                WireBlob blob = _wirePool.Count > 0 ? _wirePool.Pop() : new WireBlob();
+                blob.Gen = 0;
+                return blob;
+            }
+        }
+
+        //Ends the bytes' lifetime: the blobs go back to the pool and the entities hold none. Runs after a broadcast phase
+        //(single-threaded, after Parallel.ForEach has finished) and after a direct SendUpdate/SendNewTick.
+        internal void ReleaseWireBlobs()
+        {
+            lock (_wireLock)
+            {
+                foreach (Entity entity in _wireFilled)
+                {
+                    if (entity._fullWire != null)
+                    {
+                        _wirePool.Push(entity._fullWire);
+                        entity._fullWire = null;
+                    }
+                    if (entity._deltaWire != null)
+                    {
+                        _wirePool.Push(entity._deltaWire);
+                        entity._deltaWire = null;
+                    }
+                }
+                _wireFilled.Clear();
+            }
+        }
+
+        internal void BroadcastUpdates()
+        {
+            BroadcastGen = NextWireGen();
+            try
+            {
+                if (Players.Count >= ParallelBroadcastThreshold)
+                    Parallel.ForEach(Players.Values, player => player.SendUpdate());
+                else
+                    foreach (Player player in Players.Values)
+                        player.SendUpdate();
+            }
+            finally
+            {
+                BroadcastGen = 0;
+                ReleaseWireBlobs();
+            }
+        }
+
+        internal void BroadcastNewTicks()
+        {
+            BroadcastGen = NextWireGen();
+            try
+            {
+                if (Players.Count >= ParallelBroadcastThreshold)
+                    Parallel.ForEach(Players.Values, player => player.SendNewTick());
+                else
+                    foreach (Player player in Players.Values)
+                        player.SendNewTick();
+            }
+            finally
+            {
+                BroadcastGen = 0;
+                ReleaseWireBlobs();
             }
         }
 

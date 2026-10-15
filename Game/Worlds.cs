@@ -117,8 +117,7 @@ namespace RotMG.Game
                         if (GetTile(spot.X, spot.Y) != null)
                         {
                             Tiles[spot.X, spot.Y].StaticObject = vendor;
-                            Tiles[spot.X, spot.Y].UpdateCount++;
-                            UpdateCount++;
+                            BumpTile(spot.X, spot.Y);
                         }
                     }
                 }

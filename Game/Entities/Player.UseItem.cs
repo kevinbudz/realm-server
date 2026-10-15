@@ -785,8 +785,7 @@ namespace RotMG.Game.Entities
             if (host.GetTile(px, py) != null)
             {
                 host.Tiles[px, py].StaticObject = portal;
-                host.Tiles[px, py].UpdateCount++;
-                host.UpdateCount++;
+                host.BumpTile(px, py);
             }
             SchedulePortalTimeout(host, portal, at, portalDesc);
 
@@ -848,8 +847,7 @@ namespace RotMG.Game.Entities
                 {
                     host.Tiles[tx, ty].StaticObject = null;
                     host.Tiles[tx, ty].BlocksSight = false;
-                    host.Tiles[tx, ty].UpdateCount++;
-                    host.UpdateCount++;
+                    host.BumpTile(tx, ty);
                 }
                 host.RemoveEntity(portalRef);
                 Manager.RemovePortalDungeon(portalRef.Id);
@@ -906,8 +904,7 @@ namespace RotMG.Game.Entities
             if (host.GetTile((int)at.X, (int)at.Y) != null)
             {
                 host.Tiles[(int)at.X, (int)at.Y].StaticObject = open;
-                host.Tiles[(int)at.X, (int)at.Y].UpdateCount++;
-                host.UpdateCount++;
+                host.BumpTile((int)at.X, (int)at.Y);
             }
             World world;
             try

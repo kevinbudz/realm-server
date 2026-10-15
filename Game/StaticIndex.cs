@@ -14,7 +14,7 @@ namespace RotMG.Game
     //Order: results come back in the order the old scan visited them, which is Statics dictionary enumeration order
     //(slot order). Dictionary.Remove puts a freed slot at the head of a LIFO free list and Add reuses that slot first,
     //so StaticOrder mirrors those slots: Add takes the most recently freed key or the next new one, and Remove pushes
-    //the key back. --w05-verify checks the keys against the real enumeration order after load and after mutations.
+    //the key back.
     //
     //World.AddEntity, RemoveEntity and MoveEntity are the only writers of World.Statics and of a static's Position,
     //and they keep this index in step (Add and Remove only where Statics.Add and Statics.Remove run).

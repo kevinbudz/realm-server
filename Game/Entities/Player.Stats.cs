@@ -25,7 +25,7 @@ namespace RotMG.Game.Entities
         //equipment so RecalculateEquipBonuses never wipes them, mirroring
         //realm-src-master's separate ActivateBoost bucket.
         public int[] ActivateBoosts;
-        public Dictionary<StatType, object> PrivateSVs;
+        public StatTable PrivateSVs; //[W07] owner-only stats, sent in the owner's NewTick and then cleared
 
         float _hpRegenCounter;
         float _mpRegenCounter;
@@ -163,9 +163,9 @@ namespace RotMG.Game.Entities
             ActivateBoosts = new int[Stats.Length];
         }
 
-        public void SetPrivateSV(StatType type, object value)
+        public void SetPrivateSV(StatType type, int value)
         {
-            PrivateSVs[type] = value;
+            PrivateSVs.SetInt(type, value);
         }
 
         public void UpdateStats()

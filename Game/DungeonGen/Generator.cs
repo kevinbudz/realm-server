@@ -32,8 +32,7 @@ namespace RotMG.Game.DungeonGen
         //Work units per generation: each room placement, each retry-loop pass and each restart counts as one.
         //The retry loops below were unbounded (retry until something fits), and a template that never fits
         //spun forever on the thread building the world. Normal generations use a small fraction of this
-        //budget (measured by --w05-verify: see Program.cs). Exhaustion throws DungeonGenerationException.
-        //Not const so --w05-verify can lower it to force a failure; nothing else writes it.
+        //budget. Exhaustion throws DungeonGenerationException.
         public static int MaxWork = 50000;
 
         //Consecutive branch passes that add no room before GenerateBranches stops. Saturated templates keep

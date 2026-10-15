@@ -5,7 +5,6 @@
 //Every line it prints starts with "[hop]". Call sites are tagged "//[hop]" (grep -rn "\[hop\]").
 //Timestamps are taken at the event (Stopwatch ticks); Program.Print only
 //defers the write to the main loop, so the printed offsets stay accurate.
-//Harness: tools/hop/run.sh (analysis: tools/hop/analyze.py).
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;

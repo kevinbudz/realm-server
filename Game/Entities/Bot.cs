@@ -84,12 +84,12 @@ namespace RotMG.Game.Entities
 
         //Copy for cross-world moves: the failed alternative (RemoveEntity,
         //reset Id, re-AddEntity) resurrects a disposed object — Dispose
-        //nulls TileUpdates and wipes SVs — and mutating Id while observers
+        //nulls the tile state (_tileSent) and wipes SVs — and mutating Id while observers
         //track the old one corrupts their Entities hash set, breaking their
         //NewTick every tick thereafter. A fresh object sidesteps both.
         internal Bot(Bot src, int seq) : base(src.Type)
         {
-            PrivateSVs = new Dictionary<StatType, object>();
+            PrivateSVs = new StatTable();
             Owner = src.Owner;
             OwnerAccountId = src.OwnerAccountId;
             OwnerName = src.OwnerName;
@@ -146,7 +146,8 @@ namespace RotMG.Game.Entities
         public override void Init()
         {
             //Player.Init without the AccountList sends (no client to send to).
-            TileUpdates = new Dictionary<long, int>(1024);
+            //[W08] Bots never send Update, so they keep no tile state (_tileSent stays null; a bitset per bot would be
+            //300 x world-size bits).
             EntityUpdates = new Dictionary<int, int>();
             Entities = new HashSet<Entity>();
             CalculatedSightCircle = new HashSet<IntPoint>();

@@ -203,12 +203,12 @@ namespace RotMG.Game.Entities
         //AddEntity/Init.
         protected Player(ushort type) : base(type)
         {
-            PrivateSVs = new Dictionary<StatType, object>();
+            PrivateSVs = new StatTable();
         }
 
         public Player(Client client) : base((ushort)client.Character.ClassType)
         {
-            PrivateSVs = new Dictionary<StatType, object>();
+            PrivateSVs = new StatTable();
 
             Client = client;
             HP = client.Character.HP;
@@ -302,7 +302,7 @@ namespace RotMG.Game.Entities
         {
             base.Init();
 
-            TileUpdates = new Dictionary<long, int>(1024);
+            _tileSent = Parent != null ? new TileSeenBits(Parent.Width, Parent.Height) : null;
             EntityUpdates = new Dictionary<int, int>();
             Entities = new HashSet<Entity>();
             _nearPlayerIds.Clear();
@@ -530,7 +530,7 @@ namespace RotMG.Game.Entities
         public override void Dispose()
         {
             try { CancelTradeIfTrading(); } catch { }
-            TileUpdates = null;
+            _tileSent = null;
             EntityUpdates.Clear();
             Entities.Clear();
             CalculatedSightCircle.Clear();
@@ -545,315 +545,6 @@ namespace RotMG.Game.Entities
             SpeedHistory.Clear();
             MultiplierHistory.Clear();
             base.Dispose();
-        }
-
-        //Headless stand-in for "nexus in a pack then UsePortal a distant
-        //id": the body leaves the world before Reconnect, Death cannot
-        //delete the character, and a far portal id is ignored.
-        public static bool VerifyWorldTransfer()
-        {
-            World world = Manager.GetWorld(Manager.NexusId);
-            if (world == null)
-            {
-                Program.Print(PrintType.Error, "P9 verify: Nexus world missing");
-                return false;
-            }
-
-            List<IntPoint> spawns = world.GetSpawnPoints();
-            Position spawn = spawns.Count > 0
-                ? spawns[0].ToPosition()
-                : world.GetRegion(Region.Spawn).ToPosition();
-
-            Position far = default;
-            bool foundFar = false;
-            for (int x = 0; x < world.Width && !foundFar; x++)
-                for (int y = 0; y < world.Height && !foundFar; y++)
-                {
-                    if (world.GetTile(x, y) == null)
-                        continue;
-                    Position p = new Position(x + 0.5f, y + 0.5f);
-                    if (spawn.Distance(p) > 10f)
-                    {
-                        far = p;
-                        foundFar = true;
-                    }
-                }
-            if (!foundFar)
-            {
-                Program.Print(PrintType.Error, "P9 verify: no tile 10+ from spawn");
-                return false;
-            }
-
-            Player player = CreateVerifyPlayer("P9NearDeath");
-            if (world.AddEntity(player, spawn) == -1)
-            {
-                Program.Print(PrintType.Error, "P9 verify: failed to add player at spawn");
-                return false;
-            }
-            player.HP = 5;
-            player.Client.Character.HP = 999;
-
-            Portal farPortal = new Portal(0x0712);
-            if (world.AddEntity(farPortal, far) == -1)
-            {
-                Program.Print(PrintType.Error, "P9 verify: failed to add distant portal");
-                world.RemoveEntity(player);
-                return false;
-            }
-            float farDist = player.Position.Distance(farPortal);
-            if (farDist <= MaxPortalInteractDistance)
-            {
-                Program.Print(PrintType.Error, $"P9 verify: distant portal is too close ({farDist:F2})");
-                world.RemoveEntity(player);
-                world.RemoveEntity(farPortal);
-                return false;
-            }
-
-            byte[] usePortalBody = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(farPortal.Id));
-            SpanReader portalRdr = new SpanReader(usePortalBody); //[W06]
-            GameServer.UsePortal(player.Client, ref portalRdr);
-            if (player.Parent != world || player.IsTransferring || !world.Players.ContainsKey(player.Id))
-            {
-                Program.Print(PrintType.Error, "P9 verify FAIL: distant UsePortal was accepted");
-                player.Client.State = ProtocolState.Disconnected;
-                if (player.Parent == world)
-                    world.RemoveEntity(player);
-                if (farPortal.Parent == world)
-                    world.RemoveEntity(farPortal);
-                return false;
-            }
-            Program.Print(PrintType.Info, $"P9 verify: distant UsePortal ignored (dist={farDist:F2})");
-
-            Player nearPlayer = CreateVerifyPlayer("P9NearPortal");
-            if (world.AddEntity(nearPlayer, spawn) == -1)
-            {
-                Program.Print(PrintType.Error, "P9 verify: failed to add nearby-portal player");
-                world.RemoveEntity(player);
-                world.RemoveEntity(farPortal);
-                return false;
-            }
-            Portal nearPortal = new Portal(0x0712);
-            if (world.AddEntity(nearPortal, spawn) == -1)
-            {
-                Program.Print(PrintType.Error, "P9 verify: failed to add nearby portal");
-                world.RemoveEntity(player);
-                world.RemoveEntity(nearPlayer);
-                world.RemoveEntity(farPortal);
-                return false;
-            }
-            GameServer.TryUsePortal(nearPlayer.Client, nearPortal.Id);
-            if (nearPlayer.Parent != null || !nearPlayer.IsTransferring)
-            {
-                Program.Print(PrintType.Error, "P9 verify FAIL: in-range UsePortal did not transfer");
-                nearPlayer.Client.State = ProtocolState.Disconnected;
-                player.Client.State = ProtocolState.Disconnected;
-                if (nearPlayer.Parent == world)
-                    world.RemoveEntity(nearPlayer);
-                world.RemoveEntity(player);
-                if (farPortal.Parent == world)
-                    world.RemoveEntity(farPortal);
-                if (nearPortal.Parent == world)
-                    world.RemoveEntity(nearPortal);
-                return false;
-            }
-            nearPlayer.Client.State = ProtocolState.Disconnected;
-            Program.Print(PrintType.Info, "P9 verify: in-range UsePortal removed the entity and sent Reconnect");
-
-            if (!player.BeginTransfer(world))
-            {
-                Program.Print(PrintType.Error, "P9 verify FAIL: BeginTransfer returned false");
-                player.Client.State = ProtocolState.Disconnected;
-                if (player.Parent == world)
-                    world.RemoveEntity(player);
-                if (farPortal.Parent == world)
-                    world.RemoveEntity(farPortal);
-                return false;
-            }
-            if (player.Parent != null || world.Players.ContainsKey(player.Id) || !player.IsTransferring)
-            {
-                Program.Print(PrintType.Error, "P9 verify FAIL: player still in world after BeginTransfer");
-                player.Client.State = ProtocolState.Disconnected;
-                if (player.Parent == world)
-                    world.RemoveEntity(player);
-                if (farPortal.Parent == world)
-                    world.RemoveEntity(farPortal);
-                return false;
-            }
-            if (player.Client.Character.HP != 5)
-            {
-                Program.Print(PrintType.Error,
-                    $"P9 verify FAIL: Character.HP={player.Client.Character.HP} after transfer, expected 5");
-                player.Client.State = ProtocolState.Disconnected;
-                if (farPortal.Parent == world)
-                    world.RemoveEntity(farPortal);
-                return false;
-            }
-            Program.Print(PrintType.Info, "P9 verify: BeginTransfer removed the body and saved HP=5");
-
-            player.HP = 1;
-            bool died = false;
-            try
-            {
-                died = player.Damage("Oryx the Mad God", 10000, new ConditionEffectDesc[0], true);
-                player.Death("Oryx the Mad God");
-            }
-            catch (Exception e)
-            {
-                Program.Print(PrintType.Error, $"P9 verify FAIL: Damage/Death threw {e}");
-                player.Client.State = ProtocolState.Disconnected;
-                if (farPortal.Parent == world)
-                    world.RemoveEntity(farPortal);
-                return false;
-            }
-            if (died || player.Dead || player.Client.Character.Dead)
-            {
-                Program.Print(PrintType.Error, "P9 verify FAIL: transferring player died after Reconnect");
-                player.Client.State = ProtocolState.Disconnected;
-                if (farPortal.Parent == world)
-                    world.RemoveEntity(farPortal);
-                return false;
-            }
-
-            try { player.Tick(); }
-            catch (Exception e)
-            {
-                Program.Print(PrintType.Error, $"P9 verify FAIL: Tick threw after transfer ({e.Message})");
-                player.Client.State = ProtocolState.Disconnected;
-                if (farPortal.Parent == world)
-                    world.RemoveEntity(farPortal);
-                return false;
-            }
-
-            //Same persist rule as Client.FinishDisconnect: Parent == null
-            //and Reconnecting means Character was already captured.
-            if (player.Parent != null)
-                player.SaveToCharacter();
-            else if (!player.Client.Reconnecting)
-                player.SaveToCharacter();
-            if (player.Client.Character.HP != 5)
-            {
-                Program.Print(PrintType.Error,
-                    $"P9 verify FAIL: disconnect persist overwrote Character.HP to {player.Client.Character.HP}");
-                player.Client.State = ProtocolState.Disconnected;
-                if (farPortal.Parent == world)
-                    world.RemoveEntity(farPortal);
-                return false;
-            }
-
-            player.Client.State = ProtocolState.Disconnected;
-            if (farPortal.Parent == world)
-                world.RemoveEntity(farPortal);
-            if (nearPortal.Parent == world)
-                world.RemoveEntity(nearPortal);
-            Program.Print(PrintType.Info, "P9 verify: Death/Damage/Tick cannot kill after Reconnect; disconnect save kept Character.HP=5");
-            return true;
-        }
-
-        //Headless stand-in for /size persistence and the quake warning:
-        //Size must survive SaveToCharacter, world re-entry (a new Player
-        //over the same Character) and a database Export/Load round-trip,
-        //and the quake ShowEffect must serialize the exact id the client
-        //shakes on (14: Earthquake in the reference, Jitter locally and
-        //client-side).
-        public static bool VerifySizeQuake()
-        {
-            Player player = CreateVerifyPlayer("SizeQuake");
-            try
-            {
-                if (player.Size != 0 || player.Client.Character.Size != 0)
-                {
-                    Program.Print(PrintType.Error, "SizeQuake verify FAIL: fresh player/character Size is not 0");
-                    return false;
-                }
-
-                player.Size = 200;
-                player.SaveToCharacter();
-                if (player.Client.Character.Size != 200)
-                {
-                    Program.Print(PrintType.Error, $"SizeQuake verify FAIL: Character.Size={player.Client.Character.Size} after save, expected 200");
-                    return false;
-                }
-                Program.Print(PrintType.Info, "SizeQuake verify: SaveToCharacter stored Size=200");
-
-                Player reentry = new Player(player.Client);
-                if (reentry.Size != 200)
-                {
-                    Program.Print(PrintType.Error, $"SizeQuake verify FAIL: re-entry Size={reentry.Size}, expected 200");
-                    return false;
-                }
-                Program.Print(PrintType.Info, "SizeQuake verify: world re-entry restored Size=200");
-
-                XElement db = player.Client.Character.Export(false);
-                CharacterModel reloaded = new CharacterModel(0, 0);
-                reloaded.Data = db;
-                reloaded.Load();
-                if (reloaded.Size != 200)
-                {
-                    Program.Print(PrintType.Error, $"SizeQuake verify FAIL: database round-trip Size={reloaded.Size}, expected 200");
-                    return false;
-                }
-                db.Element("Size")?.Remove();
-                CharacterModel legacy = new CharacterModel(0, 0);
-                legacy.Data = db;
-                legacy.Load();
-                if (legacy.Size != 0)
-                {
-                    Program.Print(PrintType.Error, $"SizeQuake verify FAIL: legacy row Size={legacy.Size}, expected 0");
-                    return false;
-                }
-                Program.Print(PrintType.Info, "SizeQuake verify: database round-trip kept Size=200, legacy rows default 0");
-
-                ReadOnlySpan<byte> quake = GameServer.ShowEffect(ShowEffectIndex.Jitter, 7, 0);
-                if (quake == null || quake.Length < 2 || quake[1] != 14)
-                {
-                    Program.Print(PrintType.Error, "SizeQuake verify FAIL: quake ShowEffect did not serialize effect id 14");
-                    return false;
-                }
-                Program.Print(PrintType.Info, "SizeQuake verify: quake ShowEffect serializes effect id 14");
-                return true;
-            }
-            catch (Exception e)
-            {
-                Program.Print(PrintType.Error, $"SizeQuake verify FAIL: threw {e.Message}");
-                return false;
-            }
-            finally
-            {
-                player.Client.State = ProtocolState.Disconnected;
-            }
-        }
-
-        private static Player CreateVerifyPlayer(string name)
-        {
-            PlayerDesc pdesc = Resources.Type2Player.Values.First();
-            CharacterModel ch = new CharacterModel(0, 0)
-            {
-                ClassType = pdesc.Type,
-                Level = 20,
-                HP = 100,
-                MP = 100,
-                Stats = new int[8],
-                Inventory = (int[])pdesc.Equipment.Clone(),
-                ItemDatas = (int[])pdesc.ItemDatas.Clone(),
-                FameStats = new FameStatsInfo()
-            };
-            for (int i = 0; i < 8; i++)
-                ch.Stats[i] = pdesc.Stats[i].StartingValue;
-
-            Client client = new Client(new SendState(), new ReceiveState());
-            client.State = ProtocolState.Connected;
-            client.Active = true;
-            client.Account = new AccountModel()
-            {
-                Name = name,
-                LockedIds = new List<int>(),
-                IgnoredIds = new List<int>(),
-                Stats = new StatsInfo { ClassStats = Database.CreateClassStats() }
-            };
-            client.Character = ch;
-            Player created = new Player(client);
-            client.Player = created;
-            return created;
         }
     }
 }

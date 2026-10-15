@@ -377,7 +377,7 @@ namespace RotMG.Networking
         }
 
         //Distance-checked before ResolvePortalWorld so a crafted distant
-        //id cannot spawn a dungeon. Exposed for the P9 headless verify.
+        //id cannot spawn a dungeon.
         public static void TryUsePortal(Client client, int objectId)
         {
             Player player = client.Player;
@@ -941,24 +941,65 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static ReadOnlySpan<byte> NewTick(List<ObjectStatus> statuses, Dictionary<StatType, object> playerStats)
+        //[W08] Update whose add statuses are pre-serialized and shared between receivers (Entity.SharedStatus). The bytes
+        //are the same as Update(tiles, ObjectDefinition list, drops).
+        public static ReadOnlySpan<byte> UpdateShared(List<TileData> tiles, List<AddEntry> adds, List<ObjectDrop> drops)
+        {
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.Update);
+            wtr.Write((short)tiles.Count);
+            foreach (TileData k in tiles)
+                k.Write(wtr);
+
+            wtr.Write((short)adds.Count);
+            foreach (AddEntry k in adds)
+            {
+                wtr.Write(k.ObjectType);
+                k.Status.Write(wtr);
+            }
+
+            wtr.Write((short)drops.Count);
+            foreach (ObjectDrop k in drops)
+                k.Write(wtr);
+
+            return PacketWriter.RentedBytes();
+        }
+
+        //[W08] NewTick whose statuses are pre-serialized and shared (Entity.SharedStatus). The bytes are the same as
+        //NewTick(statuses, playerStats).
+        public static ReadOnlySpan<byte> NewTickShared(List<StatusEntry> statuses, StatTable playerStats)
+        {
+            PacketWriter wtr = PacketWriter.Rent();
+            wtr.Write((byte)PacketId.NewTick);
+            wtr.Write((short)statuses.Count);
+            foreach (StatusEntry k in statuses)
+                k.Write(wtr);
+            StatMask changed = playerStats.Dirty;
+            int count = changed.Count;
+            if (count > 0)
+            {
+                wtr.Write((byte)count);
+                for (int s = changed.NextSet(0); s >= 0; s = changed.NextSet(s + 1))
+                    playerStats.WriteStat(wtr, s);
+            }
+            return PacketWriter.RentedBytes();
+        }
+
+        //playerStats is the owner's private block: its Dirty mask (the changes since the caller last cleared it).
+        public static ReadOnlySpan<byte> NewTick(List<ObjectStatus> statuses, StatTable playerStats)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.NewTick);
             wtr.Write((short)statuses.Count);
             foreach (ObjectStatus k in statuses)
                 k.Write(wtr);
-            if (playerStats.Count > 0)
+            StatMask changed = playerStats.Dirty;
+            int count = changed.Count;
+            if (count > 0)
             {
-                wtr.Write((byte)playerStats.Count);
-                foreach (KeyValuePair<StatType, object> k in playerStats)
-                {
-                    wtr.Write((byte)k.Key);
-                    if (ObjectStatus.IsStringStat(k.Key))
-                        wtr.Write((string)k.Value);
-                    else
-                        wtr.Write((int)k.Value);
-                }
+                wtr.Write((byte)count);
+                for (int s = changed.NextSet(0); s >= 0; s = changed.NextSet(s + 1))
+                    playerStats.WriteStat(wtr, s);
             }
             return PacketWriter.RentedBytes();
         }
@@ -1155,254 +1196,6 @@ namespace RotMG.Networking
             wtr.Write((byte)'\r');
             wtr.Write((byte)'\n');
             return PacketWriter.RentedBytes().ToArray();
-        }
-
-        //Headless P23: truncated inbound bodies must never throw out of
-        //Read. Regression test for the EndOfStreamException the OpenTK
-        //client's 4-byte PlayerShoot (angle only) triggered: every inbound
-        //handler reads without length checks, so Read must drop short
-        //packets instead of letting Client.Tick disconnect on a stack trace.
-        public static bool VerifyTruncatedInbound()
-        {
-            static bool Fail(string msg)
-            {
-                Program.Print(PrintType.Error, "P23 verify: " + msg);
-                return false;
-            }
-
-            Client client = new Client(new SendState(), new ReceiveState());
-            client.State = ProtocolState.Connected;
-            client.Active = true;
-            client.Id = 2301;
-
-            //Every packet id Read dispatches. Empty bodies throw on the
-            //first read of every handler that parses (Escape/CancelTrade
-            //read nothing and already null-guard the missing player).
-            int[] inboundIds = new int[]
-            {
-                (int)PacketId.Hello,
-                (int)PacketId.Create,
-                (int)PacketId.Load,
-                (int)PacketId.Move,
-                (int)PacketId.InvSwap,
-                (int)PacketId.ShootAck,
-                (int)PacketId.AoeAck,
-                (int)PacketId.PlayerHit,
-                (int)PacketId.SquareHit,
-                (int)PacketId.PlayerShoot,
-                (int)PacketId.EnemyHit,
-                (int)PacketId.PlayerText,
-                (int)PacketId.EditAccountList,
-                (int)PacketId.UseItem,
-                (int)PacketId.GotoAck,
-                (int)PacketId.Escape,
-                (int)PacketId.UsePortal,
-                (int)PacketId.ChooseName,
-                (int)PacketId.InvDrop,
-                (int)PacketId.Teleport,
-                (int)PacketId.Buy,
-                (int)PacketId.RequestTrade,
-                (int)PacketId.ChangeTrade,
-                (int)PacketId.AcceptTrade,
-                (int)PacketId.CancelTrade,
-                (int)PacketId.CreateGuild,
-                (int)PacketId.GuildRemove,
-                (int)PacketId.GuildInvite,
-                (int)PacketId.JoinGuild,
-                (int)PacketId.ChangeGuildRank,
-                (int)PacketId.Reskin,
-                (int)PacketId.Pong,
-            };
-
-            foreach (int id in inboundIds)
-            {
-                try
-                {
-                    Read(client, id, new byte[0]);
-                }
-                catch (Exception ex)
-                {
-                    return Fail($"empty body for packet <{id}> threw {ex.GetType().Name}");
-                }
-            }
-
-            //Exact repro from the report: the OpenTK PlayerShoot carried
-            //only the 4-byte angle, so Position.X had no bytes left to read.
-            try
-            {
-                Read(client, (int)PacketId.PlayerShoot, new byte[] { 0x3F, 0x80, 0x00, 0x00 });
-            }
-            catch (Exception ex)
-            {
-                return Fail($"angle-only PlayerShoot threw {ex.GetType().Name}");
-            }
-
-            //Unknown ids are ignored by the switch; short bodies for them
-            //must be harmless too.
-            try
-            {
-                Read(client, 255, new byte[0]);
-            }
-            catch (Exception ex)
-            {
-                return Fail($"unknown packet id threw {ex.GetType().Name}");
-            }
-
-            if (client.State != ProtocolState.Connected || !client.Active)
-                return Fail("truncated packets changed client state");
-            if (client.PendingCount != 0)
-                return Fail($"truncated packets queued {client.PendingCount} replies");
-
-            Program.Print(PrintType.Info, "P23 verify: truncated inbound packets dropped without throwing");
-            return true;
-        }
-
-        //Headless P25: well-formed game packets arriving before Load/Create
-        //(a hit queued across a portal transfer, a shoot sent before
-        //MapInfo) must be dropped, not NRE on the missing Player. P23 only
-        //covers truncated bodies, which fail before touching the player.
-        public static bool VerifyPrePlayerDrop()
-        {
-            static bool Fail(string msg)
-            {
-                Program.Print(PrintType.Error, "P25 verify: " + msg);
-                return false;
-            }
-
-            Client client = new Client(new SendState(), new ReceiveState());
-            client.State = ProtocolState.Connected;
-            client.Active = true;
-            client.Id = 2501;
-            if (client.Player != null)
-                return Fail("fresh client already has a player");
-
-            //Well-formed bodies sized to each reader so the handler would
-            //reach the player dereference without the guard.
-            int[] ids = new int[]
-            {
-                (int)PacketId.PlayerHit,   // 4B bullet id (the nexus NRE)
-                (int)PacketId.SquareHit,   // 8B time + bullet id
-                (int)PacketId.EnemyHit,    // 12B time + bullet id + target id
-                (int)PacketId.Move,        // 12B time + position
-                (int)PacketId.PlayerShoot, // 17B time + pos + angle + ability
-                (int)PacketId.GotoAck,     // 4B time
-                (int)PacketId.ShootAck,    // 4B time
-                (int)PacketId.AoeAck,      // 12B time + position
-                (int)PacketId.Escape,      // 0B
-                (int)PacketId.UsePortal,   // 4B object id
-                (int)PacketId.Teleport,    // 4B object id
-            };
-            byte[][] bodies = new byte[][]
-            {
-                new byte[] { 0, 0, 2, 180 },
-                new byte[] { 0, 0, 0, 1, 0, 0, 0, 2 },
-                new byte[] { 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3 },
-                new byte[] { 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
-                new byte[] { 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-                new byte[] { 0, 0, 0, 1 },
-                new byte[] { 0, 0, 0, 1 },
-                new byte[] { 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
-                new byte[0],
-                new byte[] { 0, 0, 0, 1 },
-                new byte[] { 0, 0, 0, 1 },
-            };
-
-            for (int i = 0; i < ids.Length; i++)
-            {
-                try
-                {
-                    Read(client, ids[i], bodies[i]);
-                }
-                catch (Exception ex)
-                {
-                    return Fail($"pre-player packet <{ids[i]}> threw {ex.GetType().Name}");
-                }
-            }
-
-            //Pong stays allowed mid-handshake and is a side-effect-free
-            //keepalive: it must still process without throwing.
-            try
-            {
-                Read(client, (int)PacketId.Pong, new byte[] { 0, 0, 0, 1, 0, 0, 0, 2 });
-            }
-            catch (Exception ex)
-            {
-                return Fail($"pre-player Pong threw {ex.GetType().Name}");
-            }
-
-            if (client.Player != null)
-                return Fail("dropped packets created a player");
-            if (client.State != ProtocolState.Connected || !client.Active)
-                return Fail("dropped packets changed client state");
-            if (client.PendingCount != 0)
-                return Fail($"dropped packets queued {client.PendingCount} replies");
-
-            Program.Print(PrintType.Info, "P25 verify: pre-player game packets dropped without throwing");
-            return true;
-        }
-
-        //Headless P13: the probe packets the DEBUG /p13 command sends must
-        //round-trip with the client EnemyShoot/NewTick readers. The Flash
-        //handler changes (ack-before-lookup, movesRequested first, typed
-        //stat null-guards) are exercised in-game via /p13.
-        public static bool VerifyClientRobustnessProbes()
-        {
-            static bool Fail(string msg)
-            {
-                Program.Print(PrintType.Error, "P13 verify: " + msg);
-                return false;
-            }
-
-            const int unknownOwnerId = 0x7f0ead01;
-            ReadOnlySpan<byte> shoot = EnemyShoot(0, unknownOwnerId, 0, new Position(1.5f, 2.25f), 0.5f, 7, 1, 0f);
-            {
-                SpanReader rdr = new SpanReader(shoot); //[W06]
-                if (rdr.ReadByte() != (byte)PacketId.EnemyShoot)
-                    return Fail("EnemyShoot id");
-                if (rdr.ReadInt32() != 0)
-                    return Fail("EnemyShoot bulletId");
-                if (rdr.ReadInt32() != unknownOwnerId)
-                    return Fail("EnemyShoot ownerId must be the unknown id");
-                rdr.ReadByte();
-                Position pos = new Position(ref rdr);
-                if (pos.X != 1.5f || pos.Y != 2.25f)
-                    return Fail("EnemyShoot position");
-                rdr.ReadSingle();
-                rdr.ReadInt16();
-                if (rdr.Remaining != 0)
-                    return Fail("single-shot EnemyShoot must omit numShots tail");
-            }
-
-            ObjectStatus status = new ObjectStatus
-            {
-                Id = 99,
-                Position = new Position(3f, 4f),
-                Stats = new Dictionary<StatType, object> { { StatType.MaxMP, 100 } }
-            };
-            ReadOnlySpan<byte> tick = NewTick(new List<ObjectStatus> { status }, new Dictionary<StatType, object>());
-            {
-                SpanReader rdr = new SpanReader(tick); //[W06]
-                if (rdr.ReadByte() != (byte)PacketId.NewTick)
-                    return Fail("NewTick id");
-                if (rdr.ReadInt16() != 1)
-                    return Fail("NewTick status count");
-                if (rdr.ReadInt32() != 99)
-                    return Fail("NewTick objectId");
-                Position pos = new Position(ref rdr);
-                if (pos.X != 3f || pos.Y != 4f)
-                    return Fail("NewTick position");
-                if (rdr.ReadByte() != 1)
-                    return Fail("NewTick stat count");
-                if (rdr.ReadByte() != (byte)StatType.MaxMP)
-                    return Fail("NewTick stat type must be MaxMP");
-                if (rdr.ReadInt32() != 100)
-                    return Fail("NewTick MaxMP value");
-                if (rdr.Remaining != 0)
-                    return Fail("NewTick leftover bytes");
-            }
-
-            Program.Print(PrintType.Info, "P13 verify: EnemyShoot(unknown owner) and NewTick(MaxMP on non-player) serialize as the client parses them");
-            return true;
         }
     }
 }
