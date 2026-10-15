@@ -11,7 +11,7 @@ Implementation was first stopped at the user's request and pushed as **`1d55cbe`
 - Changed Shoot/Grenade cooldown ordering to reference-compatible semantics and predictive aiming from a probability to a strength. At the current 10 TPS configuration, a 500 ms repeat cooldown becomes 600 ms; the reference's 20 TPS default produces 550 ms. Tick rate itself was not changed.
 - Fixed Spawn initial-child counting and capped initial spawns.
 - Replaced the unresolved Thessal Dropper chain with direct creation of the existing Ocean Vent, preserving the wounded-form chance. Vent creation is immediate rather than delayed by a helper tick; overlapping Thessals now produce a vent per death.
-- Added regression tests, upstream attribution, and the upstream AGPL license text.
+- Added upstream attribution and the upstream AGPL license text. (Regression tests were added during this work and later removed at the user's request; see [Verification](#verification).)
 
 Reference-only enemies absent from target XML, ancillary pet gaps, and broad shared-enemy loot/balance differences were not filled wholesale.
 
@@ -48,21 +48,14 @@ The other enabled root transitions were checked and judged intentional: terminal
 - **Predictive aim**: matches the reference formula (angular velocity × projectile speed / 100 × strength), with the target sampled about 100 ms back and divided by the actual sample time. The reference's `TryGetHistory` ignores its argument and always returns the previous tick (50 ms at 20 TPS) but still divides by 100 ms, so its effective lead is about half of the nominal formula. The target implements the nominal formula; this is a documented difference, not a defect fix. The target additionally wraps the angular change across ±π.
 - **Spawn**: counting initial children once and resetting the counter on entry matches the reference `Spawn.OnStateEntry`. Kept.
 - **Prioritize/Wander**: the per-host cycle-complete signal reproduces the reference's `CycleStatus.Completed` reselection without double movement. Kept.
-- **Thessal → Ocean Vent**: direct `TransformOnDeath("Ocean Vent")` is covered by an existing test. Kept.
-
-### Test fixes
-
-- The registration test now counts a freshly loaded `BehaviorDb`. Previously, other tests replaced models on the shared database, making its 586-model assertion order-dependent.
-- Fake test players get an empty visible-entity set, so shots fired near them do not dereference a missing client.
-- Added regressions: a root timer survives phase changes, active-phase transitions are tested before root transitions, and Septavius wakes once and reaches `spiral`. The first two fail against the `1d55cbe` engine.
+- **Thessal → Ocean Vent**: direct `TransformOnDeath("Ocean Vent")` was covered by the removed test project. Kept.
 
 ## Verification
 
 Run with .NET SDK 8.0.426 on Linux:
 
-- `dotnet test tests/RotMG.BehaviorTests/RotMG.BehaviorTests.csproj -c Release`: **23 passed, 0 failed**, with no test-project warnings.
+- Before removal, the `tests/RotMG.BehaviorTests` xUnit project (in history up to `f781b93`) passed **23 of 23**. Its root-transition regressions failed against `1d55cbe`. The project was then removed at the user's request, so this is no longer reproducible from the current tree.
 - `dotnet build RotMG.sln -c Release` and `-c Debug`: 0 errors. Release reports one warning, CS0169 for `Client._lastQueueDebugMs`, which also occurs on the unchanged starting revision.
-- The test project is not part of `RotMG.sln`; run it explicitly as above.
 
 ## Remaining work
 
