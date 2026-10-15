@@ -14,7 +14,7 @@ A target XML enemy ID with no target behavior registration is reported as a defi
 
 The coverage inventory identifies **52 reference enemy definitions** whose IDs exist in the target's own XML but have no target behavior registration. A separate **49 reference-only enemy IDs** are present in the 2015 candidate's XML and active behavior database but absent from target XML; they are candidates for historical investigation, not established 2014 omissions. Ancillary non-enemy/helper/pet rows are separated in the coverage report.
 
-Among target XML-supported gaps, 34 Highland enemy definitions have no target database module, and the target realm population still schedules several of them. This is the clearest player-facing coverage issue in the audit. A separate target-specific mismatch registers `Thessal Dropper` without a target XML object; the death transform that references it silently cannot resolve its destination. The semantic reports also identify concrete encounter and loot differences across the shared definitions; these remain source-to-source comparisons, not claims about which revision is historically correct.
+Among target XML-supported gaps, 34 Highland enemy definitions have no target database module, and the target realm population still schedules several of them. This was the clearest player-facing coverage issue in the audited starting revision. That revision also registered `Thessal Dropper` without a target XML object; the death transform silently could not resolve its destination. Both coverage gaps and the Thessal mismatch are addressed in the follow-up implementation; see [implementation and validation](IMPLEMENTATION.md). The semantic reports also identify concrete encounter and loot differences across the shared definitions; these remain source-to-source comparisons, not claims about which revision is historically correct.
 
 ## Implementation behavior follow-up
 
@@ -33,4 +33,4 @@ Among target XML-supported gaps, 34 Highland enemy definitions have no target da
 - [Review and validation notes](review-notes.md)
 - [Registration and loader validation](registration-validation.md)
 
-No runtime tests or server simulations were run; this is a static source, catalog, and project-configuration audit. No gameplay code was changed.
+The comparison above remains a static source, catalog, and project-configuration audit of the pinned starting revisions; it is not a runtime simulation or historical reconstruction. Follow-up gameplay changes, their intent, and their separate validation are recorded in [IMPLEMENTATION.md](IMPLEMENTATION.md).

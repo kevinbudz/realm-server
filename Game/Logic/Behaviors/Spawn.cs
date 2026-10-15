@@ -1,3 +1,4 @@
+using System;
 using RotMG.Common;
 using RotMG.Utils;
 
@@ -16,7 +17,7 @@ namespace RotMG.Game.Logic.Behaviors
         {
             Children = children;
             MaxChildren = maxChildren;
-            InitialSpawn = (int)(maxChildren * initialSpawn);
+            InitialSpawn = Math.Clamp((int)(maxChildren * initialSpawn), 0, Math.Max(0, maxChildren));
             Cooldown = MathUtils.NormalizeCooldown(cooldown, 0);
             CooldownVariance = cooldownVariance;
         }
@@ -25,7 +26,7 @@ namespace RotMG.Game.Logic.Behaviors
         {
             SpawnState state = new SpawnState
             {
-                CurrentNumber = InitialSpawn,
+                CurrentNumber = 0,
                 RemainingTime = NextCooldown()
             };
             host.StateObject[Id] = state;

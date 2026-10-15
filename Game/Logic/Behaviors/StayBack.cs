@@ -23,7 +23,7 @@ namespace RotMG.Game.Logic.Behaviors
 
             Entity target = Entity != null
                 ? BehaviorHelpers.NearestEntityByName(host, Distance, Entity)
-                : host.GetNearestPlayer(Distance) ?? host.GetNearestEntity(Distance);
+                : host.GetNearestPlayer(Distance);
 
             if (target == null)
                 return false;

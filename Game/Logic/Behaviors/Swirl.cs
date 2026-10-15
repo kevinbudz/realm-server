@@ -45,7 +45,7 @@ namespace RotMG.Game.Logic.Behaviors
             int period = (int)(1000 * Radius / host.GetSpeed(Speed) * (2 * Math.PI));
             if (!state.Acquired && state.RemainingTime <= 0 && Targeted)
             {
-                Entity entity = host.GetNearestPlayer(AcquireRange) ?? host.GetNearestEntity(AcquireRange);
+                Entity entity = host.GetNearestPlayer(AcquireRange);
                 if (entity != null && (entity.Position.X != host.Position.X || entity.Position.Y != host.Position.Y))
                 {
                     float l = host.Position.Distance(entity.Position);
@@ -61,12 +61,12 @@ namespace RotMG.Game.Logic.Behaviors
                 else
                     state.Acquired = false;
             }
-            else if (state.RemainingTime <= 0 || (state.RemainingTime - period > 200 && host.GetNearestEntity(2) != null))
+            else if (state.RemainingTime <= 0 || (state.RemainingTime - period > 200 && host.GetNearestPlayer(2) != null))
             {
                 if (Targeted)
                 {
                     state.Acquired = false;
-                    state.RemainingTime = (host.GetNearestPlayer(AcquireRange) ?? host.GetNearestEntity(AcquireRange)) != null ? 0 : 5000;
+                    state.RemainingTime = host.GetNearestPlayer(AcquireRange) != null ? 0 : 5000;
                 }
                 else
                     state.RemainingTime = 5000;

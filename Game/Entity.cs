@@ -653,6 +653,15 @@ namespace RotMG.Game
                     {
                         if (transition.Tick(this))
                         {
+                            // Root transitions are shared across all root
+                            // states. A still-true condition that targets the
+                            // active state is not a phase change: consume it
+                            // without re-entering the same behaviors, then let
+                            // later root or state-local transitions be tested.
+                            if (i == 0 && Behavior.RootTransitions.Contains(transition) &&
+                                transition.TargetState == state.Id)
+                                continue;
+
                             targetState = transition.TargetState;
                             break;
                         }

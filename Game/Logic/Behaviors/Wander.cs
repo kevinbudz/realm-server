@@ -10,6 +10,7 @@ namespace RotMG.Game.Logic.Behaviors
     {
         public Position Direction;
         public float RemainingDistance;
+        public bool CompletedThisTick;
     }
 
     public class Wander : Behavior
@@ -29,12 +30,17 @@ namespace RotMG.Game.Logic.Behaviors
         public override bool Tick(Entity host)
         {
             WanderState state = host.StateObject[Id] as WanderState;
+            state.CompletedThisTick = false;
 
             if (host.HasConditionEffect(ConditionEffectIndex.Paralyzed))
                 return false;
 
             if (state.RemainingDistance <= 0)
             {
+                // This movement tick starts the next leg, but the previous leg
+                // completed. Prioritize uses the per-host signal to reconsider
+                // higher-priority children on the following tick.
+                state.CompletedThisTick = true;
                 state.Direction = new Position(MathUtils.PlusMinus(), MathUtils.PlusMinus());
                 state.Direction.Normalize();
                 state.RemainingDistance = 600 / 1000f;
@@ -44,6 +50,11 @@ namespace RotMG.Game.Logic.Behaviors
             host.ValidateAndMove(host.Position + (state.Direction * dist));
             state.RemainingDistance -= dist;
             return true;
+        }
+
+        public override bool IsCycleComplete(Entity host)
+        {
+            return host.StateObject[Id] is WanderState state && state.CompletedThisTick;
         }
 
         public override void Exit(Entity host)

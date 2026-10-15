@@ -57,7 +57,7 @@ namespace RotMG.Game.Logic.Behaviors
                 return false;
 
             Entity entity = Target == null
-                ? host.GetNearestPlayer(AcquireRange) ?? host.GetNearestEntity(AcquireRange)
+                ? host.GetNearestPlayer(AcquireRange)
                 : BehaviorHelpers.NearestEntityByName(host, AcquireRange, Target);
 
             if (entity == null)

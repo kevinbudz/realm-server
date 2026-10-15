@@ -48,7 +48,7 @@ namespace RotMG.Game.Logic.Behaviors
             {
                 if (state.Direction.X == 0 && state.Direction.Y == 0)
                 {
-                    Entity player = host.GetNearestPlayer(Range) ?? host.GetNearestEntity(Range);
+                    Entity player = host.GetNearestPlayer(Range);
                     if (player != null && (player.Position.X != host.Position.X || player.Position.Y != host.Position.Y))
                     {
                         state.Direction = player.Position - host.Position;

@@ -45,7 +45,7 @@ namespace RotMG.Game.Logic.Behaviors
             if (host.HasConditionEffect(ConditionEffectIndex.Paralyzed))
                 return false;
 
-            Entity player = host.GetNearestPlayer(AcquireRange) ?? host.GetNearestEntity(AcquireRange);
+            Entity player = host.GetNearestPlayer(AcquireRange);
             bool moving = false;
 
             switch (state.Phase)

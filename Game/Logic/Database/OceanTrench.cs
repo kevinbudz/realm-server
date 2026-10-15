@@ -69,7 +69,7 @@ namespace RotMG.Game.Logic.Database
             );
             db.Init("Thessal the Mermaid Goddess",
                 new TransformOnDeath("Thessal the Mermaid Goddess Wounded", probability: 0.1f),
-                new TransformOnDeath("Thessal Dropper"),
+                new TransformOnDeath("Ocean Vent"),
                 new State("Start",
                     new Prioritize(
                         new Wander(0.3f),
@@ -250,16 +250,6 @@ namespace RotMG.Game.Logic.Database
                     new ItemLoot("Wine Cellar Incantation", 0.02f),
                     new ItemLoot("Coral Silk Armor", 0.04f),
                     new ItemLoot("Coral Ring", 0.04f)
-                )
-            );
-            db.Init("Thessal Dropper",
-                new ConditionalEffect(ConditionEffectIndex.Invincible),
-                new TransformOnDeath("Ocean Vent"),
-                new State("Idle",
-                    new EntityNotExistsTransition("Thessal the Mermaid Goddess", 100, "Suicide")
-                ),
-                new State("Suicide",
-                    new Suicide()
                 )
             );
             db.Init("Thessal the Mermaid Goddess Wounded",
