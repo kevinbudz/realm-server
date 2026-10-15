@@ -23,7 +23,7 @@ validation are less complete than ours (see **Not porting**).
 | W02 | Send the Hello account save through the writer queue      | Nexus        | W00      | done    |
 | W03 | Remove synchronous main-thread DB writes                  | Nexus        | W01, W02 | done    |
 | W04 | Fix the tick gate; send the first frame on join           | Nexus        | W00      | done    |
-| W05 | Correctness sweep (decoy NRE + suspected gaps)            | Fixes        | —        | partial |
+| W05 | Correctness sweep (decoy NRE + suspected gaps)            | Fixes        | —        | done    |
 | W06 | Span-based packet reader/writer                           | Alloy perf   | W00      | in progress (not applied) |
 | W07 | Typed stat storage with dirty bitmask                     | Alloy perf   | W06      | pending |
 | W08 | Shadowcasting sight + bitset tile state + shared caches   | Alloy perf   | W07      | pending |
@@ -36,13 +36,13 @@ W05, W09, W11 and W13 are independent and can be done at any point.
 
 ## Where things stand (2026-10-15)
 
-Done: W00-W04, W09, W11 and W13, each with a handoff in `docs/alloy-port/handoffs/`. Escape → first nexus Update went from
-1113 ms to ~9.5 ms (median).
+Done: W00-W05, W09, W11 and W13, each with a handoff in `docs/alloy-port/handoffs/`. Escape → first nexus Update went from
+1113 ms to ~9.5 ms (median, as recorded for W04).
 
 Left to do, in order:
-1. **Finish W05.** One `--w05-verify` check fails: `CreateDungeonWorld` doesn't throw once the generation budget is exhausted. W05 also
-   still needs its hop, dup_login and soak runs, and the soak should confirm max tick work < 50 ms now that the statics index is in.
-   See `handoffs/W05.md`.
+1. **W05 is done** (2026-10-15): all 22 self-check flags pass, `dup_login` 16/16, and the soak's max tick work is 30 ms (Debug) and
+   10 ms (Release), under the 50 ms goal. One gate is open: the hop median is 11.3 ms on this VM (Debug, trace on) against the 9.5 ms
+   recorded for W04, and the gap is not explained. A W04 A/B on this VM would settle it. See `handoffs/W05.md`.
 2. **Finish W06.** The partial, unverified patch is in `docs/alloy-port/wip/W06-partial.patch`. See `handoffs/W06.md`.
 3. **W07** (typed stats, needs W06), then **W08** (sight + caches, needs W07), and **W10** (async sockets, needs W06). Each has a
    decision for the user in its section (W07: stat order; W08: shadowcasting vs rays).
@@ -71,10 +71,11 @@ Workflow notes for future rows:
 
 | Metric                                              | Baseline (2026-10-14) | Current |
 |-----------------------------------------------------|-----------------------|---------|
-| Escape → first nexus Update, median / max (FULL)    | 1113 / 1116 ms        | 9.5 / 12.9 ms (W04) |
-| Hello `acc.Save()` → `SetKey`, median               | 1005 ms               | 0 (enqueued, W02) |
+| Escape → first nexus Update, median / max (FULL)    | 1113 / 1116 ms        | 9.5 / 12.9 ms (W04, Debug trace on). Re-run 2026-10-15: 11.3–11.4 / 20.4–23.2 ms (Debug trace on), 9.2 / 14.4 ms (Release, trace off). The Debug gap is open; see `handoffs/W05.md` |
+| Hello `acc.Save()` → `SetKey`, median               | 1005 ms               | 0 (enqueued, W02; 0 `SetKey` calls in the 2026-10-15 hops) |
 | Same with `synchronous=NORMAL` / DB on tmpfs        | 52 ms / 53 ms         |         |
-| Wait for first Update after the CreateSuccess packet | ~99 ms (one 10 TPS tick) | ~0 (join frame, W04) |
+| Wait for first Update after the CreateSuccess packet | ~99 ms (one 10 TPS tick) | 0–1.1 ms median, max ≤ 3.6 ms (join frame, W04; 2026-10-15) |
+| Max tick work under `soak.py` (goal < 50 ms)        | 45–140 ms under hop churn (pre-W05 sidekick note) | 30 ms Debug / 10 ms Release (W05, 2026-10-15) |
 
 The raw baseline runs are in `tools/hop/baseline/*.jsonl`. The harness was a Python stand-in for
 realm-cpp: it closes the old socket before reconnecting (like `Transport.cpp:199-201`) and sends
