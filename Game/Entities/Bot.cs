@@ -354,9 +354,6 @@ namespace RotMG.Game.Entities
     //parallel ticks; per-bot brain fields are word-sized and lock-free.
     public static class BotManager
     {
-        public const int MaxBotsPerOwner = 100;
-        public const int MaxBotsTotal = 300;
-
         private static readonly object _lock = new object();
         private static readonly HashSet<Bot> _bots = new HashSet<Bot>();
         private static readonly Dictionary<int, HashSet<Bot>> _byOwner =
@@ -392,10 +389,6 @@ namespace RotMG.Game.Entities
                 return "Unknown player class.";
             lock (_lock)
             {
-                if (_bots.Count + count > MaxBotsTotal)
-                    return $"Bot cap reached ({MaxBotsTotal} total).";
-                if (OwnedByLocked(owner.Client.Account.Id) + count > MaxBotsPerOwner)
-                    return $"Bot cap reached ({MaxBotsPerOwner} per account).";
                 int spawned = 0;
                 for (int i = 0; i < count; i++)
                 {
@@ -565,11 +558,6 @@ namespace RotMG.Game.Entities
                         return world;
             }
             return null;
-        }
-
-        private static int OwnedByLocked(int accountId)
-        {
-            return _byOwner.TryGetValue(accountId, out HashSet<Bot> set) ? set.Count : 0;
         }
 
         private static void Destroy(Bot bot)
