@@ -76,7 +76,9 @@ namespace RotMG.Common
             {
                 wtr.Write((byte)k.Key);
                 if (IsStringStat(k.Key))
-                    wtr.Write((string)k.Value);
+                    //A cleared string stat (GuildName after a leave or kick) is null: send "" so the client clears it
+                    //and the tick is not aborted (W05; Encoding.GetBytes(null) threw inside the world tick).
+                    wtr.Write((string)k.Value ?? "");
                 else 
                     wtr.Write((int)k.Value);
             }

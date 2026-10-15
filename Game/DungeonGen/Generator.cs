@@ -20,9 +20,29 @@ namespace RotMG.Game.DungeonGen
         Finish = 4
     }
 
+    //Thrown when a generation exceeds its work budget (see Generator.MaxWork). DungeonWorld retries with
+    //another seed and reports failure to its caller if every attempt fails.
+    public class DungeonGenerationException : Exception
+    {
+        public DungeonGenerationException(string message) : base(message) { }
+    }
+
     public class Generator
     {
+        //Work units per generation: each room placement, each retry-loop pass and each restart counts as one.
+        //The retry loops below were unbounded (retry until something fits), and a template that never fits
+        //spun forever on the thread building the world. Normal generations use a small fraction of this
+        //budget (measured by --w05-verify: see Program.cs). Exhaustion throws DungeonGenerationException.
+        //Not const so --w05-verify can lower it to force a failure; nothing else writes it.
+        public static int MaxWork = 50000;
+
+        //Consecutive branch passes that add no room before GenerateBranches stops. Saturated templates keep
+        //reporting success without adding rooms, so the old loop never ended. Stopping keeps the rooms built
+        //so far, which is what the existing `if (!worked) break;` already does when nothing can be placed.
+        public const int MaxStalledBranchPasses = 1000;
+
         private readonly Random _rand;
+        public int WorkUsed { get; private set; }
         private readonly DungeonTemplate _template;
 
         private RoomCollision _collision;
@@ -54,8 +74,18 @@ namespace RotMG.Game.DungeonGen
             return _rooms;
         }
 
+        //Every step passes through here, so a restart (TargetGeneration failure sets Step back to
+        //Initialize) always costs work even when it places nothing.
+        private void SpendWork()
+        {
+            if (++WorkUsed > MaxWork)
+                throw new DungeonGenerationException(
+                    $"Dungeon generation exceeded {MaxWork} work units (step {Step}).");
+        }
+
         private void RunStep()
         {
+            SpendWork();
             switch (Step)
             {
                 case GenerationStep.Initialize:
@@ -87,6 +117,7 @@ namespace RotMG.Game.DungeonGen
 
         private Link? PlaceRoom(Room src, Room target, int connPt)
         {
+            SpendWork();
             int sep = _template.RoomSeparation.Random(_rand);
             if (src is FixedRoom && target is FixedRoom)
                 return PlaceRoomFixed((FixedRoom)src, (FixedRoom)target, connPt, sep);
@@ -402,12 +433,15 @@ namespace RotMG.Game.DungeonGen
                 int targetDepth;
                 do
                 {
+                    SpendWork();
                     targetDepth = (int)_template.SpecialRmDepthDist.NextValue();
                 } while (targetDepth > _maxDepth * 3 / 2);
 
                 bool generated = false;
                 do
                 {
+                    //A `continue` here places nothing, so this pass is only counted by SpendWork.
+                    SpendWork();
                     Room room = _rooms[_rand.Next(_rooms.Count)];
                     if (room.Depth >= targetDepth)
                         continue;
@@ -464,8 +498,11 @@ namespace RotMG.Game.DungeonGen
             int numRooms = new Range(_minRoomNum, _maxRoomNum).Random(_rand);
 
             List<Room> copy;
+            int stalledPasses = 0;
             while (_rooms.Count < numRooms)
             {
+                SpendWork();
+                int roomsBefore = _rooms.Count;
                 copy = new List<Room>(_rooms);
                 _rand.Shuffle(copy);
 
@@ -479,6 +516,11 @@ namespace RotMG.Game.DungeonGen
                     worked |= GenerateBranchInternal(room, room.Depth + 1, _template.MaxDepth, true);
                 }
                 if (!worked)
+                    break;
+                //`worked` also means "nothing needed a branch", so a saturated template never adds a room
+                //and used to loop forever. Stop after MaxStalledBranchPasses such passes.
+                stalledPasses = _rooms.Count == roomsBefore ? stalledPasses + 1 : 0;
+                if (stalledPasses >= MaxStalledBranchPasses)
                     break;
             }
         }

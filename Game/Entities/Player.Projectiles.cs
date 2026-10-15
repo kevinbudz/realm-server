@@ -95,7 +95,11 @@ namespace RotMG.Game.Entities
         private int _ackTimeoutStreak;
         private const float RateOfFireThreshold = 1.1f;
         private const float EnemyHitRangeAllowance = 1.7f;
-        private const float EnemyHitTrackPrecision = 8;
+        //Cover sweep cadence for hit validation: at most one client frame
+        //(the client tests cover once per frame) and half a tile between
+        //samples. A step that moves farther is bisected (see CoverClearAlongPath).
+        private const int ProjectileSweepMaxStepMs = 16;
+        private const double ProjectileSweepMaxTiles = 0.5;
         private const int EnemyHitHistoryBacktrack = 2;
 
         //Client-authoritative hits (skillys ForceHit model): the client
@@ -249,58 +253,7 @@ namespace RotMG.Game.Entities
                     return;
                 }
                 int elapsed = time - p.Time;
-                int steps = (int)Math.Ceiling((p.Desc.Speed / 100f) * ((elapsed * EnemyHitTrackPrecision) / 1000f));
-                float timeStep = (float)elapsed / steps;
-
-                for (int k = 0; k <= steps; k++)
-                {
-                    Position pos = p.PositionAt(k * timeStep);
-                    if (k == steps) //Try hit enemy
-                    {
-                        if (target.Desc.Static)
-                        {
-                            if (pos.Distance(target.Position) <= EnemyHitRangeAllowance && p.CanHit(target))
-                            {
-                                target.HitByProjectile(p);
-                                if (!p.Desc.MultiHit)
-                                    ShotProjectiles.Remove(p.Id);
-                                return;
-                            }
-                        }
-                        else
-                        {
-                            for (int j = 0; j <= EnemyHitHistoryBacktrack; j++)
-                            {
-                                if (pos.Distance(target.TryGetHistory(j)) <= EnemyHitRangeAllowance && p.CanHit(target))
-                                {
-                                    target.HitByProjectile(p);
-                                    if (!p.Desc.MultiHit)
-                                        ShotProjectiles.Remove(p.Id);
-                                    return;
-                                }
-                            }
-                        }
-#if DEBUG
-                    Console.WriteLine(pos);
-                    Console.WriteLine(target);
-                    Program.Print(PrintType.Error, "Enemy hit aborted, too far away from projectile");
-#endif
-                    }
-                    else //Check collisions to make sure player isn't shooting through walls etc
-                    {
-                        Tile? tile = Parent.GetTileF(pos.X, pos.Y);
-
-                        if ((tile == null || tile.Value.Type == 255) ||
-                            (tile.Value.StaticObject != null && !tile.Value.StaticObject.Desc.Enemy && (tile.Value.StaticObject.Desc.EnemyOccupySquare || !p.Desc.PassesCover && tile.Value.StaticObject.Desc.OccupySquare)))
-                        {
-#if DEBUG
-                            Program.Print(PrintType.Error, "Shot projectile hit wall, removed");
-#endif
-                            ShotProjectiles.Remove(bulletId);
-                            return;
-                        }
-                    }
-                }
+                ResolveEnemyHit(bulletId, p, target, elapsed);
             }
 #if DEBUG
             else
@@ -313,6 +266,99 @@ namespace RotMG.Game.Entities
                 Program.Print(PrintType.Error, $"Tried to hit enemy with undefined projectile <{Name}> bullet {bulletId} (counter {NextProjectileId}, stored {ShotProjectiles.Count})");
             }
 #endif
+        }
+
+        //The hit decision once the bullet, the target and the client time
+        //are known (TryHitEnemy has done the validation). elapsed < 0 is never
+        //a hit. Otherwise the cover sweep runs first, then the exact test at
+        //the hit time. Split out so --projpath-verify can drive it directly.
+        private void ResolveEnemyHit(int bulletId, Projectile p, Entity target, int elapsed)
+        {
+            if (elapsed < 0)
+            {
+                //Never a hit: the old per-sample resim produced no
+                //samples here and the bullet was kept.
+                return;
+            }
+
+            //Closed form (ProjectilePath): the hit position is one exact
+            //evaluation at the client's hit time. Cover is checked along
+            //the whole path from the shot to that instant, endpoint
+            //included, so a bullet that crossed a wall is removed exactly
+            //as before. The client checks cover at the same positions
+            //before it reports a hit, so a legit endpoint is never blocked.
+            if (!CoverClearAlongPath(p, elapsed))
+            {
+#if DEBUG
+                Program.Print(PrintType.Error, "Shot projectile hit wall, removed");
+#endif
+                ShotProjectiles.Remove(bulletId);
+                return;
+            }
+
+            Position pos = p.PositionAt(elapsed);
+            if (target.Desc.Static)
+            {
+                if (pos.Distance(target.Position) <= EnemyHitRangeAllowance && p.CanHit(target))
+                {
+                    target.HitByProjectile(p);
+                    if (!p.Desc.MultiHit)
+                        ShotProjectiles.Remove(p.Id);
+                    return;
+                }
+            }
+            else
+            {
+                for (int j = 0; j <= EnemyHitHistoryBacktrack; j++)
+                {
+                    if (pos.Distance(target.TryGetHistory(j)) <= EnemyHitRangeAllowance && p.CanHit(target))
+                    {
+                        target.HitByProjectile(p);
+                        if (!p.Desc.MultiHit)
+                            ShotProjectiles.Remove(p.Id);
+                        return;
+                    }
+                }
+            }
+#if DEBUG
+            Console.WriteLine(pos);
+            Console.WriteLine(target);
+            Program.Print(PrintType.Error, "Enemy hit aborted, too far away from projectile");
+#endif
+        }
+
+        //Walks the path from the shot (t = 0) to elapsed, inclusive, and
+        //returns false at the first sample inside blocking cover. Samples
+        //are at most ProjectileSweepMaxStepMs apart and at most
+        //ProjectileSweepMaxTiles apart: a step that moves farther is halved
+        //until it does (down to 1 ms), so a fast bullet cannot skip a tile.
+        private bool CoverClearAlongPath(Projectile p, int elapsed)
+        {
+            ProjectilePath.Evaluate(p.Desc, p.StartPosition.X, p.StartPosition.Y, p.Angle, p.Id, 0, out double px, out double py);
+            if (ProjectileBlockedAt(p, new Position((float)px, (float)py)))
+                return false;
+
+            double t = 0;
+            double step = ProjectileSweepMaxStepMs;
+            while (t < elapsed)
+            {
+                double next = Math.Min(elapsed, t + step);
+                ProjectilePath.Evaluate(p.Desc, p.StartPosition.X, p.StartPosition.Y, p.Angle, p.Id, next, out double nx, out double ny);
+                double dx = nx - px;
+                double dy = ny - py;
+                if (next - t > 1 && dx * dx + dy * dy > ProjectileSweepMaxTiles * ProjectileSweepMaxTiles)
+                {
+                    step = (next - t) / 2;
+                    continue;
+                }
+                if (ProjectileBlockedAt(p, new Position((float)nx, (float)ny)))
+                    return false;
+                t = next;
+                px = nx;
+                py = ny;
+                step = Math.Min(ProjectileSweepMaxStepMs, step * 2);
+            }
+            return true;
         }
 
         public void TryShoot(int time, Position pos, float attackAngle, bool ability, int numShots)

@@ -23,6 +23,7 @@ namespace RotMG.Networking
             string name = query["name"];
 
             _listenEvent.Reset();
+            bool queued = false;
             Program.PushWork(() =>
             {
                 AccountModel acc = Database.Verify(username, password, GetIPFromContext(context));
@@ -41,18 +42,22 @@ namespace RotMG.Networking
                         data = WriteError("Not enough credits");
                     else
                     {
+                        //Credits, the new login key, the old login key's removal and the account row are ONE bundle
+                        //(this used to be four separate writes). The reply waits for the commit.
                         if (!string.IsNullOrWhiteSpace(acc.Name))
-                        {
                             acc.Stats.Credits -= 1000;
-                            Database.DeleteKey($"login.username.{acc.Name}");
-                        }
-                        Database.SetKey($"login.username.{name}", acc.Id.ToString());
-                        Database.SetKey($"login.id.{acc.Id}", name);
-                        acc.Save();
-                        data = WriteSuccess();
+                        string oldName = acc.Name;
+                        Database.RenameAccountKeys(acc.Id, oldName, name, acc, ok =>
+                        {
+                            if (ok)
+                                acc.Name = name;
+                            data = ok ? WriteSuccess() : WriteError("Save failed");
+                            _listenEvent.Set();
+                        });
+                        queued = true;
                     }
                 }
-            }, () => _listenEvent.Set());
+            }, () => { if (!queued) _listenEvent.Set(); });
             _listenEvent.WaitOne(30000);
 
             return data;
@@ -139,6 +144,7 @@ namespace RotMG.Networking
             string board = query["board"];
 
             _listenEvent.Reset();
+            bool queued = false;
             Program.PushWork(() =>
             {
                 AccountModel acc = Database.Verify(username, password, GetIPFromContext(context));
@@ -148,11 +154,16 @@ namespace RotMG.Networking
                     data = WriteError("No permission");
                 else
                 {
+                    //The reply waits for the commit (W03), so a GetGuildBoard right after sees the new text.
                     string text = HttpUtility.UrlDecode(board ?? "");
-                    Database.SetGuildBoard(acc.GuildName, text);
-                    data = Write(text);
+                    queued = true;
+                    Database.SetGuildBoard(acc.GuildName, text, committed =>
+                    {
+                        data = committed ? Write(text) : WriteError("Save failed");
+                        _listenEvent.Set();
+                    });
                 }
-            }, () => _listenEvent.Set());
+            }, () => { if (!queued) _listenEvent.Set(); });
             _listenEvent.WaitOne(30000);
 
             return data;

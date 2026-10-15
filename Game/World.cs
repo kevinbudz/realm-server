@@ -46,6 +46,8 @@ namespace RotMG.Game
         public Dictionary<int, Entity> Constants;
         public Dictionary<int, Player> Players;
         public Dictionary<int, StaticObject> Statics;
+        //Spatial index over Statics (range queries); kept in step by AddEntity, RemoveEntity and MoveEntity.
+        public StaticIndex StaticGrid;
 
         public ChunkController EntityChunks;
         public ChunkController PlayerChunks;
@@ -78,6 +80,10 @@ namespace RotMG.Game
         private const int ParallelBroadcastThreshold = 4;
         private readonly HashSet<Chunk> _activeChunks;
         private readonly HashSet<Entity> _activeEntities;
+        //Statics whose Behavior resolved in Init, in Statics dictionary order (StaticObject.StaticOrder). World.Tick
+        //used to scan all of Statics for these.
+        private readonly List<StaticObject> _behaviorStatics = new List<StaticObject>();
+        internal IReadOnlyList<StaticObject> BehaviorStatics => _behaviorStatics;
 
         public World(IGameMap map, WorldDesc desc)
             : this(map, desc.Id, desc.DisplayName, desc.Background)
@@ -107,6 +113,7 @@ namespace RotMG.Game
             Constants = new Dictionary<int, Entity>();
             Players = new Dictionary<int, Player>();
             Statics = new Dictionary<int, StaticObject>();
+            StaticGrid = new StaticIndex(Width, Height);
 
             EntityChunks = new ChunkController(Width, Height);
             PlayerChunks = new ChunkController(Width, Height);
@@ -565,8 +572,11 @@ namespace RotMG.Game
                 en.Position = to;
                 en.UpdateCount++;
 
-                if (en is StaticObject)
+                if (en is StaticObject movedStatic)
+                {
+                    StaticGrid.Move(movedStatic);
                     return;
+                }
 
                 ChunkController controller = (en is Player || en is Decoy) 
                     ? PlayerChunks : EntityChunks;
@@ -595,6 +605,7 @@ namespace RotMG.Game
             if (en is StaticObject staticObj)
             {
                 Statics.Add(en.Id, staticObj);
+                StaticGrid.Add(staticObj);
                 //Clients discover statics through their tile (see Player
                 //updates); without this link runtime-spawned portals and
                 //other statics stay invisible (mirrors PlacePortal).
@@ -614,6 +625,8 @@ namespace RotMG.Game
                 //ConditionalEffect never applies, and Order transitions miss.
                 //Mirrors realm-src-master World.EnterWorld, which inits statics.
                 en.Init();
+                if (staticObj.Behavior != null)
+                    InsertBehaviorStatic(staticObj);
                 return en.Id;
             }
 
@@ -653,6 +666,14 @@ namespace RotMG.Game
             return en.Id;
         }
 
+        private void InsertBehaviorStatic(StaticObject st)
+        {
+            int at = _behaviorStatics.Count;
+            while (at > 0 && _behaviorStatics[at - 1].StaticOrder > st.StaticOrder)
+                at--;
+            _behaviorStatics.Insert(at, st);
+        }
+
         public void RemoveEntity(Entity en)
         {
 #if DEBUG
@@ -664,6 +685,8 @@ namespace RotMG.Game
             if (en is StaticObject staticObj)
             {
                 Statics.Remove(en.Id);
+                StaticGrid.Remove(staticObj);
+                _behaviorStatics.Remove(staticObj);
                 //Clear the tile link so removed statics (e.g. expired
                 //portals) disappear instead of lingering as ghosts.
                 //Indexed directly: Tile is a struct, so a GetTile local
@@ -725,8 +748,18 @@ namespace RotMG.Game
         //Program/MainThread work queues, Manager under SyncRoot). Cross-world
         //reads are limited to benign snapshots (e.g. another world's player
         //count for portal labels); cross-world writes always defer.
+        //Trace-only (REALM_TICKTRACE): cost of the sight recalculation during SendUpdate, summed over players.
+        internal long TraceSightTicks;
+        internal int TraceSightCalcs;
+        //Trace-only: entity tick milliseconds by "type name" for the current tick (entity loop is sequential).
+        internal readonly Dictionary<string, double> TraceTypeMs = new Dictionary<string, double>();
+
         public void Tick()
         {
+            bool trace = Manager.TickTraceEnabled;
+            long trStart = trace ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+            TraceSightTicks = 0;
+            TraceSightCalcs = 0;
             OnTick();
 
             if (Players.Count == 0)
@@ -751,10 +784,10 @@ namespace RotMG.Game
                 _activeEntities.UnionWith(chunk.Entities);
             //GameObject enemies (e.g. Oryx's Living Floor) live in Statics,
             //not EntityChunks, so they would never run behaviors otherwise.
-            foreach (StaticObject st in Statics.Values)
-                if (st.Behavior != null)
-                    _activeEntities.Add(st);
+            foreach (StaticObject st in _behaviorStatics)
+                _activeEntities.Add(st);
 
+            long trActive = trace ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             //Player broadcast parallelizes cleanly: each worker touches only
             //its own player's mutable state while world state is read-only
             //here (entity ticks run sequentially below). PacketWriter.Rent
@@ -766,10 +799,25 @@ namespace RotMG.Game
                 foreach (Player player in Players.Values)
                     player.SendUpdate();
 
+            long trUpdate = trace ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             //Tick logic first
+            if (trace)
+                TraceTypeMs.Clear();
             foreach (Entity en in _activeEntities) 
                 if (en.TickEntity())
+                {
+                    if (!trace)
+                    {
+                        en.Tick();
+                        continue;
+                    }
+                    long ta = System.Diagnostics.Stopwatch.GetTimestamp();
                     en.Tick();
+                    string key = en.Type.ToString("x4") + " " + (en.Desc != null ? en.Desc.Id : "?");
+                    TraceTypeMs.TryGetValue(key, out double acc);
+                    TraceTypeMs[key] = acc + (System.Diagnostics.Stopwatch.GetTimestamp() - ta) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                }
+            long trEntities = trace ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
 
             //Send NewTick to players (same independence as SendUpdate above)
             if (Players.Count >= ParallelBroadcastThreshold)
@@ -778,12 +826,28 @@ namespace RotMG.Game
                 foreach (Player player in Players.Values)
                     player.SendNewTick();
 
+            long trNewTick = trace ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             //Clear new stats
             foreach (Entity en in _activeEntities)
                 if (en.TickEntity())
                     en.NewSVs.Clear();
 
             ChatMessages.Clear();
+            if (trace)
+            {
+                long trEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+                double total = (trEnd - trStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                if (total >= 8)
+                {
+                    double ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                    Program.Print(PrintType.Info,
+                        $"[tickworld] world={Name} total={total:F1} active={ms(trStart, trActive):F1} " +
+                        $"sendUpdate={ms(trActive, trUpdate):F1} (sight={TraceSightTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F1} calcs={TraceSightCalcs}) " +
+                        $"entityTick={ms(trUpdate, trEntities):F1} sendNewTick={ms(trEntities, trNewTick):F1} " +
+                        $"clear={ms(trNewTick, trEnd):F1} players={Players.Count} active={_activeEntities.Count} statics={Statics.Count} " +
+                        "top=" + string.Join(",", TraceTypeMs.OrderByDescending(kv => kv.Value).Take(3).Select(kv => $"[{kv.Key} {kv.Value:F1}ms]")));
+                }
+            }
         }
 
         protected virtual void OnTick()

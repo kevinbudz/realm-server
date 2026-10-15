@@ -110,12 +110,19 @@ namespace RotMG
                 Environment.Exit(ok ? 0 : 1);
             }
 
+            //[W13] File sinks for the server only. The --*-verify flags (before and after this point) stay console-only,
+            //as before W13. Start runs before Settings.Init so the startup lines are kept.
+            if (args == null || args.Length == 0 || !args[0].EndsWith("-verify", StringComparison.Ordinal))
+                LogFiles.Start();
             Settings.Init();
             Resources.Init();
             Database.Init();
             AppServer.Init();
             GameServer.Init();
             Manager.Init();
+            //[W05] Discover chat commands at startup (main thread), not on the first command. Verify runs skip it.
+            if (args == null || args.Length == 0 || !args[0].EndsWith("-verify", StringComparison.Ordinal))
+                Program.Print(PrintType.Info, $"Chat commands registered: {RotMG.Game.Commands.CommandTable.Warm()}");
 
             if (args != null && args.Length > 0 && args[0] == "--p2-verify")
             {
@@ -203,6 +210,23 @@ namespace RotMG
                 bool ok = Player.VerifyProjectileIdLockstep();
                 DrainWork();
                 Console.WriteLine(ok ? "P24 verify: PASS" : "P24 verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            if (args != null && args.Length > 0 && args[0] == "--projpath-verify")
+            {
+                bool ok = ProjectilePathVerify.Run(args.Length > 1 ? args[1] : null);
+                DrainWork();
+                Console.WriteLine(ok ? "ProjPath verify: PASS" : "ProjPath verify: FAIL");
+                Environment.Exit(ok ? 0 : 1);
+            }
+
+            //[W05] Correctness sweep and static index (Game/W05Verify.cs). Runs after Manager.Init, like the P2/P19 checks.
+            if (args != null && args.Length > 0 && args[0] == "--w05-verify")
+            {
+                bool ok = W05Verify.Run();
+                DrainWork();
+                Console.WriteLine(ok ? "W05 verify: PASS" : "W05 verify: FAIL");
                 Environment.Exit(ok ? 0 : 1);
             }
 
@@ -295,6 +319,12 @@ namespace RotMG
                 Database.Shutdown();
             }
             catch { }
+            //[W13] Last: drains queued log lines to the files and closes them.
+            try
+            {
+                LogFiles.Shutdown();
+            }
+            catch { }
         }
 
         //Executes everything still queued, inline, with the same exception
@@ -347,7 +377,11 @@ namespace RotMG
             if (type == PrintType.Debug)
                 return;
 #endif
-            string message = $"<{DateTime.Now.ToShortTimeString()}> {data}";
+            DateTime now = DateTime.Now;
+            string text = $"{data}";
+            string message = $"<{now.ToShortTimeString()}> {text}";
+            //[W13] File sinks: queued for the LogWriter thread. No I/O here.
+            LogFiles.Enqueue(type, now, text);
             PushWork(() => 
             {
                 switch (type)

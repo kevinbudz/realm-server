@@ -99,6 +99,20 @@ namespace RotMG.Game.Entities
         private readonly List<ObjectDefinition> _addsScratch = new List<ObjectDefinition>();
         private readonly List<ObjectDrop> _dropsScratch = new List<ObjectDrop>();
 
+        //Join frame (W04): the joiner's first Update and NewTick, sent when Load/Create adds the player
+        //instead of at the next world tick (up to 100 ms later). It runs through the same diff state a tick
+        //uses, so the next tick sends only what changed and nothing twice. SendNewTick credits AwaitingMoves
+        //as on every tick. That keeps the client pairing: realm-cpp counts one pending Move per NewTick it
+        //receives (Session.cpp NEWTICK, finish_frame). ClientTimeGate only sees Move times, so the extra
+        //NewTick is not a drift event.
+        public void SendJoinFrame()
+        {
+            if (Parent == null || Client == null) //AddEntity returns -1 without placing the player
+                return;
+            SendUpdate();
+            SendNewTick();
+        }
+
         public virtual void SendNewTick()
         {
             HandleQuest();
@@ -132,9 +146,16 @@ namespace RotMG.Game.Entities
 
         public virtual void SendUpdate()
         {
+            long trSight = Manager.TickTraceEnabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             bool nUpdate = ShouldCalculateSightCircle();
             HashSet<IntPoint> sight = Parent.BlockSight == 0 ? SightCircle :
                     nUpdate ? CalculateSightCircle() : CalculatedSightCircle;
+            if (Manager.TickTraceEnabled)
+            {
+                System.Threading.Interlocked.Add(ref Parent.TraceSightTicks, System.Diagnostics.Stopwatch.GetTimestamp() - trSight);
+                if (nUpdate)
+                    System.Threading.Interlocked.Increment(ref Parent.TraceSightCalcs);
+            }
 
             _tilesScratch.Clear();
             _addsScratch.Clear();

@@ -729,30 +729,31 @@ namespace RotMG.Game.Entities
 
             //The mutated slot may live in a vault chest: persist it with the
             //player row atomically, like swaps do. Runs after the callback
-            //because the callback can mutate the slot as well.
+            //because the callback can mutate the slot as well. The reply waits
+            //for the commit (W03).
             if (desc.Consumable || callback != null)
-                PersistUsedContainer(con);
-
-            ReplyInv(true);
+                PersistUsedContainer(con, ReplyInv);
+            else
+                ReplyInv(true);
         }
 
         //Persists a container mutation made by UseItem (consumed item or
         //backpack-vendor writeback). Vault rows commit with the player row in
         //one transaction; the container write-through is gone, so without
-        //this a crash would resurrect the consumed item. Vault writes wait
-        //for the commit (dup-sensitive); ground writes queue FIFO.
-        private void PersistUsedContainer(IContainer con)
+        //this a crash would resurrect the consumed item. onDone(committed)
+        //sends the reply once the bundle is durable (W03).
+        private void PersistUsedContainer(IContainer con, Action<bool> onDone)
         {
             try
             {
                 SaveToCharacter();
                 if (con is Container c && c.VaultOwnerId != -1 && c.VaultIndex >= 0)
                     Database.SaveClientAndVault(Client.Account, Client.Character,
-                        c.VaultOwnerId, c.VaultIndex, c.Inventory, c.ItemDatas, null, true);
+                        c.VaultOwnerId, c.VaultIndex, c.Inventory, c.ItemDatas, null, onDone);
                 else
-                    Database.SaveAccountAndCharacter(Client.Account, Client.Character);
+                    Database.SaveAccountAndCharacter(Client.Account, Client.Character, onDone);
             }
-            catch { }
+            catch { onDone(false); }
         }
 
         //Dungeon key portal creation, mirroring realm-src-master
@@ -908,7 +909,20 @@ namespace RotMG.Game.Entities
                 host.Tiles[(int)at.X, (int)at.Y].UpdateCount++;
                 host.UpdateCount++;
             }
-            World world = Manager.GetDungeonWorld(open, desc);
+            World world;
+            try
+            {
+                world = Manager.GetDungeonWorld(open, desc);
+            }
+            catch (Game.DungeonGen.DungeonGenerationException e)
+            {
+                //Generation failed on every seed (see DungeonWorld.MaxBuildAttempts). The open portal keeps
+                //its timeout like a successful unlock; the unlocker is told instead of the packet being dropped.
+                Program.Print(PrintType.Error, $"Key unlock of '{desc.Id}' failed to generate: {e.Message}");
+                SchedulePortalTimeout(host, open, at, portalDesc);
+                SendError("This dungeon could not be generated. Try the key again.");
+                return;
+            }
 
             SchedulePortalTimeout(host, open, at, portalDesc);
 

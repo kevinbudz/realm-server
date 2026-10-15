@@ -327,21 +327,30 @@ namespace RotMG.Game.Entities
             //traded item. If the commit itself throws, both in-memory states
             //are already swapped, so report success of the swap but keep the
             //trade window closed; the next autosave/disconnect will persist.
+            //The trade window closes now, so a second accept cannot swap the same items again while the bundle commits.
+            //Both clients are told the outcome only once it is durable (W03).
+            player.ResetTrade();
             try
             {
                 player.SaveToCharacter();
                 target.SaveToCharacter();
                 Database.SaveTradePair(player.Client.Account, player.Client.Character,
-                    target.Client.Account, target.Client.Character);
+                    target.Client.Account, target.Client.Character,
+                    committed => SendTradeDone(player, target, committed ? "Trade Successful!" : "Trade failed to save."));
             }
             catch
             {
+                SendTradeDone(player, target, "Trade failed to save.");
             }
-
-            FinishTrade(player, target, "Trade Successful!");
         }
 
         private static void FinishTrade(Player player, Player target, string msg)
+        {
+            SendTradeDone(player, target, msg);
+            player.ResetTrade();
+        }
+
+        private static void SendTradeDone(Player player, Player target, string msg)
         {
             //Identity-check both clients: Client objects are pooled and
             //reused by later sessions, so never queue packets onto a client
@@ -350,7 +359,6 @@ namespace RotMG.Game.Entities
                 player.Client.Send(GameServer.TradeDone(1, msg));
             if (target != null && target.Client != null && target.Client.Player == target)
                 target.Client.Send(GameServer.TradeDone(1, msg));
-            player.ResetTrade();
         }
 
         public void CancelTrade()

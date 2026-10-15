@@ -1,0 +1,2901 @@
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Common/HopTrace.cs realm-server/Common/HopTrace.cs
+--- pristine/Common/HopTrace.cs	2026-10-14 22:40:05.499323705 -0500
++++ realm-server/Common/HopTrace.cs	2026-10-15 01:12:52.240456497 -0500
+@@ -123,9 +123,9 @@
+         }
+ 
+         //IO thread: a watched packet is now in the send buffer.
+-        public static int WatchBitFor(byte[] packet)
++        public static int WatchBitFor(ReadOnlySpan<byte> packet) //[W06] span overload: the send path passes frame bytes, not arrays
+         {
+-            if (!Enabled || packet == null || packet.Length == 0)
++            if (!Enabled || packet.Length == 0)
+                 return 0;
+             switch (packet[0])
+             {
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Common/PacketCapture.cs realm-server/Common/PacketCapture.cs
+--- pristine/Common/PacketCapture.cs	1969-12-31 18:00:00.000000000 -0600
++++ realm-server/Common/PacketCapture.cs	2026-10-15 01:13:42.516069721 -0500
+@@ -0,0 +1,66 @@
++//[W06] Env-gated wire tap for the byte-identical capture gate (tools/hop/pktdiff.py decodes it).
++//REALM_PKTCAP=<file> records every framed game packet the server reads or writes, per connection and in order.
++//File: magic "PKTCAP1\n", then one record per frame: u32 LE conn, u8 dir ('I' inbound, 'O' outbound),
++//u32 LE length, then the frame bytes (packet id + body, without the 4-byte length prefix).
++//Records are written from the IO thread only (frame read / frame staged for the socket). Unset, Enabled is
++//false, NextConnection returns 0 and Record returns at once.
++using System;
++using System.IO;
++using System.Threading;
++
++namespace RotMG.Common
++{
++    public static class PacketCapture
++    {
++        public const byte DirInbound = (byte)'I';
++        public const byte DirOutbound = (byte)'O';
++
++        public static readonly bool Enabled = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REALM_PKTCAP"));
++
++        private static readonly object _gate = new object();
++        private static FileStream _file; //unbuffered: every record reaches the file before a SIGTERM can end the process
++        private static int _lastConn;
++
++        //Connection sequence number, assigned in BeginHandling (main thread, accept order). 0 = not captured.
++        public static int NextConnection()
++        {
++            if (!Enabled)
++                return 0;
++            return Interlocked.Increment(ref _lastConn);
++        }
++
++        //id is the packet id byte, body the rest of the frame (the frame is id + body, without the length prefix).
++        public static void Record(int conn, byte dir, byte id, ReadOnlySpan<byte> body)
++        {
++            if (!Enabled || conn == 0)
++                return;
++            lock (_gate)
++            {
++                if (_file == null)
++                    Open();
++                int length = body.Length + 1;
++                byte[] head = new byte[9];
++                head[0] = (byte)conn;
++                head[1] = (byte)(conn >> 8);
++                head[2] = (byte)(conn >> 16);
++                head[3] = (byte)(conn >> 24);
++                head[4] = dir;
++                head[5] = (byte)length;
++                head[6] = (byte)(length >> 8);
++                head[7] = (byte)(length >> 16);
++                head[8] = (byte)(length >> 24);
++                _file.Write(head, 0, head.Length);
++                _file.WriteByte(id);
++                _file.Write(body);
++            }
++        }
++
++        private static void Open()
++        {
++            string path = Environment.GetEnvironmentVariable("REALM_PKTCAP");
++            _file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1);
++            byte[] magic = System.Text.Encoding.ASCII.GetBytes("PKTCAP1\n");
++            _file.Write(magic, 0, magic.Length);
++        }
++    }
++}
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Common/Structures.cs realm-server/Common/Structures.cs
+--- pristine/Common/Structures.cs	2026-09-09 11:12:33.589956245 -0500
++++ realm-server/Common/Structures.cs	2026-10-15 01:12:58.026610070 -0500
+@@ -134,7 +134,7 @@
+         public int ObjectId;
+         public byte SlotId;
+ 
+-        public SlotData(PacketReader rdr)
++        public SlotData(ref SpanReader rdr)
+         {
+             ObjectId = rdr.ReadInt32();
+             SlotId = rdr.ReadByte();
+@@ -148,7 +148,7 @@
+         public bool Tradeable;
+         public bool Included;
+ 
+-        public static TradeItem Read(PacketReader rdr)
++        public static TradeItem Read(ref SpanReader rdr)
+         {
+             return new TradeItem
+             {
+@@ -179,7 +179,7 @@
+             Y = y;
+         }
+ 
+-        public Position(PacketReader rdr)
++        public Position(ref SpanReader rdr)
+         {
+             X = rdr.ReadSingle();
+             Y = rdr.ReadSingle();
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Commands/Player.Commands.Basic.cs realm-server/Game/Commands/Player.Commands.Basic.cs
+--- pristine/Game/Commands/Player.Commands.Basic.cs	2026-10-15 00:52:16.048226767 -0500
++++ realm-server/Game/Commands/Player.Commands.Basic.cs	2026-10-15 01:16:22.135787131 -0500
+@@ -284,7 +284,7 @@
+             }
+             if (tellTarget.Client.Account.IgnoredIds.Contains(AccountId))
+                 return;
+-            byte[] tell = GameServer.Text(Name, Id, NumStars, 0, tellTarget.Name, tellMsg);
++            ReadOnlySpan<byte> tell = GameServer.Text(Name, Id, NumStars, 0, tellTarget.Name, tellMsg);
+             tellTarget.Client.Send(tell);
+             Client.Send(tell);
+         }
+@@ -303,7 +303,7 @@
+                 SendError("You are muted");
+                 return;
+             }
+-            byte[] local = GameServer.Text(Name, Id, NumStars, 5, "", input);
++            ReadOnlySpan<byte> local = GameServer.Text(Name, Id, NumStars, 5, "", input);
+             foreach (Player player in Parent.Players.Values.ToArray())
+                 if (!player.Client.Account.IgnoredIds.Contains(AccountId))
+                     player.Client.Send(local);
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Dungeons/Candyland/Overseer.cs realm-server/Game/Dungeons/Candyland/Overseer.cs
+--- pristine/Game/Dungeons/Candyland/Overseer.cs	2026-09-10 23:34:36.890518195 -0500
++++ realm-server/Game/Dungeons/Candyland/Overseer.cs	2026-10-15 01:16:22.135470899 -0500
+@@ -264,7 +264,7 @@
+ 
+         private void BroadcastTaunt(int objectId, string text)
+         {
+-            byte[] packet = GameServer.Text("#Cupcake", objectId, -1, 3, "", text);
++            ReadOnlySpan<byte> packet = GameServer.Text("#Cupcake", objectId, -1, 3, "", text);
+             foreach (Player player in _world.Players.Values)
+                 player.Client.Send(packet);
+         }
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Bot.cs realm-server/Game/Entities/Bot.cs
+--- pristine/Game/Entities/Bot.cs	2026-09-12 18:35:18.871122346 -0500
++++ realm-server/Game/Entities/Bot.cs	2026-10-15 01:16:22.135255759 -0500
+@@ -334,7 +334,7 @@
+             }
+             FameStats.Shots += numShots;
+ 
+-            byte[] packet = GameServer.AllyShoot(Id, weapon.Type, angle);
++            ReadOnlySpan<byte> packet = GameServer.AllyShoot(Id, weapon.Type, angle);
+             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                 if (en is Player player && !(player is Bot) && player.Client.Account.AllyShots)
+                     player.Client.Send(packet);
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Decoy.cs realm-server/Game/Entities/Decoy.cs
+--- pristine/Game/Entities/Decoy.cs	2026-09-08 14:49:02.226738729 -0500
++++ realm-server/Game/Entities/Decoy.cs	2026-10-15 01:16:22.134863402 -0500
+@@ -45,7 +45,7 @@
+ 
+         public override void OnLifeEnd()
+         {
+-            byte[] nova = GameServer.ShowEffect(
++            ReadOnlySpan<byte> nova = GameServer.ShowEffect(
+                 ShowEffectIndex.Nova,
+                 Id,
+                 0xffff0000,
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Enemy.cs realm-server/Game/Entities/Enemy.cs
+--- pristine/Game/Entities/Enemy.cs	2026-10-15 00:36:04.663558477 -0500
++++ realm-server/Game/Entities/Enemy.cs	2026-10-15 01:16:22.134830908 -0500
+@@ -26,7 +26,7 @@
+                 HasConditionEffect(ConditionEffectIndex.Stasis))
+                 return;
+ 
+-            byte[] poison = GameServer.ShowEffect(ShowEffectIndex.Poison, Id, 0xffddff00);
++            ReadOnlySpan<byte> poison = GameServer.ShowEffect(ShowEffectIndex.Poison, Id, 0xffddff00);
+             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
+                 if (j is Player k && k.Client.Account.Effects)
+                     k.Client.Send(poison);
+@@ -201,7 +201,7 @@
+ 
+             hitter.FameStats.DamageDealt += damageWithDefense;
+ 
+-            byte[] packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damageWithDefense);
++            ReadOnlySpan<byte> packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damageWithDefense);
+             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
+                 if (en is Player player && player.Client.Account.AllyDamage && !player.Equals(hitter))
+                     player.Client.Send(packet);
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/MiscEntities.cs realm-server/Game/Entities/MiscEntities.cs
+--- pristine/Game/Entities/MiscEntities.cs	2026-09-10 21:06:10.277539321 -0500
++++ realm-server/Game/Entities/MiscEntities.cs	2026-10-15 01:18:11.734845658 -0500
+@@ -1,4 +1,5 @@
+-﻿using RotMG.Common;
++﻿using System;
++using RotMG.Common;
+ using RotMG.Networking;
+ using RotMG.Utils;
+ 
+@@ -36,7 +37,7 @@
+             owner.FameStats.DamageDealt += damage;
+             owner.FameStats.ShotsThatDamage++;
+ 
+-            byte[] packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damage);
++            ReadOnlySpan<byte> packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damage);
+             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
+                 if (en is Player player && player.Client.Account.AllyDamage && !player.Equals(owner))
+                     player.Client.Send(packet);
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Player.Chat.cs realm-server/Game/Entities/Player.Chat.cs
+--- pristine/Game/Entities/Player.Chat.cs	2026-10-15 00:52:16.048068689 -0500
++++ realm-server/Game/Entities/Player.Chat.cs	2026-10-15 01:16:22.134647373 -0500
+@@ -90,7 +90,7 @@
+                 return;
+             }
+ 
+-            byte[] packet = GameServer.Text(Name, Id, NumStars, 5, "", validText);
++            ReadOnlySpan<byte> packet = GameServer.Text(Name, Id, NumStars, 5, "", validText);
+ 
+             foreach (Player player in Parent.Players.Values)
+                 if (!player.Client.Account.IgnoredIds.Contains(AccountId))
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Player.cs realm-server/Game/Entities/Player.cs
+--- pristine/Game/Entities/Player.cs	2026-09-20 13:28:50.223539702 -0500
++++ realm-server/Game/Entities/Player.cs	2026-10-15 01:19:09.369532090 -0500
+@@ -372,7 +372,7 @@
+             if (heal <= 0) 
+                 return;
+ 
+-            byte[] notification = GameServer.Notification(Id, $"+{heal}", magic ? 0xff6084e0 : 0xff00ff00);
++            ReadOnlySpan<byte> notification = GameServer.Notification(Id, $"+{heal}", magic ? 0xff6084e0 : 0xff00ff00);
+             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
+             {
+                 if (en is Player player && 
+@@ -404,11 +404,11 @@
+             SaveToCharacter();
+             Database.Death(killer, Client.Account, Client.Character);
+ 
+-            byte[] death = GameServer.Death(Client.Account.Id, Client.Character.Id, killer);
++            ReadOnlySpan<byte> death = GameServer.Death(Client.Account.Id, Client.Character.Id, killer);
+             Client.Send(death);
+ 
+-            byte[] text = GameServer.Text("", 0, -1, 0, "", $"{Name} died at level {Level} killed by {killer}!");
+-            byte[] sound = GameServer.PlaySound("quack");
++            byte[] text = GameServer.Text("", 0, -1, 0, "", $"{Name} died at level {Level} killed by {killer}!").ToArray();
++            ReadOnlySpan<byte> sound = GameServer.PlaySound("quack");
+ 
+             foreach (Player p in Parent.Players.Values)
+             {
+@@ -483,7 +483,7 @@
+                 return true;
+             }
+ 
+-            byte[] packet = GameServer.Damage(Id, effects.Select(k => k.Effect).ToArray(), damageWithDefense);
++            ReadOnlySpan<byte> packet = GameServer.Damage(Id, effects.Select(k => k.Effect).ToArray(), damageWithDefense);
+             foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                 if (en is Player player && player.Client.Account.AllyDamage && !player.Equals(this))
+                     player.Client.Send(packet);
+@@ -610,8 +610,8 @@
+             }
+ 
+             byte[] usePortalBody = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(farPortal.Id));
+-            using (PacketReader rdr = new PacketReader(new MemoryStream(usePortalBody)))
+-                GameServer.UsePortal(player.Client, rdr);
++            SpanReader portalRdr = new SpanReader(usePortalBody); //[W06]
++            GameServer.UsePortal(player.Client, ref portalRdr);
+             if (player.Parent != world || player.IsTransferring || !world.Players.ContainsKey(player.Id))
+             {
+                 Program.Print(PrintType.Error, "P9 verify FAIL: distant UsePortal was accepted");
+@@ -803,7 +803,7 @@
+                 }
+                 Program.Print(PrintType.Info, "SizeQuake verify: database round-trip kept Size=200, legacy rows default 0");
+ 
+-                byte[] quake = GameServer.ShowEffect(ShowEffectIndex.Jitter, 7, 0);
++                ReadOnlySpan<byte> quake = GameServer.ShowEffect(ShowEffectIndex.Jitter, 7, 0);
+                 if (quake == null || quake.Length < 2 || quake[1] != 14)
+                 {
+                     Program.Print(PrintType.Error, "SizeQuake verify FAIL: quake ShowEffect did not serialize effect id 14");
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Player.Ground.cs realm-server/Game/Entities/Player.Ground.cs
+--- pristine/Game/Entities/Player.Ground.cs	2026-09-12 18:35:18.872122357 -0500
++++ realm-server/Game/Entities/Player.Ground.cs	2026-10-15 01:18:01.819309434 -0500
+@@ -381,9 +381,10 @@
+ 
+         private void BroadcastGoto(Position pos, bool withTeleportEffect)
+         {
+-            byte[] go = GameServer.Goto(Id, pos);
++            //Copies: both builders write the shared scratch, and the loop below sends them after the second call.
++            byte[] go = GameServer.Goto(Id, pos).ToArray();
+             byte[] eff = withTeleportEffect
+-                ? GameServer.ShowEffect(ShowEffectIndex.Teleport, Id, 0xFFFFFFFF, pos)
++                ? GameServer.ShowEffect(ShowEffectIndex.Teleport, Id, 0xFFFFFFFF, pos).ToArray()
+                 : null;
+             foreach (Player player in Parent.Players.Values)
+             {
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Player.Guild.cs realm-server/Game/Entities/Player.Guild.cs
+--- pristine/Game/Entities/Player.Guild.cs	2026-09-12 18:35:18.872122357 -0500
++++ realm-server/Game/Entities/Player.Guild.cs	2026-10-15 01:16:22.134180689 -0500
+@@ -29,7 +29,7 @@
+         {
+             if (string.IsNullOrWhiteSpace(GuildName))
+                 return;
+-            byte[] packet = GameServer.Text("@" + GuildName, Id, NumStars, 0, "", text);
++            ReadOnlySpan<byte> packet = GameServer.Text("@" + GuildName, Id, NumStars, 0, "", text);
+             foreach (Client client in Manager.Clients.Values.ToArray())
+             {
+                 Player player = client.Player;
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Player.Inventory.cs realm-server/Game/Entities/Player.Inventory.cs
+--- pristine/Game/Entities/Player.Inventory.cs	2026-10-15 00:05:42.235299698 -0500
++++ realm-server/Game/Entities/Player.Inventory.cs	2026-10-15 01:19:09.354836283 -0500
+@@ -21,8 +21,8 @@
+         private const int HealthPotionItemType = 2594;
+         private const int MagicPotionItemType = 2595;
+ 
+-        private static byte[] InvalidInvSwap = GameServer.InvResult(1);
+-        private static byte[] ValidInvSwap = GameServer.InvResult(0);
++        private static byte[] InvalidInvSwap = GameServer.InvResult(1).ToArray(); //[W06] cached copy: fields cannot hold a span
++        private static byte[] ValidInvSwap = GameServer.InvResult(0).ToArray(); //[W06] cached copy: fields cannot hold a span
+ 
+         //From IContainer :)
+         public int[] Inventory { get; set; }
+@@ -586,8 +586,8 @@
+                 Program.Print(PrintType.Error, "P10 verify: bag slot values mismatch");
+                 return false;
+             }
+-            byte[] fail = GameServer.InvResult(1);
+-            byte[] ok = GameServer.InvResult(0);
++            byte[] fail = GameServer.InvResult(1).ToArray();
++            byte[] ok = GameServer.InvResult(0).ToArray();
+             if (fail == null || fail.Length != 5 || fail[0] != (byte)GameServer.PacketId.InvResult)
+             {
+                 Program.Print(PrintType.Error, "P10 verify: InvResult(1) wire layout changed");
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Player.Leveling.cs realm-server/Game/Entities/Player.Leveling.cs
+--- pristine/Game/Entities/Player.Leveling.cs	2026-09-11 11:53:22.312939535 -0500
++++ realm-server/Game/Entities/Player.Leveling.cs	2026-10-15 01:16:22.133781789 -0500
+@@ -60,7 +60,7 @@
+             int newClassQuestFame = GetNextClassQuestFame(classStat.BestFame > newFame ? classStat.BestFame : newFame);
+             if (newClassQuestFame > NextClassQuestFame)
+             {
+-                byte[] notification = GameServer.Notification(Id, "Class Quest Complete!", 0xFF00FF00);
++                ReadOnlySpan<byte> notification = GameServer.Notification(Id, "Class Quest Complete!", 0xFF00FF00);
+                 foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                 {
+                     if (en is Player player && 
+@@ -96,7 +96,7 @@
+ 
+                 if (Level == 20)
+                 {
+-                    byte[] text = GameServer.Text("", 0, -1, 0, "", $"{Name} achieved level 20");
++                    ReadOnlySpan<byte> text = GameServer.Text("", 0, -1, 0, "", $"{Name} achieved level 20");
+                     foreach (Player player in Parent.Players.Values)
+                         player.Client.Send(text);
+                 }
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Player.Projectiles.cs realm-server/Game/Entities/Player.Projectiles.cs
+--- pristine/Game/Entities/Player.Projectiles.cs	2026-10-14 23:34:24.248868774 -0500
++++ realm-server/Game/Entities/Player.Projectiles.cs	2026-10-15 01:16:22.133542474 -0500
+@@ -460,7 +460,7 @@
+                         ShotProjectiles.Add(projectile.Id, projectile);
+                     }
+ 
+-                    byte[] packet = GameServer.AllyShoot(Id, desc.Type, attackAngle);
++                    ReadOnlySpan<byte> packet = GameServer.AllyShoot(Id, desc.Type, attackAngle);
+                     foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                         if (en is Player player && player.Client.Account.AllyShots && !player.Equals(this))
+                             player.Client.Send(packet);
+@@ -489,7 +489,7 @@
+                         ShotProjectiles.Add(projectile.Id, projectile);
+                     }
+ 
+-                    byte[] packet = GameServer.AllyShoot(Id, desc.Type, attackAngle);
++                    ReadOnlySpan<byte> packet = GameServer.AllyShoot(Id, desc.Type, attackAngle);
+                     foreach (Entity en in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                         if (en is Player player && player.Client.Account.AllyShots && !player.Equals(this))
+                             player.Client.Send(packet);
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Player.Shuriken.cs realm-server/Game/Entities/Player.Shuriken.cs
+--- pristine/Game/Entities/Player.Shuriken.cs	2026-09-20 13:29:00.247713864 -0500
++++ realm-server/Game/Entities/Player.Shuriken.cs	2026-10-15 01:17:53.520665355 -0500
+@@ -65,7 +65,7 @@
+                     new Projectile(this, desc.Projectile, startId + i, time, a, Position, d)
+                 };
+ 
+-                shots.Add(GameServer.ServerPlayerShoot(startId + i, Id, desc.Type, Position, a, 0, p));
++                shots.Add(GameServer.ServerPlayerShoot(startId + i, Id, desc.Type, Position, a, 0, p).ToArray());
+                 AwaitProjectiles(p);
+             }
+ 
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Player.UseItem.cs realm-server/Game/Entities/Player.UseItem.cs
+--- pristine/Game/Entities/Player.UseItem.cs	2026-10-15 00:39:54.089213682 -0500
++++ realm-server/Game/Entities/Player.UseItem.cs	2026-10-15 01:19:09.309173566 -0500
+@@ -222,8 +222,8 @@
+                     case ActivateEffectIndex.VampireBlast: //Maybe optimize this...?
+                         if (inRange)
+                         {
+-                            byte[] line = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xFFFF0000 , target);
+-                            byte[] burst = GameServer.ShowEffect(ShowEffectIndex.Burst, Id, 0xFFFF0000, target, new Position(target.X + eff.Radius, target.Y));
++                            byte[] line = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xFFFF0000 , target).ToArray();
++                            byte[] burst = GameServer.ShowEffect(ShowEffectIndex.Burst, Id, 0xFFFF0000, target, new Position(target.X + eff.Radius, target.Y)).ToArray();
+                             int lifeSucked = 0;
+ 
+                             List<Entity> enemies = new List<Entity>();
+@@ -257,7 +257,7 @@
+                                 {
+                                     Entity a = enemies[MathUtils.Next(enemies.Count)];
+                                     Entity b = players[MathUtils.Next(players.Count)];
+-                                    flows.Add(GameServer.ShowEffect(ShowEffectIndex.Flow, b.Id, 0xffffffff, a.Position));
++                                    flows.Add(GameServer.ShowEffect(ShowEffectIndex.Flow, b.Id, 0xffffffff, a.Position).ToArray());
+                                 }
+                             }
+ 
+@@ -283,7 +283,7 @@
+                         {
+                             byte[] blast = GameServer.ShowEffect(ShowEffectIndex.Collapse, Id, 0xffffffff, 
+                                 target, 
+-                                new Position(target.X + 3, target.Y));
++                                new Position(target.X + 3, target.Y)).ToArray();
+                             List<byte[]> notifications = new List<byte[]>();
+ 
+                             foreach (Entity j in Parent.EntityChunks.HitTest(target, 3))
+@@ -292,14 +292,14 @@
+                                 {
+                                     if (k.HasConditionEffect(ConditionEffectIndex.StasisImmune))
+                                     {
+-                                        notifications.Add(GameServer.Notification(k.Id, "Immune", 0xff00ff00));
++                                        notifications.Add(GameServer.Notification(k.Id, "Immune", 0xff00ff00).ToArray());
+                                         continue;
+                                     }
+ 
+                                     if (k.HasConditionEffect(ConditionEffectIndex.Stasis))
+                                         continue;
+ 
+-                                    notifications.Add(GameServer.Notification(k.Id, "Stasis", 0xffff0000));
++                                    notifications.Add(GameServer.Notification(k.Id, "Stasis", 0xffff0000).ToArray());
+                                     k.ApplyConditionEffect(ConditionEffectIndex.Stasis, eff.DurationMS);
+                                     k.ApplyConditionEffect(ConditionEffectIndex.StasisImmune, eff.DurationMS + 3000);
+                                 }
+@@ -321,7 +321,7 @@
+                     case ActivateEffectIndex.Trap:
+                         if (inRange)
+                         {
+-                            byte[] @throw = GameServer.ShowEffect(ShowEffectIndex.Throw, Id, 0xff9000ff, target);
++                            byte[] @throw = GameServer.ShowEffect(ShowEffectIndex.Throw, Id, 0xff9000ff, target).ToArray();
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                                 if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
+                                     k.Client.Send(@throw);
+@@ -349,7 +349,7 @@
+                                 {
+                                     float x = (int)(MaxAbilityDist * MathF.Cos(angles[i])) + Position.X;
+                                     float y = (int)(MaxAbilityDist * MathF.Sin(angles[i])) + Position.Y;
+-                                    lines[i] = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xffff0088, new Position(x, y), new Position(350, 0));
++                                    lines[i] = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xffff0088, new Position(x, y), new Position(350, 0)).ToArray();
+                                 }
+ 
+                                 foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
+@@ -377,7 +377,7 @@
+                                 {
+                                     pkts.Add(GameServer.ShowEffect(ShowEffectIndex.Lightning, prev.Id, 0xffff0088,
+                                         new Position(current.Position.X, current.Position.Y),
+-                                        new Position(350, 0)));
++                                        new Position(350, 0)).ToArray());
+ 
+                                     if (i == eff.MaxTargets) 
+                                         break;
+@@ -411,8 +411,8 @@
+                             Placeholder placeholder = new Placeholder();
+                             Parent.AddEntity(placeholder, target);
+ 
+-                            byte[] @throw = GameServer.ShowEffect(ShowEffectIndex.Throw, Id, 0xffddff00, target);
+-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, placeholder.Id, 0xffddff00, new Position(eff.Radius, 0));
++                            byte[] @throw = GameServer.ShowEffect(ShowEffectIndex.Throw, Id, 0xffddff00, target).ToArray();
++                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, placeholder.Id, 0xffddff00, new Position(eff.Radius, 0)).ToArray();
+ 
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                                 if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
+@@ -466,7 +466,7 @@
+                         break;
+                     case ActivateEffectIndex.HealNova:
+                         {
+-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
++                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0)).ToArray();
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
+                             {
+                                 if (j is Player k)
+@@ -481,7 +481,7 @@
+                         break;
+                     case ActivateEffectIndex.MagicNova:
+                         {
+-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
++                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0)).ToArray();
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
+                             {
+                                 if (j is Player k)
+@@ -503,7 +503,7 @@
+                             ActivateBoosts[statIdx] += statAmount;
+                             RecalculateEquipBonuses();
+ 
+-                            byte[] potion = GameServer.ShowEffect(ShowEffectIndex.Heal, Id, 0xffffffff);
++                            byte[] potion = GameServer.ShowEffect(ShowEffectIndex.Heal, Id, 0xffffffff).ToArray();
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                                 if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
+                                     k.Client.Send(potion);
+@@ -521,7 +521,7 @@
+                             if (statIdx == -1)
+                                 break;
+                             int statAmount = eff.Amount;
+-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
++                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0)).ToArray();
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
+                             {
+                                 if (j is Player k)
+@@ -546,7 +546,7 @@
+                     case ActivateEffectIndex.ConditionEffectAura:
+                         {
+                             uint color = eff.Effect == ConditionEffectIndex.Damaging ? 0xffff0000 : 0xffffffff;
+-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, color, new Position(eff.Range, 0));
++                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, color, new Position(eff.Range, 0)).ToArray();
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
+                             {
+                                 if (j is Player k)
+@@ -563,7 +563,7 @@
+                         {
+                             ApplyConditionEffect(eff.Effect, eff.DurationMS);
+ 
+-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(1, 0));
++                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(1, 0)).ToArray();
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                                 if (j is Player k && k.Client.Account.Effects)
+                                     k.Client.Send(nova);
+@@ -586,7 +586,7 @@
+                         foreach (ConditionEffectIndex neg in NegativeEffs)
+                             RemoveConditionEffect(neg);
+                         {
+-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(1, 0));
++                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(1, 0)).ToArray();
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                                 if (j is Player k && (k.Client.Account.Effects || k.Equals(this)))
+                                     k.Client.Send(nova);
+@@ -594,7 +594,7 @@
+                         break;
+                     case ActivateEffectIndex.RemoveNegativeConditions:
+                         {
+-                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0));
++                            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xffffffff, new Position(eff.Range, 0)).ToArray();
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Math.Max(eff.Range, SightRadius)))
+                             {
+                                 if (j is Player k)
+@@ -642,8 +642,8 @@
+ 
+                             AwaitProjectiles(projs);
+ 
+-                            byte[] line = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xFFFF00AA, target);
+-                            byte[] nova = GameServer.ServerPlayerShoot(startId, Id, desc.Type, target, 0, angleInc, projs);
++                            byte[] line = GameServer.ShowEffect(ShowEffectIndex.Line, Id, 0xFFFF00AA, target).ToArray();
++                            byte[] nova = GameServer.ServerPlayerShoot(startId, Id, desc.Type, target, 0, angleInc, projs).ToArray();
+ 
+                             foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
+                             {
+@@ -793,7 +793,7 @@
+             string dungeon = string.IsNullOrWhiteSpace(portalDesc.DungeonName)
+                 ? portalDesc.DisplayId
+                 : portalDesc.DungeonName;
+-            byte[] notification = GameServer.Notification(Id, dungeon + " opened by " + Name + "!", 0xFF00FF00);
++            byte[] notification = GameServer.Notification(Id, dungeon + " opened by " + Name + "!", 0xFF00FF00).ToArray();
+             string info = dungeon + " opened by " + Name + "!";
+             foreach (Player player in host.Players.Values)
+             {
+@@ -926,7 +926,7 @@
+ 
+             SchedulePortalTimeout(host, open, at, portalDesc);
+ 
+-            byte[] notification = GameServer.Notification(Id, "Unlocked by " + Name, 0xFF00FF00);
++            byte[] notification = GameServer.Notification(Id, "Unlocked by " + Name, 0xFF00FF00).ToArray();
+             string info = world.GetDisplayName() + " unlocked by " + Name + "!";
+             foreach (Player player in host.Players.Values)
+             {
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/StaticObject.cs realm-server/Game/Entities/StaticObject.cs
+--- pristine/Game/Entities/StaticObject.cs	2026-10-15 00:52:00.643138085 -0500
++++ realm-server/Game/Entities/StaticObject.cs	2026-10-15 01:16:22.131878293 -0500
+@@ -41,7 +41,7 @@
+                 owner.FameStats.DamageDealt += damageWithDefense;
+                 owner.FameStats.ShotsThatDamage++; 
+                 
+-                byte[] packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damageWithDefense);
++                ReadOnlySpan<byte> packet = GameServer.Damage(Id, new ConditionEffectIndex[0], damageWithDefense);
+                 foreach (Entity en in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
+                     if (en is Player player && player.Client.Account.AllyDamage && !player.Equals(owner))
+                         player.Client.Send(packet);
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Entities/Trap.cs realm-server/Game/Entities/Trap.cs
+--- pristine/Game/Entities/Trap.cs	2026-09-08 14:49:02.226738729 -0500
++++ realm-server/Game/Entities/Trap.cs	2026-10-15 01:19:09.338721770 -0500
+@@ -34,7 +34,7 @@
+             int elapsed = 10000 - Lifetime.Value;
+             if (elapsed % 1000 == 0)
+             {
+-                byte[] ring = GameServer.ShowEffect(ShowEffectIndex.Ring,
++                ReadOnlySpan<byte> ring = GameServer.ShowEffect(ShowEffectIndex.Ring,
+                     Id, 0xff9000ff, new Position(Radius / 2, 0));
+                 foreach (Entity j in Parent.PlayerChunks.HitTest(Position, Player.SightRadius))
+                     if (j is Player k && (k.Client.Account.Effects || k.Equals(Player)))
+@@ -53,7 +53,7 @@
+ 
+         public override void OnLifeEnd()
+         {
+-            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xff9000ff, new Position(Radius, 0));
++            byte[] nova = GameServer.ShowEffect(ShowEffectIndex.Nova, Id, 0xff9000ff, new Position(Radius, 0)).ToArray();
+ 
+             foreach (Entity j in Parent.EntityChunks.HitTest(Position, Radius))
+                 if (j is Enemy k && 
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Logic/Behaviors/AnnounceOnDeath.cs realm-server/Game/Logic/Behaviors/AnnounceOnDeath.cs
+--- pristine/Game/Logic/Behaviors/AnnounceOnDeath.cs	2026-09-08 23:31:03.429985910 -0500
++++ realm-server/Game/Logic/Behaviors/AnnounceOnDeath.cs	2026-10-15 01:18:11.745183175 -0500
+@@ -1,3 +1,4 @@
++using System;
+ using RotMG.Networking;
+ 
+ namespace RotMG.Game.Logic.Behaviors
+@@ -15,7 +16,7 @@
+         {
+             if (host.Parent == null)
+                 return;
+-            byte[] packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 0, "", Message);
++            ReadOnlySpan<byte> packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 0, "", Message);
+             BehaviorHelpers.BroadcastNearby(host, packet);
+         }
+     }
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Logic/Behaviors/BehaviorHelpers.cs realm-server/Game/Logic/Behaviors/BehaviorHelpers.cs
+--- pristine/Game/Logic/Behaviors/BehaviorHelpers.cs	2026-10-15 00:52:00.643575694 -0500
++++ realm-server/Game/Logic/Behaviors/BehaviorHelpers.cs	2026-10-15 01:17:35.099145850 -0500
+@@ -156,14 +156,14 @@
+             return entity;
+         }
+ 
+-        public static void BroadcastNearby(Entity host, byte[] packet, float? radius = null)
++        public static void BroadcastNearby(Entity host, ReadOnlySpan<byte> packet, float? radius = null)
+         {
+             foreach (Entity en in host.Parent.PlayerChunks.HitTest(host.Position, radius ?? Player.SightRadius))
+                 if (en is Player player)
+                     player.Client.Send(packet);
+         }
+ 
+-        public static void BroadcastToViewers(Entity host, byte[] packet)
++        public static void BroadcastToViewers(Entity host, ReadOnlySpan<byte> packet)
+         {
+             foreach (Entity en in host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius))
+                 if (en is Player player && player.Entities.Contains(host))
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Logic/Behaviors/GlobalNotification.cs realm-server/Game/Logic/Behaviors/GlobalNotification.cs
+--- pristine/Game/Logic/Behaviors/GlobalNotification.cs	2026-09-10 11:43:26.307339440 -0500
++++ realm-server/Game/Logic/Behaviors/GlobalNotification.cs	2026-10-15 01:18:11.753435922 -0500
+@@ -1,3 +1,4 @@
++using System;
+ using RotMG.Game.Entities;
+ using RotMG.Networking;
+ 
+@@ -18,7 +19,7 @@
+         {
+             if (host.Parent == null)
+                 return;
+-            byte[] packet = GameServer.GlobalNotification(0, Message);
++            ReadOnlySpan<byte> packet = GameServer.GlobalNotification(0, Message);
+             foreach (Player player in host.Parent.Players.Values)
+                 player.Client.Send(packet);
+         }
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Logic/Behaviors/Grenade.cs realm-server/Game/Logic/Behaviors/Grenade.cs
+--- pristine/Game/Logic/Behaviors/Grenade.cs	2026-09-09 22:32:57.124267244 -0500
++++ realm-server/Game/Logic/Behaviors/Grenade.cs	2026-10-15 01:18:01.819352752 -0500
+@@ -88,8 +88,9 @@
+                         Time = Manager.TotalTime + TravelTime
+                     };
+ 
+-                    byte[] eff = GameServer.ThrowEffect(host.Id, Color, p, TravelTime);
+-                    byte[] aoe = GameServer.Aoe(p, Radius, Damage, Effects[0].Effect, Color);
++                    //Copies: both builders share the scratch, and aoe is captured by the timer lambda below.
++                    byte[] eff = GameServer.ThrowEffect(host.Id, Color, p, TravelTime).ToArray();
++                    byte[] aoe = GameServer.Aoe(p, Radius, Damage, Effects[0].Effect, Color).ToArray();
+                     Entity[] players = host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius)
+                         .Where(e => (e is Player j) && j.Entities.Contains(host)).ToArray();
+ 
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Logic/Behaviors/KillPlayer.cs realm-server/Game/Logic/Behaviors/KillPlayer.cs
+--- pristine/Game/Logic/Behaviors/KillPlayer.cs	2026-09-09 10:32:35.015950798 -0500
++++ realm-server/Game/Logic/Behaviors/KillPlayer.cs	2026-10-15 01:18:11.762893368 -0500
+@@ -1,3 +1,4 @@
++using System;
+ using RotMG.Common;
+ using RotMG.Game.Entities;
+ using RotMG.Networking;
+@@ -45,7 +46,7 @@
+ 
+             if (KillMessage != null)
+             {
+-                byte[] packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 3, "", KillMessage);
++                ReadOnlySpan<byte> packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 3, "", KillMessage);
+                 BehaviorHelpers.BroadcastNearby(host, packet, 15);
+             }
+ 
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Logic/Behaviors/RingAttack.cs realm-server/Game/Logic/Behaviors/RingAttack.cs
+--- pristine/Game/Logic/Behaviors/RingAttack.cs	2026-09-09 13:49:18.076360620 -0500
++++ realm-server/Game/Logic/Behaviors/RingAttack.cs	2026-10-15 01:16:22.131648198 -0500
+@@ -78,7 +78,7 @@
+             for (int k = 0; k < count; k++)
+                 projectiles.Add(new Projectile(host, desc, startId + k, Manager.TotalTime, angle + angleInc * k, host.Position, damage));
+ 
+-            byte[] packet = GameServer.EnemyShoot(startId, host.Id, desc.BulletType, host.Position, angle, (short)damage, (byte)count, angleInc);
++            ReadOnlySpan<byte> packet = GameServer.EnemyShoot(startId, host.Id, desc.BulletType, host.Position, angle, (short)damage, (byte)count, angleInc);
+ 
+             foreach (Entity en in host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius))
+             {
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Logic/Behaviors/Shoot.cs realm-server/Game/Logic/Behaviors/Shoot.cs
+--- pristine/Game/Logic/Behaviors/Shoot.cs	2026-09-09 22:09:04.851123130 -0500
++++ realm-server/Game/Logic/Behaviors/Shoot.cs	2026-10-15 01:16:22.131587967 -0500
+@@ -124,7 +124,7 @@
+                     for (byte k = 0; k < count; k++)
+                         projectiles.Add(new Projectile(host, desc, startId + k, Manager.TotalTime, startAngle + (ShootAngle * k), host.Position, damage));
+ 
+-                    byte[] packet = GameServer.EnemyShoot(startId, host.Id, desc.BulletType, host.Position, startAngle, (short)damage, count, ShootAngle);
++                    ReadOnlySpan<byte> packet = GameServer.EnemyShoot(startId, host.Id, desc.BulletType, host.Position, startAngle, (short)damage, count, ShootAngle);
+                     
+                     foreach (Entity en in host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius))
+                     {
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Logic/Behaviors/Taunt.cs realm-server/Game/Logic/Behaviors/Taunt.cs
+--- pristine/Game/Logic/Behaviors/Taunt.cs	2026-09-08 23:30:30.356960162 -0500
++++ realm-server/Game/Logic/Behaviors/Taunt.cs	2026-10-15 01:18:11.771026318 -0500
+@@ -1,3 +1,4 @@
++using System;
+ using RotMG.Common;
+ using RotMG.Game.Entities;
+ using RotMG.Networking;
+@@ -79,7 +80,7 @@
+             }
+             taunt = taunt.Replace("{HP}", host.HP.ToString());
+ 
+-            byte[] packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 3, "", taunt);
++            ReadOnlySpan<byte> packet = GameServer.Text("#" + (host.Desc.DisplayId ?? host.Desc.Id), host.Id, -1, 3, "", taunt);
+             if (Broadcast && host.Parent != null)
+             {
+                 foreach (Player player in host.Parent.Players.Values)
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Manager.cs realm-server/Game/Manager.cs
+--- pristine/Game/Manager.cs	2026-10-15 00:44:17.084978301 -0500
++++ realm-server/Game/Manager.cs	2026-10-15 01:18:11.786866258 -0500
+@@ -878,7 +878,7 @@
+ 
+             TotalTimeUnsynced = Math.Max(TotalTimeUnsynced, 1000);
+ 
+-            byte[] reconnect = GameServer.Reconnect(42);
++            byte[] reconnect = GameServer.Reconnect(42).ToArray(); //[W06] a copy: the verify keeps it past the Reconnect call
+             if (reconnect == null || reconnect.Length != 5 || reconnect[0] != (byte)GameServer.PacketId.Reconnect)
+                 return Fail($"Reconnect wire changed (len={reconnect?.Length})");
+             Program.Print(PrintType.Info, "P19 verify: Reconnect still writes PacketId + int gameId");
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Game/Oryx.cs realm-server/Game/Oryx.cs
+--- pristine/Game/Oryx.cs	2026-09-09 23:24:34.900343459 -0500
++++ realm-server/Game/Oryx.cs	2026-10-15 01:16:22.130687278 -0500
+@@ -973,14 +973,14 @@
+ 
+         private void OryxSay(string message)
+         {
+-            byte[] packet = GameServer.Text("Oryx the Mad God", 0, -1, 0, "", message);
++            ReadOnlySpan<byte> packet = GameServer.Text("Oryx the Mad God", 0, -1, 0, "", message);
+             foreach (Player player in _world.Players.Values)
+                 player.Client.Send(packet);
+         }
+ 
+         private void Announce(string message)
+         {
+-            byte[] packet = GameServer.Text("", 0, -1, 0, "", message);
++            ReadOnlySpan<byte> packet = GameServer.Text("", 0, -1, 0, "", message);
+             foreach (Client client in Manager.Clients.Values.ToArray())
+                 if (client.Player != null)
+                     client.Send(packet);
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Networking/Client.cs realm-server/Networking/Client.cs
+--- pristine/Networking/Client.cs	2026-10-14 23:39:15.704922461 -0500
++++ realm-server/Networking/Client.cs	2026-10-15 01:19:09.324665353 -0500
+@@ -3,6 +3,8 @@
+ using RotMG.Game.Entities;
+ using RotMG.Utils;
+ using System;
++using System.Buffers;
++using System.Buffers.Binary;
+ using System.Collections.Concurrent;
+ using System.Collections.Generic;
+ using System.Data;
+@@ -33,21 +35,25 @@
+     public struct InboundPacket
+     {
+         public int Id;
+-        public byte[] Body;
++        public byte[] Body; //pooled; null for an empty body. The tick thread returns it after dispatch.
++        public int Length;
++
++        public ReadOnlySpan<byte> Span => Body == null ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>(Body, 0, Length);
+     }
+ 
+-    //One outbound frame waiting for FlushSendInner. Droppable packets are
+-    //cosmetics the client can lose without desync (effects, other-player
+-    //damage numbers, ally shots). Everything else is protocol state and
+-    //must never be silently discarded.
++    //One outbound frame waiting for FlushSendInner. Data is a pooled array holding the whole frame: the 4-byte BE
++    //length prefix, then the packet id and body. Length is the frame size. The IO thread returns Data to ArrayPool
++    //once the frame is staged. Droppable packets are cosmetics the client can lose without desync (effects,
++    //other-player damage numbers, ally shots). Everything else is protocol state and must never be silently discarded.
+     public struct OutgoingPacket
+     {
+         public byte[] Data;
++        public int Length;
+         public bool Droppable;
+ 
+-        public static bool IsDroppable(byte[] packet)
++        public static bool IsDroppable(ReadOnlySpan<byte> packet)
+         {
+-            if (packet == null || packet.Length < 1)
++            if (packet.Length < 1)
+                 return false;
+             switch ((GameServer.PacketId)packet[0])
+             {
+@@ -67,7 +73,7 @@
+ 
+         //Speech bubbles (bubbleTime > 0). Chat/info/error lines keep
+         //bubbleTime 0 and stay reliable until the byte cap.
+-        private static bool IsTextBubble(byte[] packet)
++        private static bool IsTextBubble(ReadOnlySpan<byte> packet)
+         {
+             int i = 1;
+             if (!SkipUtf(packet, ref i))
+@@ -76,7 +82,7 @@
+             return i < packet.Length && packet[i] != 0;
+         }
+ 
+-        private static bool SkipUtf(byte[] packet, ref int i)
++        private static bool SkipUtf(ReadOnlySpan<byte> packet, ref int i)
+         {
+             if (i + 2 > packet.Length)
+                 return false;
+@@ -113,6 +119,7 @@
+         //[hop] trace state, see Common/HopTrace.cs. Stays 0 unless a traced hop owns this socket.
+         public int HopAccount = -1; //-1 = not a traced hop socket (account ids start at 0)
+         public int HopMask;
++        public int CaptureId; //[W06] PacketCapture connection number (0 = not captured), set in BeginHandling.
+         private List<(int End, int Bit)> _hopMarks; //[hop] IO thread only (under _ioLock)
+         //Set by SendFailureAndClose: Read ignores further packets and Tick
+         //skips the handshake timeout so Disconnect cannot wipe the Failure
+@@ -153,7 +160,8 @@
+         private volatile bool _socketDead;
+         //Packet that fit-checked but couldn't flush; only the IO thread
+         //touches this (concurrent queues have no push-front).
+-        private byte[] _held;
++        private OutgoingPacket _held;
++        private bool _hasHeld;
+         //Legacy overflow flag still consumed by Tick. Slow-link disconnects
+         //now go through _slowDisconnect so Failure can flush before close.
+         private volatile bool _sendOverflow;
+@@ -340,11 +348,11 @@
+                     }
+ #endif
+                 }
+-                _held = null;
++                ReleaseHeld(); //[W06] pooled frames go back to ArrayPool
+                 _send.Reset();
+                 _receive.Reset();
+-                _pending.Clear();
+-                while (_inbound.TryDequeue(out _)) { }
++                DrainPending();
++                DrainInboundQueue();
+                 _socketDead = false;
+                 _sendOverflow = false;
+                 _disconnectRequested = false;
+@@ -382,6 +390,7 @@
+         {
+             _socket = socket;
+             _socket.Blocking = false;
++            CaptureId = PacketCapture.NextConnection(); //[W06]
+             //Nagle + Linux delayed ACK added ~40 ms between back-to-back small writes (e.g. CreateSuccess then the first Update).
+             //The IO thread already coalesces each poll's packets into one buffer, so NoDelay only affects the rest.
+             _socket.NoDelay = true;
+@@ -406,8 +415,8 @@
+             _closing = false;
+             _droppedCosmetic = 0;
+             Volatile.Write(ref _pendingBytes, 0);
+-            while (_pending.TryDequeue(out _)) { }
+-            while (_inbound.TryDequeue(out _)) { }
++            DrainPending(); //[W06]
++            DrainInboundQueue(); //[W06]
+ 
+             Manager.AddClient(this);
+             if (HopTrace.Enabled) HopTrace.Mark(HopAccount, "BeginHandling on main thread"); //[hop]
+@@ -479,7 +488,14 @@
+             while (budget-- > 0 && _inbound.TryDequeue(out InboundPacket packet))
+             {
+                 NoteInbound();
+-                GameServer.Read(this, packet.Id, packet.Body);
++                try
++                {
++                    GameServer.Read(this, packet.Id, packet.Span);
++                }
++                finally
++                {
++                    ReturnInboundBody(packet); //[W06]
++                }
+             }
+         }
+ 
+@@ -503,12 +519,28 @@
+ 
+         public void Send(byte[] packet)
+         {
+-            Send(packet, OutgoingPacket.IsDroppable(packet));
++            if (packet == null)
++                return;
++            Send(new ReadOnlySpan<byte>(packet), OutgoingPacket.IsDroppable(packet));
+         }
+ 
+         public void Send(byte[] packet, bool droppable)
+         {
+-            if (packet == null || packet.Length == 0)
++            if (packet == null)
++                return;
++            Send(new ReadOnlySpan<byte>(packet), droppable);
++        }
++
++        //[W06] Builders return a span over their scratch buffer. The frame is serialized here into a pooled array
++        //(length prefix + packet), so the span can be reused as soon as this returns and no byte[] is allocated per send.
++        public void Send(ReadOnlySpan<byte> packet)
++        {
++            Send(packet, OutgoingPacket.IsDroppable(packet));
++        }
++
++        public void Send(ReadOnlySpan<byte> packet, bool droppable)
++        {
++            if (packet.Length == 0)
+                 return;
+             if (State == ProtocolState.Disconnected || _slowDisconnect != 0 || _closing)
+                 return;
+@@ -531,8 +563,11 @@
+                 return;
+             }
+ 
++            byte[] frame = ArrayPool<byte>.Shared.Rent(framed);
++            BinaryPrimitives.WriteInt32BigEndian(frame.AsSpan(0, GameServer.PrefixLengthWithId), framed);
++            packet.CopyTo(frame.AsSpan(GameServer.PrefixLengthWithId));
+             Interlocked.Add(ref _pendingBytes, framed);
+-            _pending.Enqueue(new OutgoingPacket { Data = packet, Droppable = droppable });
++            _pending.Enqueue(new OutgoingPacket { Data = frame, Length = framed, Droppable = droppable });
+ #if DEBUG
+             LogSendQueueIfStalled();
+ #endif
+@@ -573,10 +608,10 @@
+             Active = false;
+             _disconnectReason = "Connection too slow";
+ 
+-            while (_pending.TryDequeue(out _)) { }
++            DrainPending(); //[W06]
+             Interlocked.Exchange(ref _pendingBytes, 0);
+ 
+-            byte[] failure = GameServer.Failure(GameServer.FailureForceCloseGame, "Connection too slow");
++            byte[] failure = GameServer.Failure(GameServer.FailureForceCloseGame, "Connection too slow").ToArray(); //[W06]
+             Interlocked.Exchange(ref _disconnectFlush, failure);
+ 
+ #if DEBUG
+@@ -717,9 +752,17 @@
+                     if ((_socket.Available + GameServer.PrefixLength) < _receive.PacketLength)
+                         break;
+ 
+-                    if (_socket.Available != 0)
+-                        _socket.Receive(_receive.PacketBytes, GameServer.PrefixLength, _receive.PacketLength - GameServer.PrefixLength, SocketFlags.None);
+-                    _inbound.Enqueue(new InboundPacket { Id = _receive.GetPacketId(), Body = _receive.GetPacketBody() });
++                    //[W06] The body goes straight into a pooled array (the tick thread reads it there and returns it);
++                    //the old path copied it out of PacketBytes into a fresh byte[] for every packet.
++                    int bodyLength = _receive.PacketLength - GameServer.PrefixLength;
++                    byte[] body = null;
++                    if (bodyLength > 0)
++                    {
++                        body = ArrayPool<byte>.Shared.Rent(bodyLength);
++                        _socket.Receive(body, 0, bodyLength, SocketFlags.None);
++                    }
++                    if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirInbound, (byte)_receive.GetPacketId(), body == null ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>(body, 0, bodyLength)); //[W06]
++                    _inbound.Enqueue(new InboundPacket { Id = _receive.GetPacketId(), Body = body, Length = bodyLength });
+                     _receive.Reset();
+ 
+                     PollReceiveInner();
+@@ -727,9 +770,37 @@
+             }
+         }
+ 
++        //[W06] Pool hygiene: whichever thread dequeues an entry is the only one that returns its array.
++        private void DrainPending()
++        {
++            while (_pending.TryDequeue(out OutgoingPacket outgoing))
++                ArrayPool<byte>.Shared.Return(outgoing.Data);
++        }
++
++        private void DrainInboundQueue()
++        {
++            while (_inbound.TryDequeue(out InboundPacket packet))
++                ReturnInboundBody(packet);
++        }
++
++        //IO thread only (under _ioLock).
++        private void ReleaseHeld()
++        {
++            if (_hasHeld)
++                ArrayPool<byte>.Shared.Return(_held.Data);
++            _held = default;
++            _hasHeld = false;
++        }
++
++        private static void ReturnInboundBody(InboundPacket packet)
++        {
++            if (packet.Body != null)
++                ArrayPool<byte>.Shared.Return(packet.Body);
++        }
++
+         //[hop] IO thread (under _ioLock): a watched packet was copied into the send buffer.
+         //Its end offset is timestamped once the kernel accepts that many bytes.
+-        private void HopNoteBuffered(byte[] packet, int end)
++        private void HopNoteBuffered(ReadOnlySpan<byte> packet, int end)
+         {
+             int bit = HopTrace.WatchBitFor(packet);
+             if (bit == 0 || (Volatile.Read(ref HopMask) & bit) == 0)
+@@ -797,7 +868,7 @@
+             if (_send.State == SocketEventState.Awaiting)
+             {
+                 byte[] disconnect = Interlocked.Exchange(ref _disconnectFlush, null);
+-                if (disconnect == null && _held == null && _pending.IsEmpty)
++                if (disconnect == null && !_hasHeld && _pending.IsEmpty)
+                     return;
+ 
+                 _send.EnsureBuffer();
+@@ -808,7 +879,7 @@
+                 if (disconnect != null)
+                 {
+                     //Failure-first: do not coalesce the abandoned backlog.
+-                    _held = null;
++                    ReleaseHeld();
+                     int length = disconnect.Length + GameServer.PrefixLengthWithId;
+                     if (length > buf.Length)
+                     {
+@@ -820,50 +891,49 @@
+                     buf[2] = (byte)(length >> 8);
+                     buf[3] = (byte)length;
+                     Buffer.BlockCopy(disconnect, 0, buf, GameServer.PrefixLengthWithId, disconnect.Length);
++                    if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirOutbound, disconnect[0], new ReadOnlySpan<byte>(disconnect, 1, disconnect.Length - 1)); //[W06]
+                     total = length;
+                 }
+                 else
+                 {
+-                    int queued = _pending.Count + (_held == null ? 0 : 1);
++                    int queued = _pending.Count + (_hasHeld ? 1 : 0);
+                     while (queued-- > 0)
+                     {
+-                        byte[] packet;
+-                        if (_held != null)
++                        OutgoingPacket outgoing;
++                        if (_hasHeld)
+                         {
+-                            packet = _held;
+-                            _held = null;
++                            outgoing = _held;
++                            _held = default;
++                            _hasHeld = false;
+                         }
+-                        else if (!_pending.TryDequeue(out OutgoingPacket outgoing))
++                        else if (!_pending.TryDequeue(out outgoing))
+                             break;
+                         else
+-                        {
+-                            packet = outgoing.Data;
+-                            AccountDequeued(packet.Length + GameServer.PrefixLengthWithId);
+-                        }
+-                        int length = packet.Length + GameServer.PrefixLengthWithId;
++                            AccountDequeued(outgoing.Length);
++
++                        int length = outgoing.Length;
+                         if (total + length > buf.Length)
+                         {
+                             if (total == 0)
+                             {
+-                                //Single packet larger than the pooled buffer: rent an
++                                //Single frame larger than the pooled buffer: rent an
+                                 //exact-size buffer for this flush (returned on Reset).
+                                 _send.Grow(length);
+                                 buf = _send.Data;
+                             }
+                             else
+                             {
+-                                _held = packet;
++                                _held = outgoing;
++                                _hasHeld = true;
+                                 break;
+                             }
+                         }
+-                        buf[total] = (byte)(length >> 24);
+-                        buf[total + 1] = (byte)(length >> 16);
+-                        buf[total + 2] = (byte)(length >> 8);
+-                        buf[total + 3] = (byte)length;
+-                        Buffer.BlockCopy(packet, 0, buf, total + GameServer.PrefixLengthWithId, packet.Length);
+-                        total += length;
++                        Buffer.BlockCopy(outgoing.Data, 0, buf, total, length);
++                        if (PacketCapture.Enabled) PacketCapture.Record(CaptureId, PacketCapture.DirOutbound, outgoing.Data[GameServer.PrefixLength - 1], new ReadOnlySpan<byte>(outgoing.Data, GameServer.PrefixLength, length - GameServer.PrefixLength)); //[W06]
+                         if (HopTrace.Enabled && Volatile.Read(ref HopMask) != 0) //[hop]
+-                            HopNoteBuffered(packet, total); //[hop]
++                            HopNoteBuffered(new ReadOnlySpan<byte>(outgoing.Data, GameServer.PrefixLengthWithId, length - GameServer.PrefixLengthWithId), total + length); //[hop]
++                        total += length;
++                        ArrayPool<byte>.Shared.Return(outgoing.Data);
+                     }
+                 }
+ 
+@@ -934,8 +1004,8 @@
+                 return false;
+             }
+ 
+-            byte[] bubble = GameServer.Text("n", 1, 0, 5, "", "hi");
+-            byte[] info = GameServer.Text("", 0, -1, 0, "", "hello");
++            byte[] bubble = GameServer.Text("n", 1, 0, 5, "", "hi").ToArray();
++            byte[] info = GameServer.Text("", 0, -1, 0, "", "hello").ToArray();
+             if (!OutgoingPacket.IsDroppable(bubble))
+                 return Fail("Text bubble should be droppable");
+             if (OutgoingPacket.IsDroppable(info))
+@@ -963,7 +1033,7 @@
+             keep.Active = true;
+             keep.Id = 1;
+ 
+-            byte[] createSuccess = GameServer.CreateSuccess(42, 7);
++            byte[] createSuccess = GameServer.CreateSuccess(42, 7).ToArray();
+             keep.Send(createSuccess);
+ 
+             byte[] tick = Dummy(GameServer.PacketId.NewTick, 8);
+@@ -1247,7 +1317,7 @@
+                 wtr.Write(user);
+                 wtr.Write(pass);
+                 wtr.Write(0);
+-                return PacketWriter.RentedBytes();
++                return PacketWriter.RentedBytes().ToArray();
+             }
+ 
+             static bool PeekFailure(Client client, int expectedId, string expectedText, string label)
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Networking/GameServer.Adapters.cs realm-server/Networking/GameServer.Adapters.cs
+--- pristine/Networking/GameServer.Adapters.cs	1969-12-31 18:00:00.000000000 -0600
++++ realm-server/Networking/GameServer.Adapters.cs	2026-10-15 01:15:37.929558376 -0500
+@@ -0,0 +1,51 @@
++using System;
++using System.IO;
++
++namespace RotMG.Networking
++{
++    //[W06] Adapters for callers that still hold a stream-backed PacketReader: the verify flags and W05Verify build one
++    //over a MemoryStream. Each copies the unread bytes and runs the span handler, so the handler body exists once.
++    //Packet dispatch (GameServer.Read) never goes through these; it passes a SpanReader directly.
++    public static partial class GameServer
++    {
++        private static SpanReader SpanOf(PacketReader rdr, out byte[] body)
++        {
++            MemoryStream ms = (MemoryStream)rdr.BaseStream;
++            byte[] all = ms.ToArray();
++            int pos = (int)ms.Position;
++            body = new byte[all.Length - pos];
++            Buffer.BlockCopy(all, pos, body, 0, body.Length);
++            return new SpanReader(body);
++        }
++
++        public static void Teleport(Client client, PacketReader rdr)
++        {
++            SpanReader span = SpanOf(rdr, out _);
++            Teleport(client, ref span);
++        }
++
++        public static void Buy(Client client, PacketReader rdr)
++        {
++            SpanReader span = SpanOf(rdr, out _);
++            Buy(client, ref span);
++        }
++
++        public static void Hello(Client client, PacketReader rdr)
++        {
++            SpanReader span = SpanOf(rdr, out _);
++            Hello(client, ref span);
++        }
++
++        public static void EditAccountList(Client client, PacketReader rdr)
++        {
++            SpanReader span = SpanOf(rdr, out _);
++            EditAccountList(client, ref span);
++        }
++
++        public static void UsePortal(Client client, PacketReader rdr)
++        {
++            SpanReader span = SpanOf(rdr, out _);
++            UsePortal(client, ref span);
++        }
++    }
++}
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Networking/GameServer.cs realm-server/Networking/GameServer.cs
+--- pristine/Networking/GameServer.cs	2026-10-14 22:40:41.245710516 -0500
++++ realm-server/Networking/GameServer.cs	2026-10-15 01:13:06.455983955 -0500
+@@ -30,13 +30,6 @@
+             PacketLength = GameServer.PrefixLength;
+         }
+ 
+-        public byte[] GetPacketBody()
+-        {
+-            byte[] packetBody = new byte[PacketLength - GameServer.PrefixLength];
+-            Array.Copy(PacketBytes, GameServer.PrefixLength, packetBody, 0, packetBody.Length);
+-            return packetBody;
+-        }
+-
+         public int GetPacketId()
+         {
+             return PacketBytes[4];
+@@ -299,7 +292,7 @@
+         //Framed Failure(2, ...) on a raw socket that never entered Client.
+         //Used when the pool is empty or the per-IP cap is hit, so the
+         //Flash client can show a reason instead of a bare TCP drop.
+-        public static byte[] FramePacket(byte[] packet)
++        public static byte[] FramePacket(ReadOnlySpan<byte> packet) //[W06] span input: builders return spans now
+         {
+             int length = packet.Length + PrefixLengthWithId;
+             byte[] buf = new byte[length];
+@@ -307,7 +300,7 @@
+             buf[1] = (byte)(length >> 16);
+             buf[2] = (byte)(length >> 8);
+             buf[3] = (byte)length;
+-            Buffer.BlockCopy(packet, 0, buf, PrefixLengthWithId, packet.Length);
++            packet.CopyTo(buf.AsSpan(PrefixLengthWithId));
+             return buf;
+         }
+ 
+@@ -374,7 +367,7 @@
+             if (_connected == null)
+                 _connected = new Dictionary<string, int>();
+ 
+-            byte[] packet = Failure(FailureForceCloseGame, TooManyConnectionsMessage);
++            ReadOnlySpan<byte> packet = Failure(FailureForceCloseGame, TooManyConnectionsMessage);
+             byte[] framed = FramePacket(packet);
+             int length = (framed[0] << 24) | (framed[1] << 16) | (framed[2] << 8) | framed[3];
+             if (length != framed.Length)
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Networking/GameServer.Handlers.cs realm-server/Networking/GameServer.Handlers.cs
+--- pristine/Networking/GameServer.Handlers.cs	2026-10-15 00:39:45.986122182 -0500
++++ realm-server/Networking/GameServer.Handlers.cs	2026-10-15 01:17:42.388295661 -0500
+@@ -92,10 +92,11 @@
+         public const int FailureForceCloseGame = 2;
+         public const int FailureInvalidTeleportTarget = 3;
+ 
+-        public static void Read(Client client, int id, byte[] data)
++        //[W06] data is the frame body: a span over the pooled receive array, valid for this call only.
++        public static void Read(Client client, int id, ReadOnlySpan<byte> data)
+         {
+ #if DEBUG
+-            Program.Print(PrintType.Debug, $"Packet received <{id}> sendQueue={client.PendingCount} packets/{client.PendingBytes}B <{string.Join(" ,",data.Select(k => k.ToString()).ToArray())}>");
++            Program.Print(PrintType.Debug, $"Packet received <{id}> sendQueue={client.PendingCount} packets/{client.PendingBytes}B <{string.Join(" ,", DebugBytes(data))}>");
+ #endif
+ 
+             if (!client.Active || client.Closing)
+@@ -127,8 +128,8 @@
+                 }
+             }
+ 
+-            using (PacketReader rdr = new PacketReader(new MemoryStream(data)))
+             {
++                SpanReader rdr = new SpanReader(data); //[W06]
+                 //No handler below length-checks its reads, so a short body
+                 //(wrong client build, crafted frame) threw EndOfStreamException
+                 //out of Read into Client.Tick, which disconnected the client
+@@ -139,100 +140,100 @@
+                     switch (id)
+                     {
+                     case (int)PacketId.Hello:
+-                        Hello(client, rdr);
++                        Hello(client, ref rdr);
+                         break;
+                     case (int)PacketId.Create:
+-                        Create(client, rdr);
++                        Create(client, ref rdr);
+                         break;
+                     case (int)PacketId.Load:
+-                        Load(client, rdr);
++                        Load(client, ref rdr);
+                         break;
+                     case (int)PacketId.Move:
+-                        Move(client, rdr);
++                        Move(client, ref rdr);
+                         break;
+                     case (int)PacketId.InvSwap:
+-                        InvSwap(client, rdr);
++                        InvSwap(client, ref rdr);
+                         break;
+                     case (int)PacketId.ShootAck:
+-                        ShootAck(client, rdr);
++                        ShootAck(client, ref rdr);
+                         break;
+                     case (int)PacketId.AoeAck:
+-                        AoeAck(client, rdr);
++                        AoeAck(client, ref rdr);
+                         break;
+                     case (int)PacketId.PlayerHit:
+-                        PlayerHit(client, rdr);
++                        PlayerHit(client, ref rdr);
+                         break;
+                     case (int)PacketId.SquareHit:
+-                        SquareHit(client, rdr);
++                        SquareHit(client, ref rdr);
+                         break;
+                     case (int)PacketId.PlayerShoot:
+-                        PlayerShoot(client, rdr);
++                        PlayerShoot(client, ref rdr);
+                         break;
+                     case (int)PacketId.EnemyHit:
+-                        EnemyHit(client, rdr);
++                        EnemyHit(client, ref rdr);
+                         break;
+                     case (int)PacketId.PlayerText:
+-                        PlayerText(client, rdr);
++                        PlayerText(client, ref rdr);
+                         break;
+                     case (int)PacketId.EditAccountList:
+-                        EditAccountList(client, rdr);
++                        EditAccountList(client, ref rdr);
+                         break;
+                     case (int)PacketId.UseItem:
+-                        UseItem(client, rdr);
++                        UseItem(client, ref rdr);
+                         break;
+                     case (int)PacketId.GotoAck:
+-                        GotoAck(client, rdr);
++                        GotoAck(client, ref rdr);
+                         break;
+                     case (int)PacketId.Escape:
+-                        Escape(client, rdr);
++                        Escape(client, ref rdr);
+                         break;
+                     case (int)PacketId.UsePortal:
+-                        UsePortal(client, rdr);
++                        UsePortal(client, ref rdr);
+                         break;
+                     case (int)PacketId.ChooseName:
+-                        ChooseName(client, rdr);
++                        ChooseName(client, ref rdr);
+                         break;
+                     case (int)PacketId.InvDrop:
+-                        InvDrop(client, rdr);
++                        InvDrop(client, ref rdr);
+                         break;
+                     case (int)PacketId.Teleport:
+-                        Teleport(client, rdr);
++                        Teleport(client, ref rdr);
+                         break;
+                     case (int)PacketId.Buy:
+-                        Buy(client, rdr);
++                        Buy(client, ref rdr);
+                         break;
+                     case (int)PacketId.RequestTrade:
+-                        RequestTrade(client, rdr);
++                        RequestTrade(client, ref rdr);
+                         break;
+                     case (int)PacketId.ChangeTrade:
+-                        ChangeTrade(client, rdr);
++                        ChangeTrade(client, ref rdr);
+                         break;
+                     case (int)PacketId.AcceptTrade:
+-                        AcceptTrade(client, rdr);
++                        AcceptTrade(client, ref rdr);
+                         break;
+                     case (int)PacketId.CancelTrade:
+-                        CancelTrade(client, rdr);
++                        CancelTrade(client, ref rdr);
+                         break;
+                     case (int)PacketId.CreateGuild:
+-                        CreateGuild(client, rdr);
++                        CreateGuild(client, ref rdr);
+                         break;
+                     case (int)PacketId.GuildRemove:
+-                        GuildRemove(client, rdr);
++                        GuildRemove(client, ref rdr);
+                         break;
+                     case (int)PacketId.GuildInvite:
+-                        GuildInvite(client, rdr);
++                        GuildInvite(client, ref rdr);
+                         break;
+                     case (int)PacketId.JoinGuild:
+-                        JoinGuild(client, rdr);
++                        JoinGuild(client, ref rdr);
+                         break;
+                     case (int)PacketId.ChangeGuildRank:
+-                        ChangeGuildRank(client, rdr);
++                        ChangeGuildRank(client, ref rdr);
+                         break;
+                     case (int)PacketId.Reskin:
+-                        Reskin(client, rdr);
++                        Reskin(client, ref rdr);
+                         break;
+                     case (int)PacketId.Pong:
+-                        Pong(client, rdr);
++                        Pong(client, ref rdr);
+                         break;
+                     }
+                 }
+@@ -251,13 +252,23 @@
+             }
+         }
+ 
+-        public static void InvDrop(Client client, PacketReader rdr)
++#if DEBUG
++        private static string[] DebugBytes(ReadOnlySpan<byte> data)
++        {
++            string[] parts = new string[data.Length];
++            for (int i = 0; i < data.Length; i++)
++                parts[i] = data[i].ToString();
++            return parts;
++        }
++#endif
++
++        public static void InvDrop(Client client, ref SpanReader rdr)
+         {
+             byte slot = rdr.ReadByte();
+             client.Player.DropItem(slot);
+         }
+ 
+-        public static void Escape(Client client, PacketReader rdr)
++        public static void Escape(Client client, ref SpanReader rdr)
+         {
+             long hopT0 = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
+             Player player = client.Player;
+@@ -273,7 +284,7 @@
+             if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "BeginTransfer returned (Reconnect queued)"); //[hop]
+         }
+ 
+-        public static void GotoAck(Client client, PacketReader rdr)
++        public static void GotoAck(Client client, ref SpanReader rdr)
+         {
+             int time = rdr.ReadInt32(); 
+             client.Player.TryGotoAck(time);
+@@ -282,13 +293,13 @@
+         //Keepalive reply. Serial/time are consumed so the stream stays
+         //aligned; liveness is recorded in Client.DrainInbound for every
+         //inbound packet (this one included).
+-        public static void Pong(Client client, PacketReader rdr)
++        public static void Pong(Client client, ref SpanReader rdr)
+         {
+             rdr.ReadInt32();
+             rdr.ReadInt32();
+         }
+ 
+-        public static void ChooseName(Client client, PacketReader rdr)
++        public static void ChooseName(Client client, ref SpanReader rdr)
+         {
+             string name = rdr.ReadString();
+ 
+@@ -353,7 +364,7 @@
+             });
+         }
+ 
+-        public static void UsePortal(Client client, PacketReader rdr)
++        public static void UsePortal(Client client, ref SpanReader rdr)
+         {
+             int objectId = rdr.ReadInt32();
+             TryUsePortal(client, objectId);
+@@ -455,15 +466,15 @@
+             }
+         }
+ 
+-        public static void UseItem(Client client, PacketReader rdr)
++        public static void UseItem(Client client, ref SpanReader rdr)
+         {
+             int time = rdr.ReadInt32();
+-            SlotData slot = new SlotData(rdr);
+-            Position usePos = new Position(rdr);
++            SlotData slot = new SlotData(ref rdr);
++            Position usePos = new Position(ref rdr);
+             client.Player.TryUseItem(time, slot, usePos);
+         }
+ 
+-        public static void EditAccountList(Client client, PacketReader rdr)
++        public static void EditAccountList(Client client, ref SpanReader rdr)
+         {
+             int accountListId = rdr.ReadInt32();
+             bool add = rdr.ReadBoolean();
+@@ -509,13 +520,13 @@
+             ids.Add(accountId);
+         }
+ 
+-        public static void PlayerText(Client client, PacketReader rdr)
++        public static void PlayerText(Client client, ref SpanReader rdr)
+         {
+             string text = rdr.ReadString(); 
+             client.Player.Chat(text);
+         }
+ 
+-        public static void EnemyHit(Client client, PacketReader rdr)
++        public static void EnemyHit(Client client, ref SpanReader rdr)
+         {
+             int time = rdr.ReadInt32();
+             int bulletId = rdr.ReadInt32();
+@@ -523,43 +534,43 @@
+             client.Player.TryHitEnemy(time, bulletId, targetId);
+         }
+ 
+-        public static void PlayerShoot(Client client, PacketReader rdr)
++        public static void PlayerShoot(Client client, ref SpanReader rdr)
+         {
+             int time = rdr.ReadInt32();
+-            Position pos = new Position(rdr);
++            Position pos = new Position(ref rdr);
+             float angle = rdr.ReadSingle();
+             bool ability = rdr.ReadBoolean();
+-            byte numShots = rdr.PeekChar() != -1 ? rdr.ReadByte() : (byte)1; 
++            byte numShots = rdr.HasMore ? rdr.ReadByte() : (byte)1; 
+             client.Player.TryShoot(time, pos, angle, ability, numShots);
+         }
+ 
+-        public static void SquareHit(Client client, PacketReader rdr)
++        public static void SquareHit(Client client, ref SpanReader rdr)
+         {
+             int time = rdr.ReadInt32();
+             int bulletId = rdr.ReadInt32(); 
+             client.Player.TryHitSquare(time, bulletId);
+         }
+ 
+-        public static void PlayerHit(Client client, PacketReader rdr)
++        public static void PlayerHit(Client client, ref SpanReader rdr)
+         {
+             int bulletId = rdr.ReadInt32(); 
+             client.Player.TryHit(bulletId);
+         }
+ 
+-        public static void ShootAck(Client client, PacketReader rdr)
++        public static void ShootAck(Client client, ref SpanReader rdr)
+         {
+             int time = rdr.ReadInt32(); 
+             client.Player.TryShootAck(time);
+         }
+ 
+-        public static void AoeAck(Client client, PacketReader rdr)
++        public static void AoeAck(Client client, ref SpanReader rdr)
+         {
+             int time = rdr.ReadInt32();
+-            Position pos = new Position(rdr); 
++            Position pos = new Position(ref rdr); 
+             client.Player.TryAckAoe(time, pos);
+         }
+ 
+-        public static void Hello(Client client, PacketReader rdr)
++        public static void Hello(Client client, ref SpanReader rdr)
+         {
+             if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "Hello rx"); //[hop]
+             string buildVersion = rdr.ReadString();
+@@ -570,7 +581,7 @@
+             //small frame naming a 2 GB body would allocate 2 GB. Reject negatives, anything above the
+             //server's frame cap (GameServer.BufferSize), and lengths past the bytes left in this packet.
+             int mapJsonLength = rdr.ReadInt32();
+-            long mapJsonRemaining = rdr.BaseStream.Length - rdr.BaseStream.Position;
++            long mapJsonRemaining = rdr.Remaining;
+             if (mapJsonLength < 0 || mapJsonLength > GameServer.BufferSize || mapJsonLength > mapJsonRemaining)
+                 return;
+             byte[] mapJson = rdr.ReadBytes(mapJsonLength);
+@@ -703,7 +714,7 @@
+             }
+         }
+ 
+-        public static void Create(Client client, PacketReader rdr)
++        public static void Create(Client client, ref SpanReader rdr)
+         {
+             int classType = rdr.ReadInt16();
+             int skinType = rdr.ReadInt16();
+@@ -772,7 +783,7 @@
+             return world.GetRegion(Region.Spawn).ToPosition();
+         }
+ 
+-        public static void Load(Client client, PacketReader rdr)
++        public static void Load(Client client, ref SpanReader rdr)
+         {
+             int charId = rdr.ReadInt32();
+             if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "Load rx"); //[hop]
+@@ -817,19 +828,19 @@
+             }
+         }
+ 
+-        public static void Move(Client client, PacketReader rdr)
++        public static void Move(Client client, ref SpanReader rdr)
+         {
+             int time = rdr.ReadInt32();
+-            Position position = new Position(rdr); 
++            Position position = new Position(ref rdr); 
+             client.Player.TryMove(time, position);
+         }
+ 
+-        public static void InvSwap(Client client, PacketReader rdr)
++        public static void InvSwap(Client client, ref SpanReader rdr)
+         {
+             int time = rdr.ReadInt32();
+-            Position position = new Position(rdr);
+-            SlotData slot1 = new SlotData(rdr);
+-            SlotData slot2 = new SlotData(rdr); 
++            Position position = new Position(ref rdr);
++            SlotData slot1 = new SlotData(ref rdr);
++            SlotData slot2 = new SlotData(ref rdr); 
+             client.Player.SwapItem(slot1, slot2);
+         }
+ 
+@@ -844,7 +855,7 @@
+             return length;
+         }
+ 
+-        public static byte[] MapInfo(int width, int height, string name, string displayName, uint seed, int background, bool showDisplays, bool allowPlayerTeleport)
++        public static ReadOnlySpan<byte> MapInfo(int width, int height, string name, string displayName, uint seed, int background, bool showDisplays, bool allowPlayerTeleport)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.MapInfo);
+@@ -859,7 +870,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] InvResult(int result)
++        public static ReadOnlySpan<byte> InvResult(int result)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.InvResult);
+@@ -867,7 +878,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] Failure(int errorId, string description)
++        public static ReadOnlySpan<byte> Failure(int errorId, string description)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Failure);
+@@ -876,7 +887,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] NameResult(bool success, string errorText)
++        public static ReadOnlySpan<byte> NameResult(bool success, string errorText)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.NameResult);
+@@ -885,7 +896,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] CreateSuccess(int objectId, int charId)
++        public static ReadOnlySpan<byte> CreateSuccess(int objectId, int charId)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.CreateSuccess);
+@@ -894,7 +905,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] Update(List<TileData> tiles, List<ObjectDefinition> adds, List<ObjectDrop> drops)
++        public static ReadOnlySpan<byte> Update(List<TileData> tiles, List<ObjectDefinition> adds, List<ObjectDrop> drops)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Update);
+@@ -913,7 +924,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] NewTick(List<ObjectStatus> statuses, Dictionary<StatType, object> playerStats)
++        public static ReadOnlySpan<byte> NewTick(List<ObjectStatus> statuses, Dictionary<StatType, object> playerStats)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.NewTick);
+@@ -935,7 +946,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] EnemyShoot(int bulletId, int ownerId, byte bulletType, Position startPos, float angle, short damage, byte numShots, float angleInc)
++        public static ReadOnlySpan<byte> EnemyShoot(int bulletId, int ownerId, byte bulletType, Position startPos, float angle, short damage, byte numShots, float angleInc)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.EnemyShoot);
+@@ -953,7 +964,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] ShowEffect(ShowEffectIndex effect, int targetObjectId, uint color, Position pos1 = new Position(), Position pos2 = new Position())
++        public static ReadOnlySpan<byte> ShowEffect(ShowEffectIndex effect, int targetObjectId, uint color, Position pos1 = new Position(), Position pos2 = new Position())
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.ShowEffect);
+@@ -969,13 +980,13 @@
+         //Throw visual whose particle flies for travelTime ms. The client flies
+         //1500ms unless pos2 carries another duration, so the default sends
+         //the legacy layout and only custom times add the second position.
+-        public static byte[] ThrowEffect(int targetObjectId, uint color, Position target, int travelTime)
++        public static ReadOnlySpan<byte> ThrowEffect(int targetObjectId, uint color, Position target, int travelTime)
+         {
+             Position duration = travelTime == 1500 ? new Position() : new Position(travelTime, 0);
+             return ShowEffect(ShowEffectIndex.Throw, targetObjectId, color, target, duration);
+         }
+ 
+-        public static byte[] Goto(int objectId, Position pos)
++        public static ReadOnlySpan<byte> Goto(int objectId, Position pos)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Goto);
+@@ -984,7 +995,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] Ping(int serial)
++        public static ReadOnlySpan<byte> Ping(int serial)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Ping);
+@@ -992,7 +1003,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] Aoe(Position pos, float radius, int damage, ConditionEffectIndex effect, uint color)
++        public static ReadOnlySpan<byte> Aoe(Position pos, float radius, int damage, ConditionEffectIndex effect, uint color)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Aoe);
+@@ -1004,7 +1015,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] Damage(int targetId, ConditionEffectIndex[] effects, int damage)
++        public static ReadOnlySpan<byte> Damage(int targetId, ConditionEffectIndex[] effects, int damage)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Damage);
+@@ -1016,7 +1027,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] Death(int accountId, int charId, string killer)
++        public static ReadOnlySpan<byte> Death(int accountId, int charId, string killer)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Death);
+@@ -1026,7 +1037,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] AllyShoot(int ownerId, int containerType, float angle)
++        public static ReadOnlySpan<byte> AllyShoot(int ownerId, int containerType, float angle)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.AllyShoot);
+@@ -1036,7 +1047,7 @@
+             return PacketWriter.RentedBytes();
+         }
+         
+-        public static byte[] PlaySound(string sound)
++        public static ReadOnlySpan<byte> PlaySound(string sound)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.PlaySound);
+@@ -1044,7 +1055,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] Text(string name, int objectId, int numStars, int bubbleTime, string recipent, string text)
++        public static ReadOnlySpan<byte> Text(string name, int objectId, int numStars, int bubbleTime, string recipent, string text)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Text);
+@@ -1057,7 +1068,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] AccountList(int accountListId, List<int> accountIds)
++        public static ReadOnlySpan<byte> AccountList(int accountListId, List<int> accountIds)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.AccountList);
+@@ -1068,7 +1079,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] ServerPlayerShoot(int bulletId, int ownerId, int containerType, Position startPos, float angle, float angleInc, List<Projectile> projs)
++        public static ReadOnlySpan<byte> ServerPlayerShoot(int bulletId, int ownerId, int containerType, Position startPos, float angle, float angleInc, List<Projectile> projs)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.ServerPlayerShoot);
+@@ -1087,7 +1098,7 @@
+         //Wire: a single int gameId. Authorization is server-side
+         //(Manager.PendingTransfers); a random 32-bit key can be appended
+         //on both sides when a client rebuild is planned.
+-        public static byte[] Reconnect(int gameId)
++        public static ReadOnlySpan<byte> Reconnect(int gameId)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Reconnect);
+@@ -1095,7 +1106,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] Notification(int objectId, string text, uint color)
++        public static ReadOnlySpan<byte> Notification(int objectId, string text, uint color)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.Notification);
+@@ -1107,7 +1118,7 @@
+ 
+         //Davy Jones key HUD channel (see KeysView in realm-client).
+         //Payload mirrors the reference implementation: int type, UTF string.
+-        public static byte[] GlobalNotification(int type, string text)
++        public static ReadOnlySpan<byte> GlobalNotification(int type, string text)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.GlobalNotification);
+@@ -1126,7 +1137,7 @@
+                 @"</cross-domain-policy>");
+             wtr.Write((byte)'\r');
+             wtr.Write((byte)'\n');
+-            return PacketWriter.RentedBytes();
++            return PacketWriter.RentedBytes().ToArray();
+         }
+ 
+         //Headless P23: truncated inbound bodies must never throw out of
+@@ -1326,9 +1337,9 @@
+             }
+ 
+             const int unknownOwnerId = 0x7f0ead01;
+-            byte[] shoot = EnemyShoot(0, unknownOwnerId, 0, new Position(1.5f, 2.25f), 0.5f, 7, 1, 0f);
+-            using (PacketReader rdr = new PacketReader(new MemoryStream(shoot)))
++            ReadOnlySpan<byte> shoot = EnemyShoot(0, unknownOwnerId, 0, new Position(1.5f, 2.25f), 0.5f, 7, 1, 0f);
+             {
++                SpanReader rdr = new SpanReader(shoot); //[W06]
+                 if (rdr.ReadByte() != (byte)PacketId.EnemyShoot)
+                     return Fail("EnemyShoot id");
+                 if (rdr.ReadInt32() != 0)
+@@ -1336,12 +1347,12 @@
+                 if (rdr.ReadInt32() != unknownOwnerId)
+                     return Fail("EnemyShoot ownerId must be the unknown id");
+                 rdr.ReadByte();
+-                Position pos = new Position(rdr);
++                Position pos = new Position(ref rdr);
+                 if (pos.X != 1.5f || pos.Y != 2.25f)
+                     return Fail("EnemyShoot position");
+                 rdr.ReadSingle();
+                 rdr.ReadInt16();
+-                if (rdr.BaseStream.Position != rdr.BaseStream.Length)
++                if (rdr.Remaining != 0)
+                     return Fail("single-shot EnemyShoot must omit numShots tail");
+             }
+ 
+@@ -1351,16 +1362,16 @@
+                 Position = new Position(3f, 4f),
+                 Stats = new Dictionary<StatType, object> { { StatType.MaxMP, 100 } }
+             };
+-            byte[] tick = NewTick(new List<ObjectStatus> { status }, new Dictionary<StatType, object>());
+-            using (PacketReader rdr = new PacketReader(new MemoryStream(tick)))
++            ReadOnlySpan<byte> tick = NewTick(new List<ObjectStatus> { status }, new Dictionary<StatType, object>());
+             {
++                SpanReader rdr = new SpanReader(tick); //[W06]
+                 if (rdr.ReadByte() != (byte)PacketId.NewTick)
+                     return Fail("NewTick id");
+                 if (rdr.ReadInt16() != 1)
+                     return Fail("NewTick status count");
+                 if (rdr.ReadInt32() != 99)
+                     return Fail("NewTick objectId");
+-                Position pos = new Position(rdr);
++                Position pos = new Position(ref rdr);
+                 if (pos.X != 3f || pos.Y != 4f)
+                     return Fail("NewTick position");
+                 if (rdr.ReadByte() != 1)
+@@ -1369,7 +1380,7 @@
+                     return Fail("NewTick stat type must be MaxMP");
+                 if (rdr.ReadInt32() != 100)
+                     return Fail("NewTick MaxMP value");
+-                if (rdr.BaseStream.Position != rdr.BaseStream.Length)
++                if (rdr.Remaining != 0)
+                     return Fail("NewTick leftover bytes");
+             }
+ 
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Networking/GameServer.Social.cs realm-server/Networking/GameServer.Social.cs
+--- pristine/Networking/GameServer.Social.cs	2026-10-15 00:37:15.752396970 -0500
++++ realm-server/Networking/GameServer.Social.cs	2026-10-15 01:16:01.382318181 -0500
+@@ -1,4 +1,5 @@
+-﻿using RotMG.Common;
++﻿using System;
++using RotMG.Common;
+ using RotMG.Game;
+ using RotMG.Game.Entities;
+ using RotMG.Game.Entities.Vendors;
+@@ -12,7 +13,7 @@
+     //handlers or builders for those here.
+     public static partial class GameServer
+     {
+-        public static void Teleport(Client client, PacketReader rdr)
++        public static void Teleport(Client client, ref SpanReader rdr)
+         {
+             int objectId = rdr.ReadInt32();
+             if (client.Player == null || client.Player.Parent == null)
+@@ -28,7 +29,7 @@
+             client.Player.TryTeleportTo(objectId);
+         }
+ 
+-        public static void Buy(Client client, PacketReader rdr)
++        public static void Buy(Client client, ref SpanReader rdr)
+         {
+             int objectId = rdr.ReadInt32();
+             Player player = client.Player;
+@@ -46,7 +47,7 @@
+             obj.Buy(player);
+         }
+ 
+-        public static void RequestTrade(Client client, PacketReader rdr)
++        public static void RequestTrade(Client client, ref SpanReader rdr)
+         {
+             string name = rdr.ReadString();
+             if (client.Player == null || client.Player.Parent == null)
+@@ -54,7 +55,7 @@
+             client.Player.RequestTrade(name);
+         }
+ 
+-        public static void ChangeTrade(Client client, PacketReader rdr)
++        public static void ChangeTrade(Client client, ref SpanReader rdr)
+         {
+             int count = rdr.ReadInt16();
+             bool[] offer = new bool[count];
+@@ -65,7 +66,7 @@
+             client.Player.ChangeTrade(offer);
+         }
+ 
+-        public static void AcceptTrade(Client client, PacketReader rdr)
++        public static void AcceptTrade(Client client, ref SpanReader rdr)
+         {
+             int myCount = rdr.ReadInt16();
+             bool[] myOffer = new bool[myCount];
+@@ -80,14 +81,14 @@
+             client.Player.AcceptTrade(myOffer, yourOffer);
+         }
+ 
+-        public static void CancelTrade(Client client, PacketReader rdr)
++        public static void CancelTrade(Client client, ref SpanReader rdr)
+         {
+             if (client.Player == null)
+                 return;
+             client.Player.CancelTrade();
+         }
+ 
+-        public static void CreateGuild(Client client, PacketReader rdr)
++        public static void CreateGuild(Client client, ref SpanReader rdr)
+         {
+             string name = rdr.ReadString();
+             Player player = client.Player;
+@@ -143,7 +144,7 @@
+             }
+         }
+ 
+-        public static void GuildInvite(Client client, PacketReader rdr)
++        public static void GuildInvite(Client client, ref SpanReader rdr)
+         {
+             string name = rdr.ReadString();
+             Player player = client.Player;
+@@ -177,7 +178,7 @@
+             target.Client.Send(InvitedToGuild(client.Account.Name, player.GuildName));
+         }
+ 
+-        public static void GuildRemove(Client client, PacketReader rdr)
++        public static void GuildRemove(Client client, ref SpanReader rdr)
+         {
+             string name = rdr.ReadString();
+             Player player = client.Player;
+@@ -249,7 +250,7 @@
+             player.SendError("Can't remove member. Insufficient privileges.");
+         }
+ 
+-        public static void JoinGuild(Client client, PacketReader rdr)
++        public static void JoinGuild(Client client, ref SpanReader rdr)
+         {
+             string guildName = rdr.ReadString();
+             Player player = client.Player;
+@@ -290,7 +291,7 @@
+                 player.SendError("Could not join guild. (" + result + ")");
+         }
+ 
+-        public static void ChangeGuildRank(Client client, PacketReader rdr)
++        public static void ChangeGuildRank(Client client, ref SpanReader rdr)
+         {
+             string name = rdr.ReadString();
+             int rank = rdr.ReadInt32();
+@@ -350,7 +351,7 @@
+             }
+         }
+ 
+-        public static void Reskin(Client client, PacketReader rdr)
++        public static void Reskin(Client client, ref SpanReader rdr)
+         {
+             int skinId = rdr.ReadInt32();
+             Player player = client.Player;
+@@ -382,7 +383,7 @@
+             player.SkinType = skinId;
+         }
+ 
+-        public static byte[] QuestObjId(int objectId)
++        public static ReadOnlySpan<byte> QuestObjId(int objectId)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.QuestObjId);
+@@ -390,7 +391,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] BuyResult(int result, string resultString)
++        public static ReadOnlySpan<byte> BuyResult(int result, string resultString)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.BuyResult);
+@@ -399,7 +400,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] GuildResult(bool success, string errorText)
++        public static ReadOnlySpan<byte> GuildResult(bool success, string errorText)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.GuildResult);
+@@ -408,7 +409,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] InvitedToGuild(string name, string guildName)
++        public static ReadOnlySpan<byte> InvitedToGuild(string name, string guildName)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.InvitedToGuild);
+@@ -417,7 +418,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] TradeRequested(string name)
++        public static ReadOnlySpan<byte> TradeRequested(string name)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.TradeRequested);
+@@ -425,7 +426,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] TradeStart(TradeItem[] myItems, string yourName, TradeItem[] yourItems)
++        public static ReadOnlySpan<byte> TradeStart(TradeItem[] myItems, string yourName, TradeItem[] yourItems)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.TradeStart);
+@@ -439,7 +440,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] TradeChanged(bool[] offer)
++        public static ReadOnlySpan<byte> TradeChanged(bool[] offer)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.TradeChanged);
+@@ -449,7 +450,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] TradeAccepted(bool[] myOffer, bool[] yourOffer)
++        public static ReadOnlySpan<byte> TradeAccepted(bool[] myOffer, bool[] yourOffer)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.TradeAccepted);
+@@ -462,7 +463,7 @@
+             return PacketWriter.RentedBytes();
+         }
+ 
+-        public static byte[] TradeDone(int code, string description)
++        public static ReadOnlySpan<byte> TradeDone(int code, string description)
+         {
+             PacketWriter wtr = PacketWriter.Rent();
+             wtr.Write((byte)PacketId.TradeDone);
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Networking/PacketWriter.cs realm-server/Networking/PacketWriter.cs
+--- pristine/Networking/PacketWriter.cs	2026-09-08 15:05:30.832468842 -0500
++++ realm-server/Networking/PacketWriter.cs	2026-10-15 01:09:20.805690170 -0500
+@@ -1,78 +1,151 @@
+-﻿using System;
+-using System.Collections.Generic;
+-using System.IO;
+-using System.Net;
++using System;
++using System.Buffers.Binary;
+ using System.Text;
+ 
+ namespace RotMG.Networking
+ {
+-    public class PacketWriter : BinaryWriter
++    //[W06] Big-endian packet writer over a per-thread scratch buffer (replaces the BinaryWriter over MemoryStream).
++    //
++    //The handle is a ref struct that points at the thread's scratch object, so it is passed by value like the old
++    //class and needs no per-packet allocation. Builders return RentedBytes(): a span over the scratch that is valid
++    //until the next Rent() on the same thread. Client.Send copies it into a pooled frame at send time (one copy, no
++    //ToArray), so a builder's result is only valid until the next builder call on that thread.
++    //
++    //Wire rules are the old writer's, byte for byte: ints/shorts/uints/ushorts/floats big-endian; bool one byte;
++    //string = u16 BE UTF-8 byte count + bytes; WriteUTF32 = i32 BE of the char count + raw UTF-8 (kept as is).
++    //Long, ulong and double keep BinaryWriter's little-endian order, because the old class did not override them.
++    //The string length is bounds-checked: over 65535 UTF-8 bytes throws instead of silently wrapping the prefix.
++    public ref struct PacketWriter
+     {
+-        public PacketWriter(Stream input) : base(input, Encoding.UTF8) { }
++        private const int MaxStringBytes = ushort.MaxValue;
+ 
+-        public override void Write(short value)
++        private sealed class Scratch
+         {
+-            base.Write(IPAddress.NetworkToHostOrder(value));
++            public byte[] Buf = new byte[1024];
++            public int Length;
+         }
+ 
+-        public override void Write(ushort value)
+-        {
+-            base.Write((ushort)IPAddress.HostToNetworkOrder((short)value));
+-        }
++        [ThreadStatic]
++        private static Scratch _scratch;
+ 
+-        public override void Write(int value)
++        private readonly Scratch _s;
++
++        private PacketWriter(Scratch s)
+         {
+-            base.Write(IPAddress.NetworkToHostOrder(value));
++            _s = s;
+         }
+ 
+-        public override void Write(uint value)
++        public static PacketWriter Rent()
+         {
+-            base.Write((uint)IPAddress.NetworkToHostOrder((int)value));
++            Scratch s = _scratch ??= new Scratch();
++            s.Length = 0;
++            return new PacketWriter(s);
+         }
+ 
+-        public override void Write(float value)
++        //Span over the bytes written since Rent(). Valid until the next Rent() on this thread.
++        public static ReadOnlySpan<byte> RentedBytes()
+         {
+-            int bits = BitConverter.SingleToInt32Bits(value);
+-            base.Write((byte)(bits >> 24));
+-            base.Write((byte)(bits >> 16));
+-            base.Write((byte)(bits >> 8));
+-            base.Write((byte)bits);
++            Scratch s = _scratch;
++            return s == null ? ReadOnlySpan<byte>.Empty : new ReadOnlySpan<byte>(s.Buf, 0, s.Length);
+         }
+ 
+-        [ThreadStatic]
+-        private static MemoryStream _scratchStream;
+-        [ThreadStatic]
+-        private static PacketWriter _scratchWriter;
++        public int Length => _s.Length;
+ 
+-        //Rents a PacketWriter over a per-thread reusable MemoryStream (no per-packet
+-        //stream allocation). Not re-entrant: copy RentedBytes() before Rent() again.
+-        public static PacketWriter Rent()
++        //Reserves n bytes at the end and returns them. Grows to the required size (or double, if larger).
++        private Span<byte> Reserve(int n)
+         {
+-            if (_scratchStream == null)
+-            {
+-                _scratchStream = new MemoryStream(512);
+-                _scratchWriter = new PacketWriter(_scratchStream);
+-            }
+-            else
++            Scratch s = _s;
++            int required = s.Length + n;
++            if (required > s.Buf.Length)
+             {
+-                _scratchStream.SetLength(0);
+-                _scratchStream.Position = 0;
++                byte[] grown = new byte[Math.Max(required, s.Buf.Length * 2)];
++                Buffer.BlockCopy(s.Buf, 0, grown, 0, s.Length);
++                s.Buf = grown;
+             }
+-            return _scratchWriter;
++            Span<byte> span = s.Buf.AsSpan(s.Length, n);
++            s.Length = required;
++            return span;
++        }
++
++        public void Write(byte value)
++        {
++            Reserve(1)[0] = value;
++        }
++
++        public void Write(sbyte value)
++        {
++            Reserve(1)[0] = (byte)value;
++        }
++
++        public void Write(bool value)
++        {
++            Reserve(1)[0] = value ? (byte)1 : (byte)0;
++        }
++
++        public void Write(short value)
++        {
++            BinaryPrimitives.WriteInt16BigEndian(Reserve(2), value);
++        }
++
++        public void Write(ushort value)
++        {
++            BinaryPrimitives.WriteUInt16BigEndian(Reserve(2), value);
++        }
++
++        public void Write(int value)
++        {
++            BinaryPrimitives.WriteInt32BigEndian(Reserve(4), value);
++        }
++
++        public void Write(uint value)
++        {
++            BinaryPrimitives.WriteUInt32BigEndian(Reserve(4), value);
++        }
++
++        public void Write(float value)
++        {
++            BinaryPrimitives.WriteInt32BigEndian(Reserve(4), BitConverter.SingleToInt32Bits(value));
++        }
++
++        //Same as BinaryWriter (little-endian): the old class never overrode these.
++        public void Write(long value)
++        {
++            BinaryPrimitives.WriteInt64LittleEndian(Reserve(8), value);
++        }
++
++        public void Write(ulong value)
++        {
++            BinaryPrimitives.WriteUInt64LittleEndian(Reserve(8), value);
++        }
++
++        public void Write(double value)
++        {
++            BinaryPrimitives.WriteInt64LittleEndian(Reserve(8), BitConverter.DoubleToInt64Bits(value));
++        }
++
++        public void Write(byte[] value)
++        {
++            Write((ReadOnlySpan<byte>)value);
+         }
+ 
+-        public static byte[] RentedBytes()
++        public void Write(ReadOnlySpan<byte> value)
+         {
+-            return _scratchStream.ToArray();
++            value.CopyTo(Reserve(value.Length));
+         }
+ 
+-        public override void Write(string value)
++        //u16 BE byte count + UTF-8, the same as the old Write(string). A null string throws ArgumentNullException,
++        //as Encoding.UTF8.GetBytes(null) did before.
++        public void Write(string value)
+         {
+-            byte[] data = Encoding.UTF8.GetBytes(value);
+-            Write((short)data.Length);
+-            base.Write(data);
++            int count = Encoding.UTF8.GetByteCount(value);
++            if (count > MaxStringBytes)
++                throw new ArgumentOutOfRangeException(nameof(value), $"string is {count} UTF-8 bytes; the packet limit is {MaxStringBytes}");
++            Span<byte> dst = Reserve(2 + count);
++            BinaryPrimitives.WriteUInt16BigEndian(dst, (ushort)count);
++            Encoding.UTF8.GetBytes(value.AsSpan(), dst.Slice(2));
+         }
+ 
++        //Kept as the old writer had it: i32 BE of the char count, then the raw UTF-8 bytes.
+         public void WriteUTF32(string value)
+         {
+             Write(value.Length);
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Networking/SpanReader.cs realm-server/Networking/SpanReader.cs
+--- pristine/Networking/SpanReader.cs	1969-12-31 18:00:00.000000000 -0600
++++ realm-server/Networking/SpanReader.cs	2026-10-15 01:12:44.377409603 -0500
+@@ -0,0 +1,107 @@
++using System;
++using System.Buffers.Binary;
++using System.IO;
++using System.Text;
++
++namespace RotMG.Networking
++{
++    //[W06] Big-endian reader over a span (the frame body in the receive path). A ref struct, so it never allocates and
++    //never copies the body. Handlers take it as `ref SpanReader rdr` so the cursor advances for the caller too.
++    //
++    //It reproduces the stream-backed PacketReader it replaces, read for read:
++    //  - a fixed-size read past the end throws EndOfStreamException (Read in GameServer.Handlers.cs drops the packet);
++    //  - ReadBytes(n) with n < 0 throws ArgumentOutOfRangeException (Client.Tick then disconnects), and with n past the
++    //    end returns only the bytes that remain (BinaryReader did the same), so a string whose length overruns the
++    //    frame is cut short rather than rejected;
++    //  - ReadString/ReadUTF32 decode UTF-8 from the bytes they read; ReadSingle is a big-endian float.
++    //ReadBytes allocates only the bytes it returns, not the requested count.
++    public ref struct SpanReader
++    {
++        private readonly ReadOnlySpan<byte> _buf;
++        private int _pos;
++
++        public SpanReader(ReadOnlySpan<byte> body)
++        {
++            _buf = body;
++            _pos = 0;
++        }
++
++        public int Position => _pos;
++        public int Remaining => _buf.Length - _pos;
++
++        private ReadOnlySpan<byte> Take(int n)
++        {
++            if (n > _buf.Length - _pos)
++                throw new EndOfStreamException();
++            ReadOnlySpan<byte> s = _buf.Slice(_pos, n);
++            _pos += n;
++            return s;
++        }
++
++        public byte ReadByte()
++        {
++            if (_pos >= _buf.Length)
++                throw new EndOfStreamException();
++            return _buf[_pos++];
++        }
++
++        public bool ReadBoolean()
++        {
++            return ReadByte() != 0;
++        }
++
++        public short ReadInt16()
++        {
++            return BinaryPrimitives.ReadInt16BigEndian(Take(2));
++        }
++
++        public ushort ReadUInt16()
++        {
++            return BinaryPrimitives.ReadUInt16BigEndian(Take(2));
++        }
++
++        public int ReadInt32()
++        {
++            return BinaryPrimitives.ReadInt32BigEndian(Take(4));
++        }
++
++        public float ReadSingle()
++        {
++            return BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32BigEndian(Take(4)));
++        }
++
++        //Same as PacketReader.ReadBytes: a negative count throws, a count past the end yields what is left.
++        public byte[] ReadBytes(int count)
++        {
++            if (count < 0)
++                throw new ArgumentOutOfRangeException(nameof(count));
++            ReadOnlySpan<byte> s = _buf.Slice(_pos, Math.Min(count, _buf.Length - _pos));
++            _pos += s.Length;
++            return s.ToArray();
++        }
++
++        //u16 BE length, then UTF-8 (PacketReader.ReadString).
++        public string ReadString()
++        {
++            return ReadUtf8(ReadInt16());
++        }
++
++        //i32 BE length, then UTF-8 (PacketReader.ReadUTF32).
++        public string ReadUTF32()
++        {
++            return ReadUtf8(ReadInt32());
++        }
++
++        private string ReadUtf8(int count)
++        {
++            if (count < 0)
++                throw new ArgumentOutOfRangeException(nameof(count));
++            ReadOnlySpan<byte> s = _buf.Slice(_pos, Math.Min(count, _buf.Length - _pos));
++            _pos += s.Length;
++            return Encoding.UTF8.GetString(s);
++        }
++
++        //True while bytes remain (PacketReader's PeekChar() != -1 check).
++        public bool HasMore => _pos < _buf.Length;
++    }
++}
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Networking/W06Golden.cs realm-server/Networking/W06Golden.cs
+--- pristine/Networking/W06Golden.cs	1969-12-31 18:00:00.000000000 -0600
++++ realm-server/Networking/W06Golden.cs	2026-10-15 01:20:04.288755642 -0500
+@@ -0,0 +1,239 @@
++//[W06] Golden corpus for the packet builders: every outbound builder called with fixed inputs, written as hex lines.
++//Run with `dotnet RotMG.dll --w06-golden <file>` before and after a change to the writer; the two files must be equal.
++//Builders return byte[] before W06 and ReadOnlySpan<byte> after it, so the calls below use Convert.ToHexString,
++//which accepts both. Timing-driven frames (Update and NewTick in a live world) cannot be captured byte-for-byte, so
++//their builders are covered here with fixed inputs instead.
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Text;
++using RotMG.Common;
++using RotMG.Game;
++
++namespace RotMG.Networking
++{
++    public static class W06Golden
++    {
++        //[W06] --w06-verify: SpanReader against the stream-backed PacketReader it replaces. Random byte frames run
++        //through random read sequences; each step must return the same value (or the same exception type) and leave the
++        //same position. Also checks the writer's string bound, which the old writer did not have.
++        public static bool RunReaderCheck()
++        {
++            var rnd = new Random(20261015);
++            int trials = 0, steps = 0, exceptions = 0;
++            var failures = new List<string>();
++            for (int t = 0; t < 20000; t++)
++            {
++                byte[] buf = new byte[rnd.Next(0, 24)];
++                rnd.NextBytes(buf);
++                if (buf.Length >= 2 && rnd.Next(2) == 0)
++                {
++                    //Bias the first two bytes toward small positive and negative lengths so string/bytes reads overrun.
++                    short len = (short)rnd.Next(-3, 30);
++                    buf[0] = (byte)(len >> 8);
++                    buf[1] = (byte)len;
++                }
++                var legacy = new PacketReader(new MemoryStream(buf));
++                var span = new SpanReader(buf);
++                trials++;
++                for (int k = 0; k < 8; k++)
++                {
++                    int op = rnd.Next(10);
++                    int n = rnd.Next(4) == 0 ? -1 : rnd.Next(0, 6);
++                    steps++;
++                    string a = Step(legacy, op, n, out string ea);
++                    string b = StepSpan(ref span, op, n, out string eb);
++                    if (a != b || ea != eb)
++                    {
++                        failures.Add($"trial {t} step {k} op {op} n {n}: legacy={a}/{ea} span={b}/{eb}");
++                        break;
++                    }
++                    if (ea != null)
++                    {
++                        exceptions++;
++                        break;
++                    }
++                    if (legacy.BaseStream.Position != span.Position)
++                    {
++                        failures.Add($"trial {t} step {k} op {op}: position {legacy.BaseStream.Position} vs {span.Position}");
++                        break;
++                    }
++                }
++            }
++
++            //Writer bound: a 65535-byte UTF-8 string is the largest that fits the u16 prefix; one more byte must throw.
++            string max = new string('a', 65535);
++            PacketWriter wtr = PacketWriter.Rent();
++            wtr.Write(max);
++            if (PacketWriter.RentedBytes().Length != 65537 || PacketWriter.RentedBytes()[0] != 0xFF || PacketWriter.RentedBytes()[1] != 0xFF)
++                failures.Add("writer: 65535-byte string frame wrong");
++            bool threw = false;
++            try { PacketWriter.Rent().Write(max + "b"); }
++            catch (ArgumentOutOfRangeException) { threw = true; }
++            if (!threw)
++                failures.Add("writer: 65536-byte string did not throw");
++            threw = false;
++            try { PacketWriter.Rent().Write((string)null); }
++            catch (ArgumentNullException) { threw = true; }
++            if (!threw)
++                failures.Add("writer: null string did not throw ArgumentNullException (old behaviour)");
++
++            foreach (string f in failures.Count > 20 ? failures.GetRange(0, 20) : failures)
++                Console.WriteLine("  W06 verify FAIL: " + f);
++            Console.WriteLine($"W06 verify: reader {trials} frames, {steps} steps, {exceptions} exception paths, {failures.Count} mismatches");
++            return failures.Count == 0;
++        }
++
++        //Each op returns a canonical string for the value read, or the exception type name in err.
++        private static string Step(PacketReader r, int op, int n, out string err)
++        {
++            err = null;
++            try
++            {
++                switch (op)
++                {
++                    case 0: return r.ReadByte().ToString();
++                    case 1: return r.ReadBoolean().ToString();
++                    case 2: return r.ReadInt16().ToString();
++                    case 3: return r.ReadUInt16().ToString();
++                    case 4: return r.ReadInt32().ToString();
++                    case 5: return BitConverter.SingleToInt32Bits(r.ReadSingle()).ToString();
++                    case 6: return "s:" + r.ReadString();
++                    case 7: return "u:" + r.ReadUTF32();
++                    case 8: return "b:" + string.Join(",", r.ReadBytes(n));
++                    default: return "more:" + (r.BaseStream.Position < r.BaseStream.Length);
++                }
++            }
++            catch (Exception e)
++            {
++                err = e.GetType().Name;
++                return "throw";
++            }
++        }
++
++        private static string StepSpan(ref SpanReader r, int op, int n, out string err)
++        {
++            err = null;
++            try
++            {
++                switch (op)
++                {
++                    case 0: return r.ReadByte().ToString();
++                    case 1: return r.ReadBoolean().ToString();
++                    case 2: return r.ReadInt16().ToString();
++                    case 3: return r.ReadUInt16().ToString();
++                    case 4: return r.ReadInt32().ToString();
++                    case 5: return BitConverter.SingleToInt32Bits(r.ReadSingle()).ToString();
++                    case 6: return "s:" + r.ReadString();
++                    case 7: return "u:" + r.ReadUTF32();
++                    case 8: return "b:" + string.Join(",", r.ReadBytes(n));
++                    default: return "more:" + r.HasMore;
++                }
++            }
++            catch (Exception e)
++            {
++                err = e.GetType().Name;
++                return "throw";
++            }
++        }
++
++        public static bool Run(string outPath)
++        {
++            var lines = new List<string>();
++            void Add(string name, string hex) => lines.Add(name + " " + hex);
++
++            Add("MapInfo", Convert.ToHexString(GameServer.MapInfo(2048, 2048, "Nexus", "Realm", 0xDEADBEEFu, 3, true, false)));
++            Add("InvResult0", Convert.ToHexString(GameServer.InvResult(0)));
++            Add("InvResult1", Convert.ToHexString(GameServer.InvResult(1)));
++            Add("Failure", Convert.ToHexString(GameServer.Failure(2, "Too many connections from your address")));
++            Add("FailureEmpty", Convert.ToHexString(GameServer.Failure(0, "")));
++            Add("NameResultOk", Convert.ToHexString(GameServer.NameResult(true, "")));
++            Add("NameResultErr", Convert.ToHexString(GameServer.NameResult(false, "Not enough gold.")));
++            Add("CreateSuccess", Convert.ToHexString(GameServer.CreateSuccess(42, 7)));
++            Add("Reconnect", Convert.ToHexString(GameServer.Reconnect(42)));
++            Add("Ping", Convert.ToHexString(GameServer.Ping(9)));
++            Add("Goto", Convert.ToHexString(GameServer.Goto(5, new Position(1.5f, 2.5f))));
++            Add("Notification", Convert.ToHexString(GameServer.Notification(5, "text é中", 0xFFFFFFFFu)));
++            Add("GlobalNotification", Convert.ToHexString(GameServer.GlobalNotification(1, "gn")));
++            Add("QuestObjId", Convert.ToHexString(GameServer.QuestObjId(5)));
++            Add("BuyResult", Convert.ToHexString(GameServer.BuyResult(0, "ok")));
++            Add("GuildResult", Convert.ToHexString(GameServer.GuildResult(true, "g")));
++            Add("InvitedToGuild", Convert.ToHexString(GameServer.InvitedToGuild("a", "b")));
++            Add("TradeRequested", Convert.ToHexString(GameServer.TradeRequested("x")));
++            Add("TradeDone", Convert.ToHexString(GameServer.TradeDone(1, "done")));
++            Add("TradeChanged", Convert.ToHexString(GameServer.TradeChanged(new[] { true, false })));
++            Add("TradeAccepted", Convert.ToHexString(GameServer.TradeAccepted(new[] { true }, new[] { false })));
++            Add("TradeStart", Convert.ToHexString(GameServer.TradeStart(
++                new[] { new TradeItem { Item = 1, SlotType = 2, Tradeable = true, Included = false } },
++                "you",
++                new[] { new TradeItem { Item = -3, SlotType = 0, Tradeable = false, Included = true } })));
++            Add("AccountList", Convert.ToHexString(GameServer.AccountList(3, new List<int> { 1, 2, 3 })));
++            Add("AccountListEmpty", Convert.ToHexString(GameServer.AccountList(0, new List<int>())));
++            Add("PlaySound", Convert.ToHexString(GameServer.PlaySound("sound")));
++            Add("Death", Convert.ToHexString(GameServer.Death(1, 2, "Oryx")));
++            Add("AllyShoot", Convert.ToHexString(GameServer.AllyShoot(5, 0x0300, 1.25f)));
++            Add("Text", Convert.ToHexString(GameServer.Text("Name", 5, -1, 5, "", "hello")));
++            Add("TextRecipient", Convert.ToHexString(GameServer.Text("", 0, 3, 0, "Bob", "to bob")));
++            Add("Damage", Convert.ToHexString(GameServer.Damage(5, new[] { ConditionEffectIndex.Weak, ConditionEffectIndex.Quiet }, 100)));
++            Add("DamageNone", Convert.ToHexString(GameServer.Damage(5, new ConditionEffectIndex[0], 7)));
++            Add("Aoe", Convert.ToHexString(GameServer.Aoe(new Position(3f, 4f), 2.5f, 50, ConditionEffectIndex.Quiet, 0xFF112233u)));
++            Add("EnemyShoot", Convert.ToHexString(GameServer.EnemyShoot(1234, 5, 2, new Position(1f, 2f), 0.5f, 60, 3, 0.1f)));
++            Add("EnemyShootSingle", Convert.ToHexString(GameServer.EnemyShoot(1234, 5, 2, new Position(1f, 2f), 0.5f, 60, 1, 0.1f)));
++            Add("ShowEffect", Convert.ToHexString(GameServer.ShowEffect(ShowEffectIndex.Heal, 5, 0xFFAABBCCu)));
++            Add("ShowEffectPos", Convert.ToHexString(GameServer.ShowEffect(ShowEffectIndex.Heal, 5, 0xFFAABBCCu,
++                new Position(-1.5f, 2f), new Position(3f, 4f))));
++            Add("ThrowEffect", Convert.ToHexString(GameServer.ThrowEffect(5, 0xFF00FF00u, new Position(1f, 2f), 300)));
++            Add("ServerPlayerShoot", Convert.ToHexString(GameServer.ServerPlayerShoot(1, 2, 0x0300, new Position(1f, 1f), 0.5f, 0.1f, new List<Projectile>())));
++
++            var tiles = new List<TileData>
++            {
++                new TileData { X = -1, Y = 5, TileType = 0xFFFE },
++                new TileData { X = 32767, Y = -32768, TileType = 1 },
++            };
++            var defs = new List<ObjectDefinition>
++            {
++                new ObjectDefinition
++                {
++                    ObjectType = 0x0300,
++                    ObjectStatus = new ObjectStatus
++                    {
++                        Id = 99,
++                        Position = new Position(3.5f, -2.25f),
++                        Stats = new Dictionary<StatType, object> { { StatType.MaxHP, 770 }, { StatType.Name, "Ünï" }, { StatType.HP, 5 } },
++                    },
++                },
++                new ObjectDefinition
++                {
++                    ObjectType = 0x0100,
++                    ObjectStatus = new ObjectStatus
++                    {
++                        Id = -7,
++                        Position = new Position(0f, 0f),
++                        Stats = new Dictionary<StatType, object> { { StatType.GuildName, "" } },
++                    },
++                },
++            };
++            var drops = new List<ObjectDrop> { new ObjectDrop { Id = 7, Explode = true }, new ObjectDrop { Id = 8, Explode = false } };
++            Add("Update", Convert.ToHexString(GameServer.Update(tiles, defs, drops)));
++            Add("UpdateEmpty", Convert.ToHexString(GameServer.Update(new List<TileData>(), new List<ObjectDefinition>(), new List<ObjectDrop>())));
++
++            var statuses = new List<ObjectStatus>
++            {
++                new ObjectStatus
++                {
++                    Id = 11,
++                    Position = new Position(7f, 8f),
++                    Stats = new Dictionary<StatType, object> { { StatType.HP, 100 }, { StatType.Size, 100 } },
++                },
++            };
++            var playerStats = new Dictionary<StatType, object> { { StatType.HP, 100 }, { StatType.Name, "p" }, { StatType.MaxHP, 770 } };
++            Add("NewTick", Convert.ToHexString(GameServer.NewTick(statuses, playerStats)));
++            Add("NewTickNoStats", Convert.ToHexString(GameServer.NewTick(statuses, new Dictionary<StatType, object>())));
++            Add("NewTickEmpty", Convert.ToHexString(GameServer.NewTick(new List<ObjectStatus>(), new Dictionary<StatType, object>())));
++
++            File.WriteAllLines(outPath, lines, new UTF8Encoding(false));
++            Console.WriteLine($"W06 golden: {lines.Count} builders -> {outPath}");
++            return true;
++        }
++    }
++}
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/Program.cs realm-server/Program.cs
+--- pristine/Program.cs	2026-10-15 00:47:19.431719595 -0500
++++ realm-server/Program.cs	2026-10-15 01:20:04.297858550 -0500
+@@ -227,6 +227,19 @@
+                 Environment.Exit(ok ? 0 : 1);
+             }
+ 
++            //[W06] Golden corpus for the packet builders (Networking/W06Golden.cs): diff the output of two builds.
++            if (args != null && args.Length == 2 && args[0] == "--w06-golden")
++            {
++                bool ok = W06Golden.Run(args[1]);
++                Environment.Exit(ok ? 0 : 1);
++            }
++            if (args != null && args.Length == 1 && args[0] == "--w06-verify")
++            {
++                bool ok = W06Golden.RunReaderCheck();
++                Console.WriteLine(ok ? "W06 verify: PASS" : "W06 verify: FAIL");
++                Environment.Exit(ok ? 0 : 1);
++            }
++
+             ThreadUtils.StartNewThread(ThreadPriority.Lowest, AppServer.Start);
+             ThreadUtils.StartNewThread(ThreadPriority.Lowest, GameServer.Start);
+             GameServer.StartIo();
+diff --color -ruN -x bin -x obj -x logs -x __pycache__ -x '*.pyc' -x .claude pristine/tools/hop/pktdiff.py realm-server/tools/hop/pktdiff.py
+--- pristine/tools/hop/pktdiff.py	1969-12-31 18:00:00.000000000 -0600
++++ realm-server/tools/hop/pktdiff.py	2026-10-15 01:12:01.766464678 -0500
+@@ -0,0 +1,260 @@
++#!/usr/bin/env python3
++"""pktdiff.py - compare two wire captures written by the server under REALM_PKTCAP=<file>.
++
++usage: python3 -I tools/hop/pktdiff.py BASE.bin NEW.bin [--mask ID:OFF:LEN ...] [--show N] [--json OUT]
++       python3 -I tools/hop/pktdiff.py --jsonl BASE.jsonl NEW.jsonl   (chat_check replies, positions masked)
++
++File format (Common/PacketCapture.cs): magic "PKTCAP1\\n", then per frame: u32 LE conn, u8 dir ('I' or 'O'),
++u32 LE length, then the frame (packet id byte + body, no 4-byte length prefix).
++
++Comparison, per (conn, dir) stream, in order:
++  - Every frame except the tick-driven ids (Update 9, NewTick 11) must match exactly, in sequence.
++  - Tick-driven frames are compared pairwise over the common prefix. Their count depends on wall-clock time
++    (how long the client stayed in the world), so a count difference is reported as info, not as a diff.
++  - Masks (--mask ID:OFF:LEN, OFF counted from the id byte, repeatable) blank bytes that are known to be
++    nondeterministic (wall-clock times, allocation-order ids). Use them only after the noise floor is shown.
++
++Exit 0 when there are no diffs, 1 when there are diffs, 2 on a usage or format error.
++"""
++import argparse
++import collections
++import json
++import struct
++import sys
++
++TICK_DRIVEN = {9, 11}  # Update, NewTick
++KEEPALIVE = {61, 62}  # Ping (out), Pong (in): sent on a wall-clock timer, so their order against other frames is timing
++ID_NAMES = {0: "Failure", 1: "CreateSuccess", 2: "Create", 6: "Text", 9: "Update", 11: "NewTick", 15: "Hello",
++            19: "Reconnect", 20: "MapInfo", 21: "Load", 34: "AccountList", 35: "QuestObjId", 42: "Escape",
++            61: "Ping", 62: "Pong"}
++
++
++def parse(path):
++    data = open(path, "rb").read()
++    if data[:8] != b"PKTCAP1\n":
++        raise ValueError(f"{path}: bad magic")
++    streams = collections.defaultdict(list)
++    p = 8
++    while p < len(data):
++        if p + 9 > len(data):
++            raise ValueError(f"{path}: truncated record header at {p}")
++        conn = struct.unpack_from("<I", data, p)[0]
++        direction = chr(data[p + 4])
++        length = struct.unpack_from("<I", data, p + 5)[0]
++        p += 9
++        if p + length > len(data):
++            raise ValueError(f"{path}: truncated frame at {p}")
++        frame = data[p:p + length]
++        p += length
++        streams[(conn, direction)].append(frame)
++    return streams
++
++
++def _str_span(f, pos):
++    """(start, end) of a u16 BE length-prefixed string at pos, or None if it does not fit."""
++    if pos + 2 > len(f):
++        return None
++    n = struct.unpack_from(">H", f, pos)[0]
++    if pos + 2 + n > len(f):
++        return None
++    return pos + 2, pos + 2 + n
++
++
++def normalize(frame):
++    """Blank fields that are random per server or client run, keeping their lengths where the length is stable.
++
++    Hello (15, inbound): the random throwaway user and password written by hop_client.py.
++    MapInfo (20): the random displayName and realm seed (the displayName length differs between runs too).
++    CreateSuccess (1) and QuestObjId (35): the world object id, which depends on how many entities spawned earlier.
++    Text "Oryx the Mad God" (6): Oryx's timer broadcasts, excluded from the sequence (count is info only).
++  Ping (61) and Pong (62): wall-clock keepalives. Their order against other frames is timing, so they are
++    compared as a sorted multiset (the count is reported as info, the bytes are compared after masking).
++  Goto (16) and ShowEffect (14): positions, which follow the random spawn pick (MathUtils.Next) in the world.
++    Text (6): position text quoted by /pos and /server replies (the same random spawn).
++    Pong (62, inbound): the client's clock.
++    Every other frame is compared exactly.
++    """
++    if not frame:
++        return frame
++    b = bytearray(frame)
++    mid = b[0]
++    if mid == 15:  # Hello: str buildVersion, i32 gameId, str user, str pass, i32
++        version = _str_span(b, 1)
++        user = _str_span(b, version[1] + 4) if version else None
++        pwd = _str_span(b, user[1]) if user else None
++        for span in (user, pwd):
++            if span:
++                for i in range(span[0], span[1]):
++                    b[i] = 0
++    elif mid == 20:  # MapInfo: i32 w, i32 h, str name, str displayName, u32 seed, i32 bg, bool, bool
++        name = _str_span(b, 9)
++        if name:
++            dn = _str_span(b, name[1])
++            if dn:
++                lo, hi = dn
++                # Replace the displayName (length prefix included) with a fixed placeholder of the same
++                # framing, so the normalized frame keeps every field after it.
++                tail = bytes(b[hi:])
++                head = bytes(b[:lo - 2])
++                placeholder = b"\x00\x02DN"
++                tail = bytearray(tail)
++                if len(tail) >= 4:
++                    tail[0:4] = b"\x00\x00\x00\x00"
++                return bytes(head + placeholder + bytes(tail))
++    elif mid in (1, 35):  # CreateSuccess: i32 objectId, i32 charId; QuestObjId: i32 objectId
++        for i in range(1, 5):
++            b[i] = 0
++    elif mid == 16:  # Goto: i32 objectId, f32 x, f32 y. Object ids follow spawn timing; positions follow random spawn picks.
++        for i in range(1, 13):
++            b[i] = 0
++    elif mid == 14:  # ShowEffect: u8 effect, i32 target, u32 color, pos1 (8 bytes), optional pos2 (8 bytes)
++        for i in range(10, min(len(b), 26)):
++            b[i] = 0
++    elif mid == 6:  # Text: the server's /pos and /server replies quote the random spawn position
++        import re
++        return re.sub(rb"X:-?\d+, Y:-?\d+|Current Position: -?\d+, -?\d+", b"POS", bytes(b))
++    elif mid == 62:  # Pong (inbound): i32 serial, i32 client time (the client's clock)
++        for i in range(5, 9):
++            b[i] = 0
++    return bytes(b)
++
++
++def excluded(frame):
++    """Frames that never enter the sequence compare: tick-driven, keepalive, and Oryx's timer chatter."""
++    if frame[0] in TICK_DRIVEN or frame[0] in KEEPALIVE:
++        return True
++    # Text from "Oryx the Mad God": Oryx's periodic broadcasts run on a wall-clock timer (not a packet reply).
++    return frame[0] == 6 and frame[1:3] == b"\x00\x10" and frame[3:19] == b"Oryx the Mad God"
++
++
++def apply_masks(frame, masks):
++    if not frame:
++        return frame
++    b = bytearray(frame)
++    for (mid, off, ln) in masks:
++        if b[0] != mid:
++            continue
++        for i in range(off, min(off + ln, len(b))):
++            b[i] = 0
++    return bytes(b)
++
++
++def first_diff(a, b):
++    n = min(len(a), len(b))
++    for i in range(n):
++        if a[i] != b[i]:
++            return i
++    return None if len(a) == len(b) else n
++
++
++POS_RE = None
++
++
++def jsonl_mode(a_path, b_path):
++    """chat_check replies: equal line by line once the X:n, Y:n position text (random spawn) is masked."""
++    import re
++    global POS_RE
++    POS_RE = re.compile(r"X:-?\d+, Y:-?\d+|Current Position: -?\d+, -?\d+")
++    a = open(a_path, encoding="utf-8").read().splitlines()
++    b = open(b_path, encoding="utf-8").read().splitlines()
++    bad = [i for i, (x, y) in enumerate(zip(a, b)) if POS_RE.sub("POS", x) != POS_RE.sub("POS", y)]
++    if len(a) != len(b):
++        bad.append(-1)
++    print(f"pktdiff jsonl: base={a_path} new={b_path} lines={len(a)}/{len(b)} differing={len(bad)}")
++    for i in bad[:5]:
++        print(f"  line {i}: {a[i] if i >= 0 else 'count'}\n     vs {b[i] if i >= 0 else 'count'}")
++    print(f"  RESULT {'CLEAN' if not bad else 'DIFFER'}")
++    return 0 if not bad else 1
++
++
++def main():
++    if len(sys.argv) == 4 and sys.argv[1] == "--jsonl":
++        return jsonl_mode(sys.argv[2], sys.argv[3])
++    ap = argparse.ArgumentParser()
++    ap.add_argument("base")
++    ap.add_argument("new")
++    ap.add_argument("--mask", action="append", default=[], help="ID:OFF:LEN, OFF from the id byte")
++    ap.add_argument("--show", type=int, default=8, help="max diffs to print")
++    ap.add_argument("--json", default=None)
++    ap.add_argument("--include-tick", action="store_true",
++                    help="gate on tick-driven frames too (only meaningful once their content is deterministic)")
++    args = ap.parse_args()
++    masks = []
++    for m in args.mask:
++        try:
++            mid, off, ln = (int(x) for x in m.split(":"))
++        except ValueError:
++            print(f"pktdiff: bad --mask {m!r}", file=sys.stderr)
++            return 2
++        masks.append((mid, off, ln))
++    try:
++        A = parse(args.base)
++        B = parse(args.new)
++    except (OSError, ValueError) as e:
++        print(f"pktdiff: {e}", file=sys.stderr)
++        return 2
++
++    diffs = []
++    info = []
++    tick_noise = []
++    per_id = collections.Counter()
++    keys = sorted(set(A) | set(B))
++    for key in keys:
++        a = A.get(key)
++        b = B.get(key)
++        conn, d = key
++        if a is None or b is None:
++            diffs.append({"conn": conn, "dir": d, "kind": "stream missing", "base": a is not None, "new": b is not None})
++            continue
++        # Exact sequence for everything that is not tick-driven: walk both streams, skipping tick frames.
++        fa = [f for f in a if not excluded(f)]
++        fb = [f for f in b if not excluded(f)]
++        ka = sorted(f for f in a if f[0] in KEEPALIVE)
++        kb = sorted(f for f in b if f[0] in KEEPALIVE)
++        if ka != kb:
++            info.append({"conn": conn, "dir": d, "kind": "keepalive multiset", "base": len(ka), "new": len(kb)})
++        if len(fa) != len(fb):
++            diffs.append({"conn": conn, "dir": d, "kind": "non-tick frame count", "base": len(fa), "new": len(fb)})
++        for i, (x, y) in enumerate(zip(fa, fb)):
++            per_id[x[0]] += 1
++            mx, my = apply_masks(normalize(x), masks), apply_masks(normalize(y), masks)
++            if mx != my:
++                diffs.append({"conn": conn, "dir": d, "kind": "frame", "index": i, "id": x[0],
++                              "name": ID_NAMES.get(x[0], str(x[0])), "len_base": len(x), "len_new": len(y),
++                              "first_diff": first_diff(mx, my)})
++        # Tick-driven frames: pairwise over the common prefix, plus a count note.
++        ta = [f for f in a if f[0] in TICK_DRIVEN]
++        tb = [f for f in b if f[0] in TICK_DRIVEN]
++        if len(ta) != len(tb):
++            info.append({"conn": conn, "dir": d, "kind": "tick-driven count", "base": len(ta), "new": len(tb)})
++        for i in range(min(len(ta), len(tb))):
++            x, y = ta[i], tb[i]
++            mx, my = apply_masks(normalize(x), masks), apply_masks(normalize(y), masks)
++            if mx != my:
++                item = {"conn": conn, "dir": d, "kind": "tick frame", "index": i, "id": x[0],
++                        "name": ID_NAMES.get(x[0], str(x[0])), "len_base": len(x), "len_new": len(y),
++                        "first_diff": first_diff(mx, my)}
++                (diffs if args.include_tick else tick_noise).append(item)
++            else:
++                per_id[x[0]] += 1
++
++    print(f"pktdiff: base={args.base} new={args.new}")
++    print(f"  streams: base={len(A)} new={len(B)}; frames compared by id: "
++          + ", ".join(f"{ID_NAMES.get(k, k)}={v}" for k, v in sorted(per_id.items())))
++    print(f"  masks: {masks if masks else 'none'}")
++    for it in info:
++        print(f"  info: conn {it['conn']} {it['dir']} {it['kind']} base={it['base']} new={it['new']} (timing, not a diff)")
++    for it in diffs[:args.show]:
++        print(f"  DIFF: {it}")
++    print(f"  tick-driven frames (Update/NewTick) that differ in content: {len(tick_noise)} "
++          f"(timing-dependent; not gated unless --include-tick)")
++    print(f"  RESULT {'CLEAN' if not diffs else 'DIFFER'}: {len(diffs)} diff(s), {len(info)} info note(s)")
++    if args.json:
++        with open(args.json, "w") as f:
++            json.dump({"diffs": diffs, "info": info, "tick_noise": tick_noise, "per_id": per_id, "masks": masks},
++                      f, indent=1, default=str)
++    return 0 if not diffs else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())

@@ -30,6 +30,10 @@ namespace RotMG.Game.Dungeons
             return DungeonGen.DungeonTemplates.GetTemplate(desc.Id) != null;
         }
 
+        //Seeds tried in turn when a generation exceeds its work budget (DungeonGen.Generator.MaxWork). The first
+        //attempt uses the given seed, so a generation that fits the budget is unchanged.
+        public const int MaxBuildAttempts = 3;
+
         private static IGameMap BuildMap(WorldDesc desc, int seed)
         {
             if (desc.Maps != null && desc.Maps.Length > 0)
@@ -37,13 +41,30 @@ namespace RotMG.Game.Dungeons
             DungeonGen.Templates.DungeonTemplate template = DungeonGen.DungeonTemplates.GetTemplate(desc.Id);
             if (template != null)
             {
-                DungeonGen.Generator gen = new DungeonGen.Generator(seed, template);
-                gen.Generate();
-                DungeonGen.Rasterizer ras = new DungeonGen.Rasterizer(seed, gen.ExportGraph());
-                ras.Rasterize();
-                return DungeonGen.DungeonMapBuilder.BuildMap(ras.ExportMap());
+                for (int attempt = 1; ; attempt++)
+                {
+                    try
+                    {
+                        return BuildGenerated(template, seed + attempt - 1);
+                    }
+                    catch (DungeonGen.DungeonGenerationException)
+                    {
+                        //The last failure propagates to the caller (see Manager.GetDungeonWorld).
+                        if (attempt >= MaxBuildAttempts)
+                            throw;
+                    }
+                }
             }
             throw new InvalidOperationException($"Dungeon '{desc.Id}' has no map or generator template.");
+        }
+
+        private static IGameMap BuildGenerated(DungeonGen.Templates.DungeonTemplate template, int seed)
+        {
+            DungeonGen.Generator gen = new DungeonGen.Generator(seed, template);
+            gen.Generate();
+            DungeonGen.Rasterizer ras = new DungeonGen.Rasterizer(seed, gen.ExportGraph());
+            ras.Rasterize();
+            return DungeonGen.DungeonMapBuilder.BuildMap(ras.ExportMap());
         }
     }
 }

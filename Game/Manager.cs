@@ -67,8 +67,26 @@ namespace RotMG.Game
         public static int TotalTicks;
         public static int TotalTime;
         public static int TotalTimeUnsynced;
-        public static int TickDelta;
-        public static int LastTickTime;
+        public static int TickDelta; //work duration of the last tick (diagnostic; the gate reads TickDueAt)
+        public static int LastTickTime; //start of the last tick on TickWatch
+        //W04 test hooks, both off unless the env var is set (read once). REALM_TICK_LOAD_MS=N sleeps N ms
+        //at the end of each tick's work (synthetic load). REALM_TICKTRACE=1 prints one "[tick]" line per tick
+        //(start, start-to-start period, work). tools/hop/tick_period.py summarizes the server log.
+        private static readonly int SyntheticTickLoadMs = ReadTickEnvInt("REALM_TICK_LOAD_MS");
+        internal static readonly bool TickTraceEnabled = Environment.GetEnvironmentVariable("REALM_TICKTRACE") == "1";
+        private static double _tracePrevStartMs = -1;
+        private static int _traceGen2;
+        //Tick schedule (W04): the next tick deadline on TickWatch, -1 until the first tick. A tick that
+        //starts more than MaxTickLagTicks periods late resyncs instead of replaying the backlog.
+        public const int MaxTickLagTicks = 5;
+        private const int TickWarnIntervalMs = 1000;
+        private static long TickDueAt = -1;
+        private static long _lastTickWarnMs = -TickWarnIntervalMs;
+
+        private static int ReadTickEnvInt(string name)
+        {
+            return int.TryParse(Environment.GetEnvironmentVariable(name), out int value) && value > 0 && value <= 1000 ? value : 0;
+        }
 
         public static void Init()
         {
@@ -1017,7 +1035,7 @@ namespace RotMG.Game
                 try
                 {
                     if (handoff.Character != null && !handoff.Character.Dead)
-                        Database.SaveAccountAndCharacter(handoff.Account, handoff.Character, andWait: true);
+                        Database.SaveAccountAndCharacter(handoff.Account, handoff.Character);
                     else
                         handoff.Account.Save();
                 }
@@ -1062,6 +1080,28 @@ namespace RotMG.Game
             return time / Settings.MillisecondsPerTick;
         }
 
+        //Sequential branch of Tick (one world or none). Same catch as the parallel branch, applied per world: an
+        //exception must not escape Tick into Program's main loop, which has no handler (process exit). Per world
+        //also keeps one faulting world from skipping the other worlds' ticks this pass.
+        internal static void TickWorldsSequential(List<World> worlds)
+        {
+            foreach (World world in worlds)
+            {
+                try
+                {
+                    world.Tick();
+                }
+#if DEBUG
+                catch (Exception e)
+                {
+                    Program.Print(PrintType.Error, e.ToString());
+                }
+#else
+                catch { }
+#endif
+            }
+        }
+
         public static void Tick()
         {
             TotalTimeUnsynced = (int)TickWatch.ElapsedMilliseconds;
@@ -1074,9 +1114,36 @@ namespace RotMG.Game
             foreach (Client client in ClientSnapshot)
                 client.Tick();
 
-            if ((int)TickWatch.ElapsedMilliseconds - LastTickTime >= (Settings.MillisecondsPerTick - TickDelta))
+            //Fixed-cadence gate (W04). Tick k is due at TickDueAt, and each tick moves the deadline forward by
+            //exactly one period, never by the tick's start or duration. The old gate fired at
+            //LastTickTime + (period - TickDelta), so each tick's own work shortened the next period and ticks
+            //ran faster than 10 TPS under load, while TotalTime still advanced 100 ms per tick.
+            //At most one tick runs per main-loop pass, so a backlog drains one tick per pass with client
+            //packets handled in between. A tick more than MaxTickLagTicks periods late drops the backlog:
+            //the schedule restarts from now (with a rate-limited warning), so a long stall does not turn
+            //into a burst of world ticks.
+            long nowMs = TickWatch.ElapsedMilliseconds;
+            int period = Settings.MillisecondsPerTick;
+            if (TickDueAt < 0)
+                TickDueAt = nowMs + period;
+            if (nowMs >= TickDueAt)
             {
-                LastTickTime = (int)TickWatch.ElapsedMilliseconds;
+                long lateMs = nowMs - TickDueAt;
+                if (lateMs > (long)MaxTickLagTicks * period)
+                {
+                    if (nowMs - _lastTickWarnMs >= TickWarnIntervalMs)
+                    {
+                        _lastTickWarnMs = nowMs;
+                        Program.Print(PrintType.Warn, $"Tick schedule was {lateMs} ms behind (limit {MaxTickLagTicks} ticks); resynced to now");
+                    }
+                    TickDueAt = nowMs;
+                }
+                TickDueAt += period;
+
+                LastTickTime = (int)nowMs;
+                double traceStartMs = TickTraceEnabled ? TickWatch.Elapsed.TotalMilliseconds : 0;
+                double traceMark = traceStartMs;
+                double lapTimers = 0, lapMain = 0, lapWorlds = 0, lapSweeps = 0;
 
                 //Only run timers due at tick entry: an action that reschedules
                 //itself for the current tick must wait for the next tick,
@@ -1137,6 +1204,7 @@ namespace RotMG.Game
 
                 //Publish worker-finished work (async world builds) before
                 //the worlds tick so fresh worlds participate immediately.
+                lapTimers = Lap(ref traceMark);
                 while (MainThreadQueue.TryDequeue(out Action mainAction))
                 {
                     try
@@ -1159,6 +1227,7 @@ namespace RotMG.Game
                 //SyncRoot and persistence through the DB writer. Broadcasts
                 //stay parallel inside each world as before. Single-world
                 //servers skip the pool entirely.
+                lapMain = Lap(ref traceMark);
                 lock (SyncRoot)
                 {
                     WorldSnapshot.Clear();
@@ -1181,10 +1250,10 @@ namespace RotMG.Game
                 }
                 else
                 {
-                    foreach (World world in WorldSnapshot)
-                        world.Tick();
+                    TickWorldsSequential(WorldSnapshot);
                 }
 
+                lapWorlds = Lap(ref traceMark);
                 if (TotalTicks % Settings.TicksPerSecond == 0)
                 {
                     SweepExpiredHandoffs();
@@ -1199,10 +1268,39 @@ namespace RotMG.Game
                 if (TotalTicks % (Settings.TicksPerSecond * 30) == 0)
                     SweepEmptyDungeons(WorldSnapshot);
 
+                lapSweeps = Lap(ref traceMark);
+                if (SyntheticTickLoadMs > 0)
+                    Thread.Sleep(SyntheticTickLoadMs);
+
                 TickDelta = (int)(TickWatch.ElapsedMilliseconds - LastTickTime);
                 TotalTime += Settings.MillisecondsPerTick;
                 TotalTicks++;
+                if (TickTraceEnabled)
+                    TraceTick(traceStartMs, TickDelta, lapTimers, lapMain, lapWorlds, lapSweeps);
             }
+        }
+
+        //One line per tick: start-to-start period and work duration (REALM_TICKTRACE=1 only).
+        private static void TraceTick(double startMs, int workMs, double timers, double mainQueue, double worlds, double sweeps)
+        {
+            int gen2 = GC.CollectionCount(2);
+            if (_tracePrevStartMs >= 0)
+                Program.Print(PrintType.Info, $"[tick] start={startMs:F2} period={startMs - _tracePrevStartMs:F2} work={workMs} " +
+                    $"timers={timers:F1} mainq={mainQueue:F1} worlds={worlds:F1} sweeps={sweeps:F1} gen2={gen2 - _traceGen2} " +
+                    $"pending={Database.PendingWriteCount()}");
+            _tracePrevStartMs = startMs;
+            _traceGen2 = gen2;
+        }
+
+        //Trace-only phase timer: returns the ms since mark and moves mark forward. Zero cost when tracing is off.
+        private static double Lap(ref double mark)
+        {
+            if (!TickTraceEnabled)
+                return 0;
+            double now = TickWatch.Elapsed.TotalMilliseconds;
+            double delta = now - mark;
+            mark = now;
+            return delta;
         }
     }
 }

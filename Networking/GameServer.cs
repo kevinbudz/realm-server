@@ -220,6 +220,7 @@ namespace RotMG.Networking
                 {
                     //Wait for a client to connect and validate the connection.
                     Socket skt = _listener.Accept();
+                    long hopAccept = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
 
                     List<Client> queueBack = new List<Client>();
                     while (_addBack.TryDequeue(out Client add))
@@ -266,6 +267,7 @@ namespace RotMG.Networking
                         continue;
                     }
 
+                    if (HopTrace.Enabled) HopTrace.Accepted(client, hopAccept); //[hop]
                     Program.PushWork(() =>
                     {
                         client.BeginHandling(skt, ip);

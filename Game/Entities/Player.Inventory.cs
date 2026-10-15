@@ -410,8 +410,7 @@ namespace RotMG.Game.Entities
             con1.UpdateInventorySlot(slot1.SlotId);
             con2.UpdateInventorySlot(slot2.SlotId);
             RecalculateEquipBonuses();
-            PersistInventoryMutation(en1 as Container, en2 as Container);
-            ReplyInv(true);
+            PersistInventoryMutation(en1 as Container, en2 as Container, ReplyInv);
         }
 
         //Persists this swap before acknowledging it. Ground bags are
@@ -420,7 +419,7 @@ namespace RotMG.Game.Entities
         //crash between them duplicates vaulted items. Vault swaps wait for
         //the commit before InvResult goes out, so the client never believes
         //a swap survived that did not; ground swaps queue FIFO behind them.
-        private void PersistInventoryMutation(Container c1, Container c2)
+        private void PersistInventoryMutation(Container c1, Container c2, Action<bool> onDone)
         {
             try
             {
@@ -432,23 +431,19 @@ namespace RotMG.Game.Entities
                     { Database.AccountKey(Client.Account.Id), accountXml },
                     { Database.CharacterKey(Client.Account.Id, Client.Character.Id), charXml }
                 };
-                bool vaultInvolved = false;
                 foreach (Container c in new[] { c1, c2 })
                 {
                     if (c == null || c.VaultOwnerId == -1 || c.VaultIndex < 0)
                         continue;
-                    vaultInvolved = true;
                     writes[Database.VaultItemsKey(c.VaultOwnerId, c.VaultIndex)] =
                         Database.VaultValue(c.Inventory, c.ItemDatas);
                 }
-                if (vaultInvolved)
-                    Database.WriteAtomicallyAndWait(writes);
-                else
-                    Database.WriteAtomically(writes);
+                //Every swap (vault or ground) acks from the commit: the InvResult waits for it.
+                Database.WriteAtomicallyThen(writes, null, onDone);
                 Client.Account.Data = System.Xml.Linq.XElement.Parse(accountXml);
                 Client.Character.Data = System.Xml.Linq.XElement.Parse(charXml);
             }
-            catch { }
+            catch { onDone(false); }
         }
 
         public bool ValidSlot(int slot)

@@ -100,13 +100,19 @@ namespace RotMG.Networking
                 return WriteError("Invalid password.");
 
             _listenEvent.Reset();
+            bool queued = false;
             Program.PushWork(() =>
             {
-                RegisterStatus status = Database.RegisterAccount(newUsername, newPassword, GetIPFromContext(context));
-                if (status == RegisterStatus.Success)
-                    data = WriteSuccess();
-                else data = WriteError(status.ToString());
-            }, () => _listenEvent.Set());
+                //The reply waits for the commit, so the client never logs in before the account exists.
+                RegisterStatus refusal;
+                queued = Database.TryRegisterAccount(newUsername, newPassword, GetIPFromContext(context), out refusal, committed =>
+                {
+                    data = committed ? WriteSuccess() : WriteError("StorageError");
+                    _listenEvent.Set();
+                });
+                if (!queued)
+                    data = WriteError(refusal.ToString());
+            }, () => { if (!queued) _listenEvent.Set(); });
             _listenEvent.WaitOne(30000);
 
             return data;
@@ -148,6 +154,7 @@ namespace RotMG.Networking
             int charId = int.Parse(query["charId"]);
 
             _listenEvent.Reset();
+            bool queued = false;
             Program.PushWork(() =>
             {
                 AccountModel acc = Database.Verify(username, password, GetIPFromContext(context));
@@ -156,8 +163,17 @@ namespace RotMG.Networking
                 else if (Database.IsAccountInUse(acc))
                     data = WriteError("Account in use!");
                 else
-                    data = Database.DeleteCharacter(acc, charId) ? WriteSuccess() : WriteError("Issue deleting character");
-            }, () => _listenEvent.Set());
+                {
+                    //The reply waits for the commit: the re-list that follows must not see the character still alive.
+                    queued = Database.DeleteCharacter(acc, charId, ok =>
+                    {
+                        data = ok ? WriteSuccess() : WriteError("Issue deleting character");
+                        _listenEvent.Set();
+                    });
+                    if (!queued)
+                        data = WriteError("Issue deleting character");
+                }
+            }, () => { if (!queued) _listenEvent.Set(); });
             _listenEvent.WaitOne(30000);
 
             return data;
@@ -165,13 +181,13 @@ namespace RotMG.Networking
 
         private static byte[] AccountPurchaseCharSlot(HttpListenerContext context, NameValueCollection query)
         {
-
             byte[] data = null;
 
             string username = query["username"];
             string password = query["password"];
 
             _listenEvent.Reset();
+            bool queued = false;
             Program.PushWork(() =>
             {
                 AccountModel acc = Database.Verify(username, password, GetIPFromContext(context));
@@ -180,8 +196,16 @@ namespace RotMG.Networking
                 else if (Database.IsAccountInUse(acc))
                     data = WriteError("Account in use!");
                 else
-                    data = Database.BuyCharSlot(acc) ? WriteSuccess() : WriteError("Not enough fame");
-            }, () => _listenEvent.Set());
+                {
+                    queued = Database.BuyCharSlot(acc, ok =>
+                    {
+                        data = ok ? WriteSuccess() : WriteError("Could not buy character slot");
+                        _listenEvent.Set();
+                    });
+                    if (!queued)
+                        data = WriteError("Not enough fame");
+                }
+            }, () => { if (!queued) _listenEvent.Set(); });
             _listenEvent.WaitOne(30000);
 
             return data;
@@ -189,7 +213,6 @@ namespace RotMG.Networking
 
         private static byte[] AccountPurchaseSkin(HttpListenerContext context, NameValueCollection query)
         {
-
             byte[] data = null;
 
             string username = query["username"];
@@ -197,6 +220,7 @@ namespace RotMG.Networking
             int skinType = int.Parse(query["skinType"]);
 
             _listenEvent.Reset();
+            bool queued = false;
             Program.PushWork(() =>
             {
                 AccountModel acc = Database.Verify(username, password, GetIPFromContext(context));
@@ -205,8 +229,16 @@ namespace RotMG.Networking
                 else if (Database.IsAccountInUse(acc))
                     data = WriteError("Account in use!");
                 else
-                    data = Database.BuySkin(acc, skinType) ? WriteSuccess() : WriteError("Could not buy skin");
-            }, () => _listenEvent.Set());
+                {
+                    queued = Database.BuySkin(acc, skinType, ok =>
+                    {
+                        data = ok ? WriteSuccess() : WriteError("Could not buy skin");
+                        _listenEvent.Set();
+                    });
+                    if (!queued)
+                        data = WriteError("Could not buy skin");
+                }
+            }, () => { if (!queued) _listenEvent.Set(); });
             _listenEvent.WaitOne(30000);
 
             return data;
@@ -214,7 +246,6 @@ namespace RotMG.Networking
 
         private static byte[] AccountChangePassword(HttpListenerContext context, NameValueCollection query)
         {
-
             byte[] data = null;
 
             string username = query["username"];
@@ -222,6 +253,7 @@ namespace RotMG.Networking
             string newPassword = query["newPassword"];
 
             _listenEvent.Reset();
+            bool queued = false;
             Program.PushWork(() =>
             {
                 AccountModel acc = Database.Verify(username, password, GetIPFromContext(context));
@@ -230,8 +262,16 @@ namespace RotMG.Networking
                 else if (Database.IsAccountInUse(acc))
                     data = WriteError("Account in use!");
                 else
-                    data = Database.ChangePassword(acc, newPassword) ? WriteSuccess() : WriteError("Could not change password");
-            }, () => _listenEvent.Set());
+                {
+                    queued = Database.ChangePassword(acc, newPassword, ok =>
+                    {
+                        data = ok ? WriteSuccess() : WriteError("Could not change password");
+                        _listenEvent.Set();
+                    });
+                    if (!queued)
+                        data = WriteError("Could not change password");
+                }
+            }, () => { if (!queued) _listenEvent.Set(); });
             _listenEvent.WaitOne(30000);
 
             return data;

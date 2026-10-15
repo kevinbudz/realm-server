@@ -259,6 +259,7 @@ namespace RotMG.Networking
 
         public static void Escape(Client client, PacketReader rdr)
         {
+            long hopT0 = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
             Player player = client.Player;
             if (player == null || player.Parent == null || player.IsTransferring)
                 return;
@@ -267,7 +268,9 @@ namespace RotMG.Networking
             if (player.HP <= 10)
                 player.FameStats.NearDeathEscapes++;
             World nexus = Manager.GetWorld(Manager.NexusId);
+            if (HopTrace.Enabled) HopTrace.EscapeRx(client, hopT0); //[hop]
             player.BeginTransfer(nexus);
+            if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "BeginTransfer returned (Reconnect queued)"); //[hop]
         }
 
         public static void GotoAck(Client client, PacketReader rdr)
@@ -325,17 +328,29 @@ namespace RotMG.Networking
                 return;
             }
 
-            client.Account.Stats.Credits -= price;
-            //Old name key, new name keys and the account row commit as one
-            //transaction: a crash between them used to orphan the account
-            //under two names or none.
-            Database.RenameAccountKeys(client.Account.Id, client.Account.Name, name, client.Account);
-            client.Account.Name = name;
-
-            player.Name = name;
-            player.Credits = client.Account.Stats.Credits;
-            player.NameChosen = true;
-            client.Send(NameResult(true, ""));
+            //The debit is taken now, so a second request sees it. The name, the reply and the entity update wait for
+            //the commit (one bundle: old key removal, new keys, account row). A failed commit refunds the debit.
+            AccountModel acc = client.Account;
+            string oldName = acc.Name;
+            acc.Stats.Credits -= price;
+            Database.RenameAccountKeys(acc.Id, oldName, name, acc, committed =>
+            {
+                if (committed)
+                {
+                    acc.Name = name;
+                    player.Name = name;
+                    player.Credits = acc.Stats.Credits;
+                    player.NameChosen = true;
+                    if (client.Active)
+                        client.Send(NameResult(true, ""));
+                }
+                else
+                {
+                    acc.Stats.Credits += price;
+                    if (client.Active)
+                        client.Send(NameResult(false, "Save failed."));
+                }
+            });
         }
 
         public static void UsePortal(Client client, PacketReader rdr)
@@ -405,7 +420,7 @@ namespace RotMG.Networking
             if (Manager.TryGetPortalDungeon(portal.Id, out string mappedName))
             {
                 if (Resources.Worlds.TryGetValue(mappedName, out WorldDesc mapped) && Game.Dungeons.DungeonWorld.IsSupported(mapped))
-                    return Manager.GetDungeonWorld(portal, mapped);
+                    return GetDungeonWorldOrNull(player, portal, mapped);
             }
 
             //Dungeon portals carry their dungeon in the object descriptor;
@@ -417,11 +432,27 @@ namespace RotMG.Networking
                     player.SendInfo("Portal not implemented.");
                     return null;
                 }
-                return Manager.GetDungeonWorld(portal, desc);
+                return GetDungeonWorldOrNull(player, portal, desc);
             }
 
             player.SendInfo("Portal not implemented.");
             return null;
+        }
+
+        //A generated dungeon can exceed its work budget on every seed (DungeonGen.DungeonGenerationException).
+        //The player stays where they are and is told, instead of the packet being dropped by the handler guard.
+        private static World GetDungeonWorldOrNull(Player player, Portal portal, WorldDesc desc)
+        {
+            try
+            {
+                return Manager.GetDungeonWorld(portal, desc);
+            }
+            catch (Game.DungeonGen.DungeonGenerationException e)
+            {
+                Program.Print(PrintType.Error, $"Dungeon '{desc.Id}' failed to generate for portal {portal.Id}: {e.Message}");
+                player.SendError("This dungeon could not be generated. Please try again.");
+                return null;
+            }
         }
 
         public static void UseItem(Client client, PacketReader rdr)
@@ -446,17 +477,36 @@ namespace RotMG.Networking
                 switch (accountListId)
                 {
                     case 0: //Lock
-                        if (add) client.Account.LockedIds.Add(target.AccountId);
-                        else client.Account.LockedIds.Remove(target.AccountId);
+                        if (add) AddAccountListId(client, client.Account.LockedIds, target.AccountId);
+                        else client.Account.LockedIds.RemoveAll(id => id == target.AccountId);
                         client.Send(AccountList(0, client.Account.LockedIds));
                         break;
                     case 1: //Ignore
-                        if (add) client.Account.IgnoredIds.Add(target.AccountId);
-                        else client.Account.IgnoredIds.Remove(target.AccountId);
+                        if (add) AddAccountListId(client, client.Account.IgnoredIds, target.AccountId);
+                        else client.Account.IgnoredIds.RemoveAll(id => id == target.AccountId);
                         client.Send(AccountList(1, client.Account.IgnoredIds));
                         break;
                 }
             }
+        }
+
+        //Lock and ignore lists never hold duplicates (an add of an id already present is a no-op), so one
+        //unlock always clears the id. Removal drops every copy, which also cleans up duplicates stored
+        //before this check. The cap is the AccountList wire limit: its count is written as a signed short
+        //(AccountList below), so a longer list would be sent with a negative count. The client keeps no
+        //limit of its own (realm-cpp Party.cpp uses an unordered set), so this is the only bound on the list.
+        public const int MaxAccountListEntries = short.MaxValue;
+
+        private static void AddAccountListId(Client client, List<int> ids, int accountId)
+        {
+            if (ids.Contains(accountId))
+                return;
+            if (ids.Count >= MaxAccountListEntries)
+            {
+                client.Player.SendError("Your list is full.");
+                return;
+            }
+            ids.Add(accountId);
         }
 
         public static void PlayerText(Client client, PacketReader rdr)
@@ -511,11 +561,19 @@ namespace RotMG.Networking
 
         public static void Hello(Client client, PacketReader rdr)
         {
+            if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "Hello rx"); //[hop]
             string buildVersion = rdr.ReadString();
             int gameId = rdr.ReadInt32();
             string username = rdr.ReadString();
             string password = rdr.ReadString();
-            byte[] mapJson = rdr.ReadBytes(rdr.ReadInt32());
+            //Pre-auth and attacker-controlled: ReadBytes(n) allocates n bytes before reading, so a
+            //small frame naming a 2 GB body would allocate 2 GB. Reject negatives, anything above the
+            //server's frame cap (GameServer.BufferSize), and lengths past the bytes left in this packet.
+            int mapJsonLength = rdr.ReadInt32();
+            long mapJsonRemaining = rdr.BaseStream.Length - rdr.BaseStream.Position;
+            if (mapJsonLength < 0 || mapJsonLength > GameServer.BufferSize || mapJsonLength > mapJsonRemaining)
+                return;
+            byte[] mapJson = rdr.ReadBytes(mapJsonLength);
 
             if (client.State == ProtocolState.Handshaked) //Only allow Hello to be processed once.
             {
@@ -531,6 +589,7 @@ namespace RotMG.Networking
                     client.SendFailureAndClose(FailureForceCloseGame, "Invalid account.");
                     return;
                 }
+                if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "after Database.Authenticate"); //[hop]
 
                 //Kick the live session before any account Load so the
                 //authoritative models land in the handoff (or a waited
@@ -543,6 +602,7 @@ namespace RotMG.Networking
                     else
                         previous.DisconnectWaitingForSave();
                 }
+                if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "after old-session kick"); //[hop]
 
                 AccountModel acc;
                 CharacterModel handedCharacter = null;
@@ -562,6 +622,7 @@ namespace RotMG.Networking
                     }
                     acc.Load();
                 }
+                if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, fromHandoff ? "after handoff take (no DB load)" : "after acc.Load"); //[hop]
 
                 if (acc.Banned)
                 {
@@ -629,12 +690,14 @@ namespace RotMG.Networking
                 }
 
                 client.Account.Connected = true;
-                client.Account.Save();
+                client.Account.Save(); //queued FIFO on the writer; LinkClient below is the in-memory login gate
+                if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "after acc save enqueued"); //[hop]
                 client.TargetWorldId = world.Id;
                 Manager.LinkClient(client.Account.Id, client.Id);
 
                 uint seed = (uint)MathUtils.NextInt(1, int.MaxValue - 1);
                 client.Random = new wRandom(seed);
+                if (HopTrace.Enabled) HopTrace.Watch(client, HopTrace.WatchMapInfo); //[hop]
                 client.Send(MapInfo(world.Width, world.Height, world.Name, world.GetDisplayName(), seed, world.Background, world.ShowDisplays, world.AllowTeleport));
                 client.State = ProtocolState.Awaiting; //Allow the processing of Load/Create.
             }
@@ -645,29 +708,56 @@ namespace RotMG.Networking
             int classType = rdr.ReadInt16();
             int skinType = rdr.ReadInt16();
 
-            if (client.State == ProtocolState.Awaiting)
+            if (client.State == ProtocolState.Awaiting && client.PendingJoin == null)
             {
-                CharacterModel character = Database.CreateCharacter(client.Account, classType, skinType);
-                if (character == null)
-                {
-                    client.SendFailureAndClose(FailureForceCloseGame, "Failed to create character.");
-                    return;
-                }
-
                 World world = Manager.GetWorld(client.TargetWorldId);
                 if (world is RealmWorld && !world.AllowedAccess(client))
                 {
                     client.SendFailureAndClose(FailureForceCloseGame, "Realm closed.");
                     return;
                 }
-                client.HandoffCharacter = null;
-                client.Character = character;
-                client.Player = new Player(client);
-                client.State = ProtocolState.Connected;
-                client.Send(CreateSuccess(world.AddEntity(client.Player, PickSpawnPosition(world)), client.Character.Id));
-                if (client.Account != null)
-                    Manager.CompletePendingTransfer(client.Account.Id);
+                CharacterModel character = Database.PrepareCharacter(client.Account, classType, skinType);
+                if (character == null)
+                {
+                    client.SendFailureAndClose(FailureForceCloseGame, "Failed to create character.");
+                    return;
+                }
+                //W03: CreateSuccess and the first frame wait for the commit, so the client never hears of a character
+                //the store does not have. The token keeps a late completion from joining a different connection.
+                object token = new object();
+                client.PendingJoin = token;
+                Database.CommitCharacter(client.Account, character, committed => FinishCreateJoin(client, token, character, committed));
             }
+        }
+
+        //Main thread, after the character row committed (or the commit failed).
+        private static void FinishCreateJoin(Client client, object token, CharacterModel character, bool committed)
+        {
+            if (!ReferenceEquals(client.PendingJoin, token))
+                return; //the connection went away, or the join was superseded
+            client.PendingJoin = null;
+            if (!client.Active || client.State != ProtocolState.Awaiting)
+                return;
+            if (!committed)
+            {
+                client.SendFailureAndClose(FailureForceCloseGame, "Failed to create character.");
+                return;
+            }
+
+            World world = Manager.GetWorld(client.TargetWorldId);
+            if (world is RealmWorld && !world.AllowedAccess(client))
+            {
+                client.SendFailureAndClose(FailureForceCloseGame, "Realm closed.");
+                return;
+            }
+            client.HandoffCharacter = null;
+            client.Character = character;
+            client.Player = new Player(client);
+            client.State = ProtocolState.Connected;
+            client.Send(CreateSuccess(world.AddEntity(client.Player, PickSpawnPosition(world)), client.Character.Id));
+            client.Player.SendJoinFrame(); //W04: first Update + NewTick now, not at the next world tick
+            if (client.Account != null)
+                Manager.CompletePendingTransfer(client.Account.Id);
         }
 
         //Join position from the world's spawn list, mirroring
@@ -685,8 +775,9 @@ namespace RotMG.Networking
         public static void Load(Client client, PacketReader rdr)
         {
             int charId = rdr.ReadInt32();
+            if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "Load rx"); //[hop]
 
-            if (client.State == ProtocolState.Awaiting)
+            if (client.State == ProtocolState.Awaiting && client.PendingJoin == null)
             {
                 CharacterModel character = null;
                 if (client.HandoffCharacter != null && client.HandoffCharacter.Id == charId)
@@ -701,6 +792,7 @@ namespace RotMG.Networking
                     character = Database.LoadCharacter(client.Account, charId);
                 }
                 client.HandoffCharacter = null;
+                if (HopTrace.Enabled) HopTrace.Mark(client.HopAccount, "Load: character resolved"); //[hop]
                 if (character == null || character.IsNull || character.Dead || character.Deleted)
                 {
                     client.SendFailureAndClose(FailureForceCloseGame, "Failed to load character.");
@@ -716,7 +808,10 @@ namespace RotMG.Networking
                 client.Character = character;
                 client.Player = new Player(client);
                 client.State = ProtocolState.Connected;
+                if (HopTrace.Enabled) HopTrace.Watch(client, HopTrace.WatchCreateSuccess); //[hop]
                 client.Send(CreateSuccess(world.AddEntity(client.Player, PickSpawnPosition(world)), client.Character.Id));
+                if (HopTrace.Enabled) HopTrace.Joined(client); //[hop]
+                client.Player.SendJoinFrame(); //W04: first Update + NewTick now, not at the next world tick
                 if (client.Account != null)
                     Manager.CompletePendingTransfer(client.Account.Id);
             }

@@ -35,10 +35,18 @@ namespace RotMG.Common
             Data = string.IsNullOrWhiteSpace(raw) ? null : XElement.Parse(raw);
         }
 
+        //Queued on the writer (W03): the tick thread never waits for the fsync. Reads on the main thread still see
+        //the new row (Database.GetKey consults the queued writes). Use SaveThen when an ack depends on the commit.
         public void Save()
         {
             Data = Export(false);
-            Database.SetKey(Key, Data.ToString());
+            Database.WriteAtomically(new Dictionary<string, string> { { Key, Data.ToString() } });
+        }
+
+        public void SaveThen(Action<bool> onDone)
+        {
+            Data = Export(false);
+            Database.WriteAtomicallyThen(new Dictionary<string, string> { { Key, Data.ToString() } }, null, onDone);
         }
 
         public bool IsNull => Data == null;
@@ -347,7 +355,22 @@ namespace RotMG.Common
         public List<int> AliveChars;
         public List<int> DeadChars;
         public List<int> OwnedSkins;
-        public bool Ranked;
+        //[W11] Authority level (Common/Rank.cs). Ranked is derived from it and kept for readers and old builds.
+        public Rank Rank;
+        public bool Ranked
+        {
+            get => Rank >= Rank.Admin;
+            set
+            {
+                if (value)
+                {
+                    if (Rank < Rank.Admin)
+                        Rank = Rank.Admin;
+                }
+                else if (Rank >= Rank.Admin)
+                    Rank = Rank.Player;
+            }
+        }
         public bool Muted;
         public bool Banned;
         public string GuildName;
@@ -386,7 +409,10 @@ namespace RotMG.Common
             AliveChars = Data.ParseIntList("AliveChars", ",", new List<int>());
             DeadChars = Data.ParseIntList("DeadChars", ",", new List<int>());
             OwnedSkins = Data.ParseIntList("OwnedSkins", ",", new List<int>());
-            Ranked = Data.ParseBool("Ranked");
+            //[W11] Migration: a saved account has no Rank element, only Ranked=true, which means Admin.
+            Rank = (Rank)Data.ParseInt("Rank");
+            if (Data.ParseBool("Ranked") && Rank < Rank.Admin)
+                Rank = Rank.Admin;
             Muted = Data.ParseBool("Muted");
             Banned = Data.ParseBool("Banned");
             GuildName = Data.ParseString("GuildName");
@@ -438,6 +464,7 @@ namespace RotMG.Common
                 data.Add(new XElement("AliveChars", string.Join(",", AliveChars)));
                 data.Add(new XElement("DeadChars", string.Join(",", DeadChars)));
                 data.Add(new XElement("OwnedSkins", string.Join(",", OwnedSkins)));
+                data.Add(new XElement("Rank", (int)Rank));
                 data.Add(new XElement("Ranked", Ranked));
                 data.Add(new XElement("Muted", Muted));
                 data.Add(new XElement("Banned", Banned));

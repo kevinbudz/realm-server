@@ -63,9 +63,11 @@ namespace RotMG.Game.Entities
                     if (exp > Player.GetNextLevelEXP(player.Level) / 10)
                         exp = Player.GetNextLevelEXP(player.Level) / 10;
                     if (player.GainEXP(exp))
+                        //PlayerChunks also holds Decoys (World.AddEntity), which are not Players:
+                        //the unchecked cast here was a NullReferenceException on the world tick.
                         foreach (Entity p in l)
-                            if (!p.Equals(player)) 
-                                (p as Player).FameStats.LevelUpAssists++;
+                            if (p is Player other && !other.Equals(player))
+                                other.FameStats.LevelUpAssists++;
                 }
             }
 

@@ -1,5 +1,6 @@
 ﻿using RotMG.Common;
 using RotMG.Networking;
+using RotMG.Utils;
 using System.Collections.Generic;
 
 namespace RotMG.Game.Entities.Vendors
@@ -25,6 +26,16 @@ namespace RotMG.Game.Entities.Vendors
             SetSV(StatType.MerchandisePrice, Price);
             SetSV(StatType.MerchandiseCurrency, (int)Currency);
             SetSV(StatType.MerchandiseRankReq, RankReq);
+        }
+
+        //The client only opens a vendor it stands next to (realm-cpp World::interactive_target: the nearest
+        //interactive entity, strictly under 1 tile). Reuse the portal reach (Player.MaxPortalInteractDistance,
+        //1.5 tiles: one tile plus latency slack). Checked by GameServer.Buy before Buy runs.
+        public const float MaxBuyDistance = Player.MaxPortalInteractDistance;
+
+        public bool IsInBuyRange(Player player)
+        {
+            return player.Position.Distance(Position) <= MaxBuyDistance;
         }
 
         public virtual void Buy(Player player)
@@ -243,18 +254,22 @@ namespace RotMG.Game.Entities.Vendors
                 player.Client.Send(GameServer.BuyResult(9, "Not enough Guild Fame!"));
                 return;
             }
-            if (!Database.ChangeGuildLevel(player.GuildName, UpgradeLevel))
+            //Level and guild-fame spend commit as ONE bundle (W03). The success reply and the guild message wait for it.
+            string guildName = player.GuildName;
+            int level = UpgradeLevel;
+            if (!Database.UpgradeGuildHall(guildName, level, Price, committed =>
+            {
+                if (!committed)
+                {
+                    player.Client.Send(GameServer.BuyResult(1, "Purchase Error: Transaction failed."));
+                    return;
+                }
+                player.Client.Send(GameServer.BuyResult(0, "Upgrade successful! Please leave the Guild Hall to have it upgraded."));
+                player.SendGuild(player.Name + " has upgraded the guild hall to level " + level + "!");
+            }))
             {
                 player.SendError("Upgrade must be purchased in order.");
-                return;
             }
-            if (!player.TryDeduct(CurrencyType.GuildFame, Price))
-            {
-                player.Client.Send(GameServer.BuyResult(9, "Not enough Guild Fame!"));
-                return;
-            }
-            player.Client.Send(GameServer.BuyResult(0, "Upgrade successful! Please leave the Guild Hall to have it upgraded."));
-            player.SendGuild(player.Name + " has upgraded the guild hall to level " + UpgradeLevel + "!");
         }
     }
 
@@ -302,13 +317,26 @@ namespace RotMG.Game.Entities.Vendors
                 return;
             }
 
-            //Fame deduct, chest-count bump and player rows commit atomically
-            //(see BuyVaultChestSlot); rapid double-Buy packets can no longer
-            //read the same count and collapse two purchases into one chest.
+            //Fame deduct, chest-count bump and player rows commit as ONE bundle (see BuyVaultChestSlot, W03). The chest
+            //stays hidden behind the reply: the purchase is acked only after the commit.
             try
             {
                 player.SaveToCharacter();
-                int index = Database.BuyVaultChestSlot(player.Client.Account, player.Client.Character, Price);
+                int index = Database.BuyVaultChestSlot(player.Client.Account, player.Client.Character, Price, committed =>
+                {
+                    if (!committed)
+                    {
+                        //The commit failed: undo the in-memory deduct and remove the chest.
+                        player.Client.Account.Stats.Fame += Price;
+                        player.Fame = player.Client.Account.Stats.Fame;
+                        if (chest.Parent != null)
+                            chest.Parent.RemoveEntity(chest);
+                        SendFailed(player, "Purchase Error: Transaction failed.");
+                        return;
+                    }
+                    player.Fame = player.Client.Account.Stats.Fame;
+                    SendSuccess(player, "Vault chest purchased!");
+                });
                 if (index == -1)
                 {
                     player.Parent.RemoveEntity(chest);
@@ -321,8 +349,7 @@ namespace RotMG.Game.Entities.Vendors
             }
             catch
             {
-                //The transaction committed nothing, so refund the in-memory
-                //deduct before anything else can persist it.
+                //Nothing was queued, so refund the in-memory deduct before anything else can persist it.
                 try
                 {
                     player.Client.Account.Stats.Fame += Price;
@@ -333,9 +360,6 @@ namespace RotMG.Game.Entities.Vendors
                 SendFailed(player, "Purchase Error: Transaction failed.");
                 return;
             }
-
-            player.Fame = player.Client.Account.Stats.Fame;
-            SendSuccess(player, "Vault chest purchased!");
         }
     }
 }

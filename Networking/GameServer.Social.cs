@@ -17,7 +17,7 @@ namespace RotMG.Networking
             int objectId = rdr.ReadInt32();
             if (client.Player == null || client.Player.Parent == null)
                 return;
-            client.Player.TryTeleportTo(objectId);
+            client.Player.TryTeleportTo(objectId); //Checks World.AllowTeleport.
         }
 
         public static void Buy(Client client, PacketReader rdr)
@@ -27,7 +27,15 @@ namespace RotMG.Networking
             if (player == null || player.Parent == null)
                 return;
             SellableObject obj = player.Parent.GetEntity(objectId) as SellableObject;
-            obj?.Buy(player);
+            if (obj == null)
+                return;
+            //Vendors have no other reach check: a crafted Buy could purchase from any vendor in the world.
+            if (!obj.IsInBuyRange(player))
+            {
+                player.Client.Send(BuyResult(1, "Purchase Error: Too far from the vendor."));
+                return;
+            }
+            obj.Buy(player);
         }
 
         public static void RequestTrade(Client client, PacketReader rdr)
@@ -101,7 +109,23 @@ namespace RotMG.Networking
             //the in-memory deduct and the commit persists nothing, which is
             //consistent: no charge, no guild).
             acc.Stats.Fame -= Database.GuildCreationFameCost;
-            Database.GuildResult result = Database.CreateGuild(name, acc);
+            Database.GuildResult result = Database.CreateGuild(name, acc, committed =>
+            {
+                //W03: the guild, the membership and the charge (already in memory) commit as one bundle. The reply
+                //waits for it; a failed commit refunds the charge.
+                if (!committed)
+                {
+                    acc.Stats.Fame += Database.GuildCreationFameCost;
+                    if (client.Active)
+                        client.Send(GuildResult(false, "Guild Creation Error: Save failed"));
+                    return;
+                }
+                player.Fame = acc.Stats.Fame;
+                player.GuildName = acc.GuildName;
+                player.GuildRank = acc.GuildRank;
+                if (client.Active)
+                    client.Send(GuildResult(true, "Success!"));
+            });
             if (result != Database.GuildResult.OK)
             {
                 acc.Stats.Fame += Database.GuildCreationFameCost;
@@ -109,11 +133,6 @@ namespace RotMG.Networking
                 client.Send(GuildResult(false, "Guild Creation Error: " + result));
                 return;
             }
-
-            player.Fame = acc.Stats.Fame;
-            player.GuildName = acc.GuildName;
-            player.GuildRank = acc.GuildRank;
-            client.Send(GuildResult(true, "Success!"));
         }
 
         public static void GuildInvite(Client client, PacketReader rdr)
@@ -160,14 +179,21 @@ namespace RotMG.Networking
             //Resigning.
             if (client.Account.Name.Equals(name, System.StringComparison.InvariantCultureIgnoreCase))
             {
-                player.SendGuild(player.Name + " has left the guild.");
-                if (Database.RemoveFromGuild(client.Account) != Database.GuildResult.OK)
+                AccountModel leaving = client.Account;
+                if (Database.RemoveFromGuild(leaving, committed =>
+                {
+                    if (!committed)
+                    {
+                        player.SendError("Could not leave the guild. Try again.");
+                        return;
+                    }
+                    player.GuildName = null;
+                    player.GuildRank = 0;
+                    player.SendGuild(player.Name + " has left the guild.");
+                }) != Database.GuildResult.OK)
                 {
                     player.SendError("Guild not found.");
-                    return;
                 }
-                player.GuildName = null;
-                player.GuildRank = 0;
                 return;
             }
 
@@ -190,18 +216,25 @@ namespace RotMG.Networking
                 string.Equals(client.Account.GuildName, targetAcc.GuildName, System.StringComparison.Ordinal) &&
                 client.Account.GuildRank > targetAcc.GuildRank)
             {
-                if (Database.RemoveFromGuild(targetAcc) != Database.GuildResult.OK)
+                string kickedName = targetAcc.Name;
+                if (Database.RemoveFromGuild(targetAcc, committed =>
+                {
+                    if (!committed)
+                    {
+                        player.SendError("Could not remove that member. Try again.");
+                        return;
+                    }
+                    if (targetClient != null && targetClient.Player != null)
+                    {
+                        targetClient.Player.GuildName = null;
+                        targetClient.Player.GuildRank = 0;
+                        targetClient.Player.SendInfo("You have been kicked from the guild.");
+                    }
+                    player.SendGuild(kickedName + " has been kicked from the guild by " + player.Name);
+                }) != Database.GuildResult.OK)
                 {
                     player.SendError("Guild not found.");
-                    return;
                 }
-                if (targetClient != null && targetClient.Player != null)
-                {
-                    targetClient.Player.GuildName = null;
-                    targetClient.Player.GuildRank = 0;
-                    targetClient.Player.SendInfo("You have been kicked from the guild.");
-                }
-                player.SendGuild(targetAcc.Name + " has been kicked from the guild by " + player.Name);
                 return;
             }
 
@@ -231,17 +264,22 @@ namespace RotMG.Networking
                 return;
             }
 
-            Database.GuildResult result = Database.AddGuildMember(player.GuildInvite, client.Account);
-            if (result != Database.GuildResult.OK)
+            AccountModel joining = client.Account;
+            string invite = player.GuildInvite;
+            Database.GuildResult result = Database.AddGuildMember(invite, joining, 0, committed =>
             {
+                if (!committed)
+                {
+                    player.SendError("Could not join guild. (Save failed)");
+                    return;
+                }
+                player.GuildName = joining.GuildName;
+                player.GuildRank = joining.GuildRank;
+                player.GuildInvite = null;
+                player.SendGuild(player.Name + " has joined the guild!");
+            });
+            if (result != Database.GuildResult.OK)
                 player.SendError("Could not join guild. (" + result + ")");
-                return;
-            }
-
-            player.GuildName = client.Account.GuildName;
-            player.GuildRank = client.Account.GuildRank;
-            player.GuildInvite = null;
-            player.SendGuild(player.Name + " has joined the guild!");
         }
 
         public static void ChangeGuildRank(Client client, PacketReader rdr)
@@ -286,17 +324,22 @@ namespace RotMG.Networking
             }
 
             bool wasPromotion = targetAcc.GuildRank < rank;
-            if (Database.ChangeGuildRank(targetAcc, rank) != Database.GuildResult.OK)
+            if (Database.ChangeGuildRank(targetAcc, rank, committed =>
+            {
+                if (!committed)
+                {
+                    player.SendError("Failed to change rank.");
+                    return;
+                }
+                if (targetClient != null && targetClient.Player != null)
+                    targetClient.Player.GuildRank = rank;
+                player.SendGuild(targetAcc.Name + " has been " +
+                    (wasPromotion ? "promoted to " : "demoted to ") +
+                    Database.ResolveGuildRank(rank) + ".");
+            }) != Database.GuildResult.OK)
             {
                 player.SendError("Failed to change rank.");
-                return;
             }
-            if (targetClient != null && targetClient.Player != null)
-                targetClient.Player.GuildRank = rank;
-
-            player.SendGuild(targetAcc.Name + " has been " +
-                (wasPromotion ? "promoted to " : "demoted to ") +
-                Database.ResolveGuildRank(rank) + ".");
         }
 
         public static void Reskin(Client client, PacketReader rdr)

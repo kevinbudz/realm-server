@@ -106,6 +106,14 @@ namespace RotMG.Networking
         //Player.Tick skips validation/ack sweeps, Death/Damage no-op, and
         //Disconnect persists the already-captured Character when Parent is null.
         public bool Reconnecting;
+        //Create whose character row is still committing (W03). A fresh token per Create; the completion joins the
+        //world only if the token is still the current one. Cleared on every connection reset, so a late completion
+        //cannot join a later connection that reuses this object.
+        public object PendingJoin;
+        //[hop] trace state, see Common/HopTrace.cs. Stays 0 unless a traced hop owns this socket.
+        public int HopAccount = -1; //-1 = not a traced hop socket (account ids start at 0)
+        public int HopMask;
+        private List<(int End, int Bit)> _hopMarks; //[hop] IO thread only (under _ioLock)
         //Set by SendFailureAndClose: Read ignores further packets and Tick
         //skips the handshake timeout so Disconnect cannot wipe the Failure
         //before the 1 s flush window.
@@ -207,9 +215,12 @@ namespace RotMG.Networking
                 RequestDisconnect();
                 return;
             }
-            FinishDisconnect(false);
+            FinishDisconnect();
         }
 
+        //Kept for the Hello kick path. The disconnect save is queued like every other save: the next main-thread
+        //read of the account (Hello's load included) sees it through the writer's read-your-writes overlay, so the
+        //tick thread no longer waits for the commit here.
         public void DisconnectWaitingForSave()
         {
             Program.AssertMainThread("Client.Disconnect");
@@ -218,7 +229,7 @@ namespace RotMG.Networking
                 RequestDisconnect();
                 return;
             }
-            FinishDisconnect(true);
+            FinishDisconnect();
         }
 
         private bool ConsumeDisconnectRequest()
@@ -230,11 +241,12 @@ namespace RotMG.Networking
             return true;
         }
 
-        private void FinishDisconnect(bool waitForSave) //Disconnects, clears all individual client data and pushes the instance back to the server queue.
+        private void FinishDisconnect() //Disconnects, clears all individual client data and pushes the instance back to the server queue.
         {
             Program.AssertMainThread("Client.Disconnect");
             if (State == ProtocolState.Disconnected)
                 return;
+            bool hopOldSocket = HopTrace.Enabled && Reconnecting && HopAccount >= 0; //[hop]
 #if DEBUG
             try
             {
@@ -294,7 +306,7 @@ namespace RotMG.Networking
                     else if (dead)
                         acc.Save();
                     else if (ch != null)
-                        Database.SaveAccountAndCharacter(acc, ch, waitForSave);
+                        Database.SaveAccountAndCharacter(acc, ch);
                     else
                         acc.Save();
                 }
@@ -342,11 +354,15 @@ namespace RotMG.Networking
                 _closing = false;
                 _droppedCosmetic = 0;
                 Volatile.Write(ref _pendingBytes, 0);
+                _hopMarks = null; //[hop]
             }
+            if (hopOldSocket) //[hop]
+                HopTrace.Mark(HopAccount, "old socket closed (server side)"); //[hop]
 
             //Clear data 
             Active = false;
             Reconnecting = false;
+            PendingJoin = null;
             string ip = IP;
             IP = null;
             GameServer.ReleaseIp(ip);
@@ -366,11 +382,15 @@ namespace RotMG.Networking
         {
             _socket = socket;
             _socket.Blocking = false;
+            //Nagle + Linux delayed ACK added ~40 ms between back-to-back small writes (e.g. CreateSuccess then the first Update).
+            //The IO thread already coalesces each poll's packets into one buffer, so NoDelay only affects the rest.
+            _socket.NoDelay = true;
 
             State = ProtocolState.Handshaked;
             IP = ip;
             Active = true;
             Reconnecting = false;
+            PendingJoin = null;
             HandoffCharacter = null;
             DCTime = -1;
             //TickWatch, not TotalTimeUnsynced: the latter is 0 until the
@@ -390,6 +410,7 @@ namespace RotMG.Networking
             while (_inbound.TryDequeue(out _)) { }
 
             Manager.AddClient(this);
+            if (HopTrace.Enabled) HopTrace.Mark(HopAccount, "BeginHandling on main thread"); //[hop]
         }
 
         //Tick-thread half: no socket calls here. The IO thread frames
@@ -706,6 +727,31 @@ namespace RotMG.Networking
             }
         }
 
+        //[hop] IO thread (under _ioLock): a watched packet was copied into the send buffer.
+        //Its end offset is timestamped once the kernel accepts that many bytes.
+        private void HopNoteBuffered(byte[] packet, int end)
+        {
+            int bit = HopTrace.WatchBitFor(packet);
+            if (bit == 0 || (Volatile.Read(ref HopMask) & bit) == 0)
+                return;
+            Interlocked.And(ref HopMask, ~bit);
+            (_hopMarks ??= new List<(int End, int Bit)>()).Add((end, bit));
+        }
+
+        //[hop] IO thread: sentUpTo buffer bytes reached the kernel.
+        private void HopWritten(int sentUpTo)
+        {
+            if (_hopMarks == null || _hopMarks.Count == 0)
+                return;
+            long at = HopTrace.Now();
+            int n = 0;
+            while (n < _hopMarks.Count && _hopMarks[n].End <= sentUpTo)
+                n++;
+            for (int i = 0; i < n; i++)
+                HopTrace.Written(this, _hopMarks[i].Bit, at);
+            _hopMarks.RemoveRange(0, n);
+        }
+
         //IO-thread half of the old StartSend: coalesce everything queued
         //into the pooled buffer and push it with socket sends. The socket is
         //non-blocking (see BeginHandling), so a full kernel buffer just
@@ -816,6 +862,8 @@ namespace RotMG.Networking
                         buf[total + 3] = (byte)length;
                         Buffer.BlockCopy(packet, 0, buf, total + GameServer.PrefixLengthWithId, packet.Length);
                         total += length;
+                        if (HopTrace.Enabled && Volatile.Read(ref HopMask) != 0) //[hop]
+                            HopNoteBuffered(packet, total); //[hop]
                     }
                 }
 
@@ -831,9 +879,15 @@ namespace RotMG.Networking
             {
                 int written = _socket.Send(_send.Data, _send.BytesWritten, _send.PacketLength - _send.BytesWritten, SocketFlags.None);
                 if (written < _send.PacketLength - _send.BytesWritten)
+                {
                     _send.BytesWritten += written;
+                    if (HopTrace.Enabled) HopWritten(_send.BytesWritten); //[hop]
+                }
                 else
+                {
+                    if (HopTrace.Enabled) HopWritten(_send.PacketLength); //[hop]
                     _send.Reset();
+                }
             }
             catch (SocketException ex) when (ex.SocketErrorCode == SocketError.WouldBlock)
             {

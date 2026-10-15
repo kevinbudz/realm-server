@@ -16,6 +16,13 @@ namespace RotMG.Game.Entities
         {
             if (Parent == null)
                 return;
+            //World.AllowTeleport (Worlds.xml: false in Guild Hall, Castle, Oryx's Chamber). Every teleport goes through
+            //here: the Teleport packet (GameServer.Teleport) and the /tp command (W05). The client refuses the same way.
+            if (!Parent.AllowTeleport)
+            {
+                SendError("Teleporting is not allowed in this map.");
+                return;
+            }
 
             Entity target = Parent.GetEntity(objectId);
             if (target == null || !(target is Player) || target == this)

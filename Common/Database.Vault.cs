@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace RotMG.Common
@@ -51,34 +52,30 @@ namespace RotMG.Common
             SetKey($"vault.{accountId}.{index}", VaultValue(types, datas));
         }
 
-        //Buys one more vault chest: fame check, deduct, chest-count bump and
-        //the account/character rows commit in ONE transaction, with the count
-        //read inside the transaction. Two rapid Buy packets used to both read
-        //the same count and both write count+1 (double charge, one chest);
-        //a crash between deduct and count used to charge for nothing.
-        //Returns the new chest index, or -1 when funds are insufficient.
-        public static int BuyVaultChestSlot(AccountModel acc, CharacterModel ch, int price)
+        //Buys one more vault chest (W03). The fame deduct, the chest-count bump and the account and character rows are ONE
+        //bundle. The check and the count run on the main thread against the overlay, so two rapid buys cannot both read
+        //the same count. Returns the new chest index, or -1 when funds are short (nothing queued). onDone(committed) runs
+        //after the commit; on failure the caller refunds the deduct (it is only in memory until then).
+        public static int BuyVaultChestSlot(AccountModel acc, CharacterModel ch, int price, Action<bool> onDone)
         {
             if (acc.Stats.Fame < price)
                 return -1;
             acc.Stats.Fame -= price;
+            int count = 1;
+            int.TryParse(GetKey($"vault.{acc.Id}.count"), out count);
+            if (count < 1)
+                count = 1;
             string accountXml = acc.Export(false).ToString();
             string charXml = ch.Export(false).ToString();
-            int index = -1;
-            Transact(conn =>
+            WriteAtomicallyThen(new Dictionary<string, string>
             {
-                int count = 1;
-                int.TryParse(GetKeyInTx(conn, $"vault.{acc.Id}.count"), out count);
-                if (count < 1)
-                    count = 1;
-                index = count;
-                UpsertKeyInTx(conn, $"vault.{acc.Id}.count", (count + 1).ToString());
-                UpsertKeyInTx(conn, AccountKey(acc.Id), accountXml);
-                UpsertKeyInTx(conn, CharacterKey(acc.Id, ch.Id), charXml);
-            });
+                { $"vault.{acc.Id}.count", (count + 1).ToString() },
+                { AccountKey(acc.Id), accountXml },
+                { CharacterKey(acc.Id, ch.Id), charXml }
+            }, null, onDone);
             acc.Data = System.Xml.Linq.XElement.Parse(accountXml);
             ch.Data = System.Xml.Linq.XElement.Parse(charXml);
-            return index;
+            return count;
         }
     }
 }

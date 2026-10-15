@@ -1,5 +1,8 @@
+using RotMG.Game;
+using RotMG.Game.Entities;
 using RotMG.Utils;
 using System;
+using System.Collections.Generic;
 
 namespace RotMG.Game.Logic.Transitions
 {
@@ -24,9 +27,11 @@ namespace RotMG.Game.Logic.Transitions
             //Statics are not in EntityChunks (see
             //BehaviorHelpers.NearbyEntities), but realm-src-master sees
             //them via EnemiesCollision.
-            float r2 = Distance * Distance;
-            foreach (Entity en in host.Parent.Statics.Values)
-                if (en.Desc.Group == Group && host.Position.DistanceSquared(en.Position) < r2)
+            //W05: statics come from the spatial index (same distance predicate), not a scan of Statics.
+            List<StaticObject> statics = StaticIndex.Scratch;
+            host.Parent.StaticGrid.Collect(host.Position, Distance, statics);
+            foreach (StaticObject en in statics)
+                if (en.Desc.Group == Group)
                     return false;
             return true;
         }

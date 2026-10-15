@@ -86,9 +86,12 @@ namespace RotMG.Common
             //instantly with SQLITE_LOCKED instead of waiting. WAL mode plus
             //the _lock-serialized writers below already give us concurrent
             //readers with one writer and busy_timeout backoff.
+            //Default Timeout caps a command blocked behind a long writer commit at 5 s (the Microsoft.Data.Sqlite
+            //default is 30 s). The per-connection busy handler is set in OpenConnection (W01: 1 ms sleeps).
             SqliteConnectionStringBuilder builder = new SqliteConnectionStringBuilder
             {
-                DataSource = Settings.DatabasePath
+                DataSource = Settings.DatabasePath,
+                DefaultTimeout = 5
             };
             _connectionString = builder.ToString();
 
@@ -174,10 +177,39 @@ namespace RotMG.Common
             //synchronous persists too, but re-asserting it is free.)
             using (SqliteCommand cmd = conn.CreateCommand())
             {
-                cmd.CommandText = "PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL; PRAGMA wal_autocheckpoint = 1000;";
+                cmd.CommandText = "PRAGMA synchronous = FULL; PRAGMA wal_autocheckpoint = 1000;";
                 cmd.ExecuteNonQuery();
             }
+            //W01: the bundled e_sqlite3 sleeps in whole seconds in its default busy handler, so a 6 ms writer
+            //commit stalled a reader for 1 s. This 1 ms handler must come AFTER the PRAGMA batch (a busy_timeout
+            //pragma would replace it). Default Timeout=5 (connection string) bounds the total wait.
+            int rc = sqlite3_busy_handler(conn.Handle.DangerousGetHandle(), BusyStepCallback, IntPtr.Zero);
+            if (rc != 0)
+                throw new InvalidOperationException("sqlite3_busy_handler rc=" + rc);
             return conn;
+        }
+
+        //Native busy handler (SQLitePCLRaw 2.1.6 has no managed binding). BusyStepCallback is a static field so the
+        //delegate stays rooted: a collected delegate aborts the process.
+        [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private delegate int BusyCallback(IntPtr pArg, int count);
+
+        [System.Runtime.InteropServices.DllImport("e_sqlite3", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern int sqlite3_busy_handler(IntPtr db, BusyCallback cb, IntPtr pArg);
+
+        private static readonly BusyCallback BusyStepCallback = BusyStep;
+        [ThreadStatic] private static long _busyStartTicks;
+        private const double BusyLimitMs = 5000;
+
+        private static int BusyStep(IntPtr pArg, int count)
+        {
+            if (count == 0)
+                _busyStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            double elapsedMs = (System.Diagnostics.Stopwatch.GetTimestamp() - _busyStartTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            if (elapsedMs + 1 > BusyLimitMs)
+                return 0;
+            Thread.Sleep(1);
+            return 1;
         }
 
         private static string GetKeyInTx(SqliteConnection conn, string combinedKey)
@@ -221,18 +253,37 @@ namespace RotMG.Common
         private abstract class DbJob
         {
             public Action Completion;
+            //Commit outcome for callers that gate an acknowledgement on the write: true after the commit, false when it
+            //failed (nothing persisted). Runs on the main thread like Completion, but on failure too.
+            public Action<bool> Outcome;
         }
 
         private sealed class PlainJob : DbJob
         {
             public Dictionary<string, string> Writes;
             public List<string> Deletes;
+            public long Seq;
         }
+
+        //Read-your-writes overlay (W03). A plain bundle is visible to GetKey from the moment it is queued until its
+        //commit attempt ends, so a main-thread read-then-write sees the newest value without waiting for the writer.
+        //Only the newest bundle per key is kept (Seq); an older bundle's release leaves a newer entry alone.
+        private sealed class PendingWrite
+        {
+            public long Seq;
+            public string Value;
+            public bool Deleted;
+        }
+        private static readonly object _pendingLock = new object();
+        private static readonly Dictionary<string, PendingWrite> _pending = new Dictionary<string, PendingWrite>();
+        private static long _jobSeq;
 
         private sealed class FuncJob : DbJob
         {
             public Action<SqliteConnection> Work;
-            public ManualResetEventSlim Done;
+            //Keys this job will write with values already known on the main thread (W03 overlay). Released when the job ends.
+            public Dictionary<string, string> Declared;
+            public long Seq;
             public Exception Error;
         }
 
@@ -282,13 +333,31 @@ namespace RotMG.Common
             {
                 using (SqliteConnection conn = OpenConnection())
                 {
-                    foreach (DbJob first in _writerQueue.GetConsumingEnumerable())
+                    while (true)
                     {
+                        //Timed take so the periodic WAL checkpoint runs here, on the writer, instead of on the tick thread.
+                        if (!_writerQueue.TryTake(out DbJob first, 1000))
+                        {
+                            if (_writerQueue.IsCompleted)
+                                break;
+                            MaybeCheckpoint(conn);
+                            continue;
+                        }
                         List<DbJob> batch = new List<DbJob>(64);
                         batch.Add(first);
                         while (batch.Count < 512 && _writerQueue.TryTake(out DbJob extra))
                             batch.Add(extra);
-                        RunBatch(conn, batch);
+                        long hopT0 = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
+                        try
+                        {
+                            RunBatch(conn, batch);
+                        }
+                        catch (Exception e)
+                        {
+                            //One bad batch must not stop the writer or leave its overlay entries behind.
+                            FailJobs(batch, e);
+                        }
+                        if (HopTrace.Enabled) HopTrace.Batch(batch.Count, CountPlainJobs(batch), hopT0); //[hop]
                     }
                 }
             }
@@ -300,7 +369,44 @@ namespace RotMG.Common
 #else
             catch { }
 #endif
+            //The writer is gone. Stop accepting jobs (Enqueue then commits on the caller) and fail whatever is still
+            //queued, so the overlay empties and no HTTP reply waits for a commit that will never happen.
+            try { _writerQueue.CompleteAdding(); } catch { }
+            List<DbJob> stranded = new List<DbJob>();
+            while (_writerQueue != null && _writerQueue.TryTake(out DbJob rest))
+                stranded.Add(rest);
+            if (stranded.Count > 0)
+                FailJobs(stranded, null);
         }
+
+        //Runs on the writer thread between batches, outside any transaction. Keeps the WAL bounded on a server that
+        //runs for weeks without a clean shutdown (Shutdown still does the TRUNCATE checkpoint).
+        private static void MaybeCheckpoint(SqliteConnection conn)
+        {
+            if (Environment.TickCount - _lastCheckpoint < CheckpointIntervalMS)
+                return;
+            _lastCheckpoint = Environment.TickCount;
+            try
+            {
+                using (SqliteCommand cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            catch { }
+        }
+
+        private static int CountPlainJobs(List<DbJob> batch) //[hop]
+        {
+            if (!HopTrace.Active) //[hop]
+                return 0; //[hop]
+            int plain = 0; //[hop]
+            foreach (DbJob job in batch) //[hop]
+                if (job is PlainJob) //[hop]
+                    plain++; //[hop]
+            return plain; //[hop]
+        } //[hop]
 
         private static void RunBatch(SqliteConnection conn, List<DbJob> batch)
         {
@@ -390,13 +496,20 @@ namespace RotMG.Common
                 return false;
             }
             for (int k = from; k < to; k++)
-                if (batch[k].Completion != null)
-                    completions.Add(batch[k].Completion);
+            {
+                PlainJob job = (PlainJob)batch[k];
+                ReleasePending(job);
+                if (job.Completion != null)
+                    completions.Add(job.Completion);
+                if (job.Outcome != null)
+                    completions.Add(() => job.Outcome(true));
+            }
             return true;
         }
 
         private static void CommitOnePlain(SqliteConnection conn, PlainJob job, List<Action> completions)
         {
+            bool committed = false;
             try
             {
                 BeginImmediate(conn);
@@ -410,8 +523,7 @@ namespace RotMG.Common
                     Rollback(conn);
                     throw;
                 }
-                if (job.Completion != null)
-                    completions.Add(job.Completion);
+                committed = true;
             }
 #if DEBUG
             catch (Exception e)
@@ -421,6 +533,11 @@ namespace RotMG.Common
 #else
             catch { }
 #endif
+            ReleasePending(job);
+            if (committed && job.Completion != null)
+                completions.Add(job.Completion);
+            if (job.Outcome != null)
+                completions.Add(() => job.Outcome(committed));
         }
 
         private static void RunFunc(SqliteConnection conn, FuncJob job, List<Action> completions)
@@ -449,48 +566,19 @@ namespace RotMG.Common
             }
             finally
             {
-                try { job.Done?.Set(); } catch { }
+                ReleaseKeys(job.Declared?.Keys, null, job.Seq);
+                if (job.Outcome != null)
+                {
+                    bool ok = job.Error == null;
+                    completions.Add(() => job.Outcome(ok));
+                }
             }
         }
 
-        //Runs work inside one IMMEDIATE transaction on the writer thread and
-        //blocks the caller until it commits. Rare paths only (register, char
-        //delete, vault-chest buy, renames): the tick thread must never wait
-        //per-action, so hot paths use WriteAtomically / TransactAsync instead.
-        //Crash rule is unchanged: once the commit returns, everything is
-        //durable; if the process dies first, none of it is.
-        private static void Transact(Action<SqliteConnection> work)
-        {
-            //Re-entrant guard: func jobs calling back in run inline instead
-            //of queueing behind themselves.
-            if (Thread.CurrentThread == _writerThread)
-            {
-                using (SqliteConnection conn = OpenConnection())
-                {
-                    BeginImmediate(conn);
-                    try
-                    {
-                        work(conn);
-                        Commit(conn);
-                    }
-                    catch
-                    {
-                        Rollback(conn);
-                        throw;
-                    }
-                }
-                return;
-            }
-            FuncJob job = new FuncJob { Work = work, Done = new ManualResetEventSlim(false) };
-            Enqueue(job);
-            job.Done.Wait();
-            if (job.Error != null)
-                throw job.Error;
-        }
 
         //Fire-and-forget read-modify-write on the writer thread. The optional
         //completion hops to the main thread after the commit.
-        private static void TransactAsync(Action<SqliteConnection> work, Action onCommitted = null)
+        private static void TransactAsync(Action<SqliteConnection> work, Action onCommitted = null, Dictionary<string, string> declared = null)
         {
             if (Thread.CurrentThread == _writerThread)
             {
@@ -501,7 +589,14 @@ namespace RotMG.Common
                 }
                 return;
             }
-            Enqueue(new FuncJob { Work = work, Completion = onCommitted });
+            FuncJob job = new FuncJob { Work = work, Completion = onCommitted, Declared = declared, Seq = Interlocked.Increment(ref _jobSeq) };
+            if (declared != null)
+            {
+                lock (_pendingLock)
+                    foreach (KeyValuePair<string, string> kv in declared)
+                        _pending[kv.Key] = new PendingWrite { Seq = job.Seq, Value = kv.Value ?? "" };
+            }
+            Enqueue(job);
         }
 
         private static void RunFuncDirect(Action<SqliteConnection> work)
@@ -530,12 +625,30 @@ namespace RotMG.Common
                 //Pre-Init (tests/tools) or post-Shutdown: fall back to a
                 //direct commit so no save is silently lost.
                 if (job is PlainJob plain)
-                    RunFuncDirect(conn => ApplyPlain(conn, plain));
-                else if (job is FuncJob func)
+                {
+                    bool committed = true;
+                    try { RunFuncDirect(conn => ApplyPlain(conn, plain)); }
+                    catch { committed = false; }
+                    ReleasePending(plain);
+                    if (committed && job.Completion != null)
+                    {
+                        try { job.Completion(); } catch { }
+                    }
+                    if (job.Outcome != null)
+                    {
+                        try { job.Outcome(committed); } catch { }
+                    }
+                    return;
+                }
+                if (job is FuncJob func)
                 {
                     try { RunFuncDirect(func.Work); }
                     catch (Exception e) { func.Error = e; }
-                    finally { try { func.Done?.Set(); } catch { } }
+                    ReleaseKeys(func.Declared?.Keys, null, func.Seq);
+                    if (func.Outcome != null)
+                    {
+                        try { func.Outcome(func.Error == null); } catch { }
+                    }
                 }
                 if (job.Completion != null)
                 {
@@ -543,7 +656,101 @@ namespace RotMG.Common
                 }
                 return;
             }
-            queue.Add(job);
+            try
+            {
+                queue.Add(job);
+            }
+            catch (InvalidOperationException)
+            {
+                //The writer completed between the check above and this Add: the job was never queued, so run it the
+                //same way as the fallback (and release what QueuePlain or TransactAsync registered).
+                if (job is PlainJob p)
+                    ReleasePending(p);
+                else if (job is FuncJob f)
+                    ReleaseKeys(f.Declared?.Keys, null, f.Seq);
+                Enqueue(job);
+            }
+        }
+
+        //Every queued plain bundle goes through here: its keys enter the read-your-writes overlay before the
+        //writer can see the job, so a main-thread GetKey after this call returns the new value.
+        private static void QueuePlain(PlainJob job)
+        {
+            job.Seq = Interlocked.Increment(ref _jobSeq);
+            lock (_pendingLock)
+            {
+                if (job.Writes != null)
+                    foreach (KeyValuePair<string, string> kv in job.Writes)
+                        _pending[kv.Key] = new PendingWrite { Seq = job.Seq, Value = kv.Value ?? "" };
+                if (job.Deletes != null)
+                    foreach (string key in job.Deletes)
+                        _pending[key] = new PendingWrite { Seq = job.Seq, Deleted = true };
+            }
+            Enqueue(job);
+        }
+
+        //Drops this bundle's overlay entries once its commit attempt is over (committed or rolled back). A key a newer
+        //bundle has rewritten keeps the newer entry.
+        private static void ReleasePending(PlainJob job)
+        {
+            ReleaseKeys(job.Writes?.Keys, job.Deletes, job.Seq);
+        }
+
+        //Removes this job's entries (only where no newer job has rewritten the key). Runs on every end of a job: commit,
+        //rollback, a failed batch, or the fallback path, so the overlay cannot keep entries for a job that is gone.
+        private static void ReleaseKeys(IEnumerable<string> writeKeys, IEnumerable<string> deleteKeys, long seq)
+        {
+            lock (_pendingLock)
+            {
+                if (writeKeys != null)
+                    foreach (string key in writeKeys.ToList())
+                    {
+                        if (_pending.TryGetValue(key, out PendingWrite written) && written.Seq == seq)
+                            _pending.Remove(key);
+                    }
+                if (deleteKeys != null)
+                    foreach (string key in deleteKeys.ToList())
+                    {
+                        if (_pending.TryGetValue(key, out PendingWrite deleted) && deleted.Seq == seq)
+                            _pending.Remove(key);
+                    }
+            }
+        }
+
+        //The writer could not run a batch (or is gone): release its overlay entries and answer each caller's outcome as
+        //a failure, so no reader keeps a value that will never be stored and no HTTP reply waits for the timeout.
+        private static void FailJobs(IEnumerable<DbJob> jobs, Exception reason)
+        {
+            foreach (DbJob job in jobs)
+            {
+                if (job is PlainJob plain)
+                    ReleasePending(plain);
+                else if (job is FuncJob func)
+                    ReleaseKeys(func.Declared?.Keys, null, func.Seq);
+                if (job.Outcome != null)
+                {
+                    Action<bool> outcome = job.Outcome;
+                    try { Manager.RunOnMainThread(() => outcome(false)); } catch { }
+                }
+            }
+#if DEBUG
+            try { Console.WriteLine($"<Database writer failed a batch> {reason?.Message}"); } catch { }
+#endif
+        }
+
+        //Overlay size (trace and tests): must return to 0 when the writer is idle.
+        public static int PendingWriteCount()
+        {
+            lock (_pendingLock)
+                return _pending.Count;
+        }
+
+        //True while a queued bundle has not finished its commit attempt for this key (main thread only uses this for
+        //diagnostics; reads go through GetKey, which consults the overlay).
+        private static bool HasPendingWrite(string combinedKey)
+        {
+            lock (_pendingLock)
+                return _pending.ContainsKey(combinedKey);
         }
 
         //Commits a group of key writes (and optional deletes) as ONE SQLite
@@ -554,13 +761,28 @@ namespace RotMG.Common
         //stay atomic (group commit only merges whole bundles), but the ack is
         //sent before the commit: a crash in between rolls the bundle back.
         //Paths that must not roll back after ack use WriteAtomicallyAsync
-        //(commit-gated completion) or WriteAtomicallyAndWait instead.
+        //(commit-gated completion, WriteAtomicallyThen). No blocking write exists on the tick thread (W03).
         public static void WriteAtomically(Dictionary<string, string> writes, IEnumerable<string> deletes = null)
         {
             if ((writes == null || writes.Count == 0) && deletes == null)
                 return;
             List<string> deleteList = deletes == null ? null : new List<string>(deletes);
-            Enqueue(new PlainJob { Writes = writes, Deletes = deleteList });
+            QueuePlain(new PlainJob { Writes = writes, Deletes = deleteList });
+        }
+
+        //Commit-gated bundle (W03): onDone(true) runs on the main thread after the commit, onDone(false) if it failed.
+        //Use it when the caller acknowledges success to a client, and send the ack from onDone. The tick thread never
+        //waits. A bundle with nothing to write still reports success, one main-thread pass later.
+        public static void WriteAtomicallyThen(Dictionary<string, string> writes, IEnumerable<string> deletes, Action<bool> onDone)
+        {
+            if ((writes == null || writes.Count == 0) && deletes == null)
+            {
+                if (onDone != null)
+                    Manager.RunOnMainThread(() => onDone(true));
+                return;
+            }
+            List<string> deleteList = deletes == null ? null : new List<string>(deletes);
+            QueuePlain(new PlainJob { Writes = writes, Deletes = deleteList, Outcome = onDone });
         }
 
         //Same bundle, but onCommitted runs on the main thread after the
@@ -577,32 +799,9 @@ namespace RotMG.Common
                 return;
             }
             List<string> deleteList = deletes == null ? null : new List<string>(deletes);
-            Enqueue(new PlainJob { Writes = writes, Deletes = deleteList, Completion = onCommitted });
+            QueuePlain(new PlainJob { Writes = writes, Deletes = deleteList, Completion = onCommitted });
         }
 
-        //Blocking variant for rare paths with same-call read-after-write
-        //(name changes) or in-transaction reads (vault-chest buy). Never use
-        //on a per-action hot path: it stalls the caller for the fsync.
-        public static void WriteAtomicallyAndWait(Dictionary<string, string> writes, IEnumerable<string> deletes = null)
-        {
-            if ((writes == null || writes.Count == 0) && deletes == null)
-                return;
-            List<string> deleteList = deletes == null ? null : new List<string>(deletes);
-            PlainJob plain = new PlainJob { Writes = writes, Deletes = deleteList };
-            //One job, one transaction: the func applies the plain bundle and
-            //signals, so ordering and atomicity match WriteAtomically. The
-            //Done handle is always signaled, so this cannot hang while the
-            //writer lives; pre-Init/post-Shutdown Enqueue runs inline above.
-            FuncJob job = new FuncJob
-            {
-                Work = conn => ApplyPlain(conn, plain),
-                Done = new ManualResetEventSlim(false)
-            };
-            Enqueue(job);
-            job.Done.Wait();
-            if (job.Error != null)
-                throw job.Error;
-        }
 
         //Imports pre-existing `*.file` keys once. Originals are left in place as backup.
         private static void MigrateLegacyFiles()
@@ -669,7 +868,7 @@ namespace RotMG.Common
         //saves resurrects spent currency or duplicates moved items. Queued
         //FIFO on the writer thread: the bundle still commits as one
         //transaction, but the caller does not wait for the fsync.
-        public static void SaveAccountAndCharacter(AccountModel acc, CharacterModel ch, bool andWait = false)
+        public static void SaveAccountAndCharacter(AccountModel acc, CharacterModel ch, Action<bool> onDone = null)
         {
             string accountXml = acc.Export(false).ToString();
             string charXml = ch.Export(false).ToString();
@@ -678,10 +877,10 @@ namespace RotMG.Common
                 { AccountKey(acc.Id), accountXml },
                 { CharacterKey(acc.Id, ch.Id), charXml }
             };
-            //andWait is the Hello fallback: a non-reconnect kick must land
-            //before the new connection LoadCharacter can read SQLite.
-            if (andWait)
-                WriteAtomicallyAndWait(writes);
+            //Queued like every other save. A later load for this account reads the queued
+            //rows through the overlay (GetKey), so no caller waits for the commit. onDone gates an ack on it.
+            if (onDone != null)
+                WriteAtomicallyThen(writes, null, onDone);
             else
                 WriteAtomically(writes);
             acc.Data = XElement.Parse(accountXml);
@@ -694,19 +893,25 @@ namespace RotMG.Common
         //versa); one transaction makes the swap all-or-nothing. Queued FIFO
         //on the writer thread; TradeDone is still sent immediately (a failed
         //commit only delays persistence to the next autosave, as before).
-        public static void SaveTradePair(AccountModel acc1, CharacterModel ch1, AccountModel acc2, CharacterModel ch2)
+        public static void SaveTradePair(AccountModel acc1, CharacterModel ch1, AccountModel acc2, CharacterModel ch2, Action<bool> onDone = null)
         {
             string a1 = acc1.Export(false).ToString();
             string c1 = ch1.Export(false).ToString();
             string a2 = acc2.Export(false).ToString();
             string c2 = ch2.Export(false).ToString();
-            WriteAtomically(new Dictionary<string, string>
+            //One bundle for both sides: a crash can never persist one side's items without the other's (W03: the caller's
+            //TradeDone waits for onDone, so neither client is told the swap happened before it is durable).
+            Dictionary<string, string> pair = new Dictionary<string, string>
             {
                 { AccountKey(acc1.Id), a1 },
                 { CharacterKey(acc1.Id, ch1.Id), c1 },
                 { AccountKey(acc2.Id), a2 },
                 { CharacterKey(acc2.Id, ch2.Id), c2 }
-            });
+            };
+            if (onDone != null)
+                WriteAtomicallyThen(pair, null, onDone);
+            else
+                WriteAtomically(pair);
             acc1.Data = XElement.Parse(a1);
             ch1.Data = XElement.Parse(c1);
             acc2.Data = XElement.Parse(a2);
@@ -718,11 +923,10 @@ namespace RotMG.Common
         //mutation while the player inventory only saved on disconnect, so a
         //crash in between duplicated vaulted items; this closes that window.
         //Extra writes (e.g. a vault-count bump when buying a chest) join the
-        //same transaction via extraWrites. Queued FIFO like the rest; vault
-        //callers that ack to the client use WriteAtomicallyAndWait instead.
+        //same transaction via extraWrites. onDone gates the client's ack on the commit (vault swaps are dup-sensitive).
         public static void SaveClientAndVault(AccountModel acc, CharacterModel ch,
             int vaultOwnerId, int vaultIndex, int[] vaultTypes, int[] vaultDatas,
-            Dictionary<string, string> extraWrites = null, bool andWait = false)
+            Dictionary<string, string> extraWrites = null, Action<bool> onDone = null)
         {
             string a = acc.Export(false).ToString();
             string c = ch.Export(false).ToString();
@@ -735,10 +939,8 @@ namespace RotMG.Common
             if (extraWrites != null)
                 foreach (KeyValuePair<string, string> kv in extraWrites)
                     writes[kv.Key] = kv.Value;
-            //Vault rows back dup-sensitive swaps: callers that ack to the
-            //client pass andWait so the ack cannot outrun the commit.
-            if (andWait)
-                WriteAtomicallyAndWait(writes);
+            if (onDone != null)
+                WriteAtomicallyThen(writes, null, onDone);
             else
                 WriteAtomically(writes);
             acc.Data = XElement.Parse(a);
@@ -758,25 +960,8 @@ namespace RotMG.Common
                 ResetTime = Environment.TickCount;
             }
 
-            //Non-blocking checkpoint so the WAL cannot grow without bound on
-            //a server that is never shut down cleanly.
-            if (Environment.TickCount - _lastCheckpoint >= CheckpointIntervalMS)
-            {
-                _lastCheckpoint = Environment.TickCount;
-                try
-                {
-                    lock (_lock)
-                    {
-                        using (SqliteConnection conn = OpenConnection())
-                        using (SqliteCommand cmd = conn.CreateCommand())
-                        {
-                            cmd.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                }
-                catch { }
-            }
+            //The periodic PASSIVE checkpoint runs on the writer thread (MaybeCheckpoint), not here: it does disk I/O
+            //and used to hold _lock while the tick thread waited for it.
 
             //Bound crash-loss to ~one interval: without this, everything a
             //player earns between login and disconnect lives only in memory
@@ -903,6 +1088,11 @@ namespace RotMG.Common
         {
             Program.AssertMainThread("Database.SetKey");
             string key = CombineKeyPath(path, global);
+            //A synchronous write under a queued bundle is overwritten when that bundle commits (FIFO). Say so loudly.
+            if (HasPendingWrite(key))
+                Program.Print(PrintType.Error, $"Database.SetKey({key}) while a queued bundle still writes it; the bundle will win");
+            long hopT0 = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
+            long hopX0 = 0, hopX1 = 0; //[hop]
             lock (_lock)
             {
                 using (SqliteConnection conn = OpenConnection())
@@ -911,19 +1101,34 @@ namespace RotMG.Common
                     cmd.CommandText = "INSERT INTO kv(path, value) VALUES(@p, @v) ON CONFLICT(path) DO UPDATE SET value = excluded.value;";
                     cmd.Parameters.AddWithValue("@p", key);
                     cmd.Parameters.AddWithValue("@v", contents ?? "");
+                    if (HopTrace.Enabled) hopX0 = HopTrace.Now(); //[hop]
                     cmd.ExecuteNonQuery();
+                    if (HopTrace.Enabled) hopX1 = HopTrace.Now(); //[hop]
                 }
             }
+            if (HopTrace.Enabled) HopTrace.Db("SetKey", key, hopT0, hopX0, hopX1); //[hop]
         }
 
-        public static void SetKeyLines(string path, string[] contents, bool global = false)
+        //Queued write for tick-thread callers (W03): same key and value as SetKey, but nothing waits for the commit.
+        private static void SetKeyQueued(string path, string contents, bool global = false)
         {
-            SetKey(path, string.Join("\n", contents ?? new string[0]), global);
+            WriteAtomically(new Dictionary<string, string> { { CombineKeyPath(path, global), contents ?? "" } });
         }
+
 
         public static string GetKey(string path, bool global = false)
         {
             string key = CombineKeyPath(path, global);
+            //Read-your-writes: the newest queued value wins over the file, so a main-thread check made right after an
+            //async write sees it (see QueuePlain). A queued delete reads as absent.
+            lock (_pendingLock)
+            {
+                if (_pending.TryGetValue(key, out PendingWrite pending))
+                    return pending.Deleted ? null : pending.Value;
+            }
+            long hopT0 = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
+            long hopX0 = 0, hopX1 = 0; //[hop]
+            string value;
             lock (_lock)
             {
                 using (SqliteConnection conn = OpenConnection())
@@ -931,10 +1136,14 @@ namespace RotMG.Common
                 {
                     cmd.CommandText = "SELECT value FROM kv WHERE path = @p;";
                     cmd.Parameters.AddWithValue("@p", key);
+                    if (HopTrace.Enabled) hopX0 = HopTrace.Now(); //[hop]
                     object result = cmd.ExecuteScalar();
-                    return result == null || result == DBNull.Value ? null : (string)result;
+                    if (HopTrace.Enabled) hopX1 = HopTrace.Now(); //[hop]
+                    value = result == null || result == DBNull.Value ? null : (string)result;
                 }
             }
+            if (HopTrace.Enabled) HopTrace.Db("GetKey", key, hopT0, hopX0, hopX1); //[hop]
+            return value;
         }
 
         public static string[] GetKeyLines(string path, bool global = false)
@@ -1018,86 +1227,98 @@ namespace RotMG.Common
             return string.IsNullOrWhiteSpace(value) ? null : value;
         }
 
-        public static RegisterStatus RegisterAccount(string username, string password, string ip)
+        //Refusals return false with the reason and queue nothing. Otherwise the registration is queued and onDone(committed)
+        //runs on the main thread after the commit. The username check, the account id (nextAccId) and the per-IP
+        //reservation all run on the main thread against the overlay, so two registrations in a row never share a name,
+        //an id or a slot under the per-IP cap.
+        public static bool TryRegisterAccount(string username, string password, string ip, out RegisterStatus refusal, Action<bool> onDone)
         {
+            refusal = RegisterStatus.Success;
             if (!CanRegisterAccount(ip))
-                return RegisterStatus.TooManyRegisters;
+            {
+                refusal = RegisterStatus.TooManyRegisters;
+                return false;
+            }
 
             if (!IsValidUsername(username))
-                return RegisterStatus.InvalidUsername;
+            {
+                refusal = RegisterStatus.InvalidUsername;
+                return false;
+            }
 
             if (!IsValidPassword(password))
-                return RegisterStatus.InvalidPassword;
-
-            //Fast-path pre-check; re-verified inside the transaction below.
-            if (IdFromUsername(username) != -1)
-                return RegisterStatus.UsernameTaken;
-
-            string salt = MathUtils.GenerateSalt();
-            //Account id allocation, login keys and the account row commit as
-            //ONE transaction: a crash in between used to leave login keys
-            //pointing at a nonexistent account (or burn an id), and two
-            //concurrent registers could claim the same username.
-            RegisterStatus usernameTaken = RegisterStatus.Success;
-            Transact(conn =>
             {
-                if (!string.IsNullOrWhiteSpace(GetKeyInTx(conn, $"login.username.{username}")))
+                refusal = RegisterStatus.InvalidPassword;
+                return false;
+            }
+
+            if (IdFromUsername(username) != -1)
+            {
+                refusal = RegisterStatus.UsernameTaken;
+                return false;
+            }
+
+            int id = int.Parse(GetKey("nextAccId", true) ?? "0");
+            string salt = MathUtils.GenerateSalt();
+            //Detached: the account row is built here, not reloaded from the store.
+            AccountModel acc = new AccountModel(id, skipReload: true)
+            {
+                Stats = new StatsInfo
                 {
-                    usernameTaken = RegisterStatus.UsernameTaken;
-                    return;
-                }
+                    BestCharFame = 0,
+                    TotalFame = 0,
+                    Fame = 0,
+                    TotalCredits = 0,
+                    Credits = 0,
+                    ClassStats = CreateClassStats()
+                },
 
-                int id = int.Parse(GetKeyInTx(conn, CombineKeyPath("nextAccId", true)) ?? "0");
-                UpsertKeyInTx(conn, CombineKeyPath("nextAccId", true), (id + 1).ToString());
-                UpsertKeyInTx(conn, $"login.username.{username}", id.ToString());
-                UpsertKeyInTx(conn, $"login.id.{id}", username);
-                UpsertKeyInTx(conn, $"login.hash.{id}", (password + salt).ToSHA1());
-                UpsertKeyInTx(conn, $"login.salt.{id}", salt);
-
-                //Detached: the account row is being created by this very
-                //transaction, so there is nothing to Reload (and the ctor
-                //Reload would open a nested connection inside the tx).
-                AccountModel acc = new AccountModel(id, skipReload: true)
-                {
-                    Stats = new StatsInfo
-                    {
-                        BestCharFame = 0,
-                        TotalFame = 0,
-                        Fame = 0,
-                        TotalCredits = 0,
-                        Credits = 0,
-                        ClassStats = CreateClassStats()
-                    },
-
-                    MaxNumChars = 1,
-                    NextCharId = 0,
-                    AliveChars = new List<int>(),
-                    DeadChars = new List<int>(),
-                    OwnedSkins = new List<int>(),
-                    Ranked = false,
-                    Muted = false,
-                    Banned = false,
-                    GuildName = null,
-                    GuildRank = 0,
-                    Connected = false,
-                    LockedIds = new List<int>(),
-                    IgnoredIds = new List<int>(),
-                    AllyDamage = true,
-                    AllyShots = true,
-                    Effects = true,
-                    Sounds = true,
-                    Notifications = true,
-                    RegisterTime = UnixTime()
-                };
-                string accountXml = acc.Export(false).ToString();
-                UpsertKeyInTx(conn, AccountKey(id), accountXml);
-                acc.Data = XElement.Parse(accountXml);
-            });
-            if (usernameTaken != RegisterStatus.Success)
-                return usernameTaken;
-
+                MaxNumChars = 1,
+                NextCharId = 0,
+                AliveChars = new List<int>(),
+                DeadChars = new List<int>(),
+                OwnedSkins = new List<int>(),
+                Ranked = false,
+                Muted = false,
+                Banned = false,
+                GuildName = null,
+                GuildRank = 0,
+                Connected = false,
+                LockedIds = new List<int>(),
+                IgnoredIds = new List<int>(),
+                AllyDamage = true,
+                AllyShots = true,
+                Effects = true,
+                Sounds = true,
+                Notifications = true,
+                RegisterTime = UnixTime()
+            };
+            string accountXml = acc.Export(false).ToString();
+            //Reserve the per-IP slot now, so two requests from one IP cannot both pass the cap while the first commits.
             AddRegisteredAccount(ip);
-            return RegisterStatus.Success;
+            //Id allocation, login keys and the account row commit as ONE bundle, which a later read sees whole.
+            WriteAtomicallyThen(new Dictionary<string, string>
+            {
+                { CombineKeyPath("nextAccId", true), (id + 1).ToString() },
+                { $"login.username.{username}", id.ToString() },
+                { $"login.id.{id}", username },
+                { $"login.hash.{id}", (password + salt).ToSHA1() },
+                { $"login.salt.{id}", salt },
+                { AccountKey(id), accountXml }
+            }, null, committed =>
+            {
+                if (!committed)
+                    ReleaseRegisteredAccount(ip);
+                onDone?.Invoke(committed);
+            });
+            acc.Data = XElement.Parse(accountXml);
+            return true;
+        }
+
+        private static void ReleaseRegisteredAccount(string ip)
+        {
+            if (RegisteredAccounts.TryGetValue(ip, out byte attempts) && attempts > 0)
+                RegisteredAccounts[ip] = (byte)(attempts - 1);
         }
 
         public static int UnixTime()
@@ -1168,7 +1389,7 @@ namespace RotMG.Common
             return acc;
         }
 
-        public static bool DeleteCharacter(AccountModel acc, int charId)
+        public static bool DeleteCharacter(AccountModel acc, int charId, Action<bool> onDone)
         {
             if (!acc.AliveChars.Contains(charId))
                 return false;
@@ -1183,13 +1404,12 @@ namespace RotMG.Common
             acc.AliveChars.Remove(charId);
             string charXml = character.Export(false).ToString();
             string accountXml = acc.Export(false).ToString();
-            //Blocking: the /char/delete response precedes a re-list that
-            //reads the row back. Rare admin path.
-            WriteAtomicallyAndWait(new Dictionary<string, string>
+            //The /char/delete reply waits for the commit (onDone), so the re-list that follows reads the new rows.
+            WriteAtomicallyThen(new Dictionary<string, string>
             {
                 { CharacterKey(acc.Id, charId), charXml },
                 { AccountKey(acc.Id), accountXml }
-            });
+            }, null, onDone);
             character.Data = XElement.Parse(charXml);
             acc.Data = XElement.Parse(accountXml);
             return true;
@@ -1198,23 +1418,26 @@ namespace RotMG.Common
         //Web rename (ChooseName): the old login key must disappear in the
         //same transaction the new keys and the account row appear, otherwise
         //a crash leaves two names for one account or none at all.
-        public static void RenameAccountKeys(int accId, string oldName, string newName, AccountModel acc)
+        public static void RenameAccountKeys(int accId, string oldName, string newName, AccountModel acc, Action<bool> onDone = null)
         {
             string accountXml = acc.Export(false).ToString();
-            //Blocking: ChooseName reloads the row in the same call, so the
-            //rename must be committed before returning. Rare path.
-            WriteAtomicallyAndWait(
+            //One bundle: the new login keys, the account row and the removal of the old login key commit together.
+            //Writes apply before deletes, so an unchanged name must not be deleted.
+            string[] deletes = string.IsNullOrWhiteSpace(oldName) || oldName == newName
+                ? null
+                : new[] { $"login.username.{oldName}" };
+            WriteAtomicallyThen(
                 new Dictionary<string, string>
                 {
                     { $"login.username.{newName}", accId.ToString() },
                     { $"login.id.{accId}", newName },
                     { AccountKey(accId), accountXml }
                 },
-                new[] { $"login.username.{oldName}" });
+                deletes, onDone);
             acc.Data = XElement.Parse(accountXml);
         }
 
-        public static bool ChangePassword(AccountModel acc, string newPassword) 
+        public static bool ChangePassword(AccountModel acc, string newPassword, Action<bool> onDone)
         {
 #if DEBUG
             if (acc == null)
@@ -1224,18 +1447,20 @@ namespace RotMG.Common
                 return false;
 
             string salt = MathUtils.GenerateSalt();
-            //Both halves commit together: a crash between them would lock
-            //the account out (new hash, old salt). Blocking: a relogin may
-            //read the hash back immediately. Rare path.
-            WriteAtomicallyAndWait(new Dictionary<string, string>
+            //Both halves commit together: a crash between them would lock the account out (new hash, old salt).
+            //The reply waits for the commit, so a relogin cannot read the old hash.
+            WriteAtomicallyThen(new Dictionary<string, string>
             {
                 { $"login.hash.{acc.Id}", (newPassword + salt).ToSHA1() },
                 { $"login.salt.{acc.Id}", salt }
-            });
+            }, null, onDone);
             return true;
         }
 
-        public static bool BuyCharSlot(AccountModel acc)
+        //Check and debit run here on the main thread, against the row as the overlay sees it, so two purchases in a
+        //row cannot both spend the same fame. The debit is queued; onDone(committed) runs after the commit.
+        //Returns false (nothing queued) when the balance is short.
+        public static bool BuyCharSlot(AccountModel acc, Action<bool> onDone)
         {
 #if DEBUG
             if (acc == null)
@@ -1245,11 +1470,11 @@ namespace RotMG.Common
                 return false;
             acc.Stats.Fame -= CharSlotPrice;
             acc.MaxNumChars++;
-            acc.Save();
+            acc.SaveThen(onDone);
             return true;
         }
 
-        public static bool BuySkin(AccountModel acc, int skinType)
+        public static bool BuySkin(AccountModel acc, int skinType, Action<bool> onDone)
         {
 #if DEBUG
             if (acc == null)
@@ -1263,7 +1488,7 @@ namespace RotMG.Common
                 return false;
             acc.Stats.Credits -= SkinPrice;
             acc.OwnedSkins.Add(skinType);
-            acc.Save();
+            acc.SaveThen(onDone);
             return true;
         }
 
@@ -1403,7 +1628,12 @@ namespace RotMG.Common
                             legends = legends.Take(MaxLegends).ToList();
                         UpsertKeyInTx(conn, key, string.Join("\n", legends.ToArray()));
                     }
-            }, FlushLegends);
+            }, FlushLegends, new Dictionary<string, string>
+            {
+                { CharacterKey(accId, charId), charXml },
+                { AccountKey(accId), accountXml },
+                { $"death.{accId}.{charId}", fameXml }
+            });
             character.Data = XElement.Parse(charXml);
             acc.Data = XElement.Parse(accountXml);
         }
@@ -1697,7 +1927,7 @@ namespace RotMG.Common
                 {
                     legends = legends.Where(k => !((time - span.Value.TotalSeconds) > int.Parse(k.Split(':')[3]))).ToArray();
                     legends = legends.OrderByDescending(k => int.Parse(k.Split(':')[2])).ToArray();
-                    SetKeyLines($"legends.{span.Key}", legends.ToArray(), true);
+                    SetKeyQueued($"legends.{span.Key}", string.Join("\n", legends), true);
                 }
 
                 //Update famelist
@@ -1750,7 +1980,7 @@ namespace RotMG.Common
                 if (span.Key == "all")
                     legends = legends.Take(MaxLegends).ToList();
 
-                SetKeyLines($"legends.{span.Key}", legends.ToArray(), true);
+                SetKeyQueued($"legends.{span.Key}", string.Join("\n", legends), true);
             }
             FlushLegends();
         }
@@ -1787,7 +2017,7 @@ namespace RotMG.Common
             return classStats.ToArray();
         }
 
-        public static CharacterModel CreateCharacter(AccountModel acc, int classType, int skinType)
+        public static CharacterModel PrepareCharacter(AccountModel acc, int classType, int skinType)
         {
 #if DEBUG
             if (acc == null)
@@ -1807,10 +2037,8 @@ namespace RotMG.Common
                     return null;
             }
 
-            //The account row (which lists this character as alive and bumps
-            //NextCharId) and the character row commit together: a crash
-            //between them used to leave the account pointing at a character
-            //that was never written.
+            //Step 1 of 2 (W03): the in-memory account row lists the character and bumps NextCharId now; nothing is
+            //written until CommitCharacter. CommitCharacter undoes the bump if the commit fails.
             int newId = acc.NextCharId;
             acc.NextCharId++;
             acc.AliveChars.Add(newId);
@@ -1841,16 +2069,32 @@ namespace RotMG.Common
                 PetId = -1
             };
 
+            return character;
+        }
+
+        //Step 2 of 2: queues the account row (which lists the character) and the character row as ONE bundle.
+        //onCommitted(true) runs on the main thread after the commit. On failure the in-memory bump is undone, so a
+        //later save of this account cannot persist a character row that was never written.
+        public static void CommitCharacter(AccountModel acc, CharacterModel character, Action<bool> onCommitted)
+        {
+            int newId = character.Id;
             string accountXml = acc.Export(false).ToString();
             string charXml = character.Export(false).ToString();
-            WriteAtomically(new Dictionary<string, string>
+            WriteAtomicallyThen(new Dictionary<string, string>
             {
                 { AccountKey(acc.Id), accountXml },
                 { CharacterKey(acc.Id, newId), charXml }
+            }, null, committed =>
+            {
+                if (!committed)
+                {
+                    acc.AliveChars.Remove(newId);
+                    acc.NextCharId = newId;
+                }
+                onCommitted?.Invoke(committed);
             });
             acc.Data = XElement.Parse(accountXml);
             character.Data = XElement.Parse(charXml);
-            return character;
         }
 
         public static bool HasEnoughCharacterSlots(AccountModel acc)

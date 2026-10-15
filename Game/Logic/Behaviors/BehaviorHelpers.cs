@@ -1,4 +1,4 @@
-using RotMG.Common;
+﻿using RotMG.Common;
 using RotMG.Game.Entities;
 using RotMG.Utils;
 using System;
@@ -58,9 +58,13 @@ namespace RotMG.Game.Logic.Behaviors
             //Orders and name transitions reach them there. Yield in-range
             //statics here for parity; name/group filters downstream keep
             //this narrow to queries that actually name a static.
-            float r2 = range * range;
-            foreach (Entity en in host.Parent.Statics.Values)
-                if (!en.Equals(host) && host.Position.DistanceSquared(en.Position) < r2)
+            //W05: answered by World.StaticGrid (same predicate, cells only), not a scan of Statics. Collected
+            //before yielding, in the old Statics dictionary order, so a caller that mutates the world while
+            //iterating does not hit a dictionary-modified error.
+            List<StaticObject> statics = new List<StaticObject>();
+            host.Parent.StaticGrid.Collect(host.Position, range, statics, inDictionaryOrder: true);
+            foreach (StaticObject en in statics)
+                if (!en.Equals(host))
                     yield return en;
         }
 
@@ -128,9 +132,10 @@ namespace RotMG.Game.Logic.Behaviors
                     count++;
             //See NearbyEntities: statics are not in EntityChunks, but
             //realm-src-master counts them via EnemiesCollision.
-            float r2 = radius * radius;
-            foreach (Entity en in host.Parent.Statics.Values)
-                if (en.Type == type && host.Position.DistanceSquared(en.Position) < r2)
+            List<StaticObject> statics = StaticIndex.Scratch;
+            host.Parent.StaticGrid.Collect(host.Position, radius, statics);
+            foreach (StaticObject en in statics)
+                if (en.Type == type)
                     count++;
             return count;
         }

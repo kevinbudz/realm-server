@@ -14,6 +14,9 @@ namespace RotMG.Game.Entities
 
         }
 
+        //Dictionary-order key kept by StaticIndex (World.Statics slot order). Range queries sort by it.
+        internal int StaticOrder;
+
         public override bool HitByProjectile(Projectile projectile)
         {
 #if DEBUG
