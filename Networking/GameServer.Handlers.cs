@@ -1113,7 +1113,9 @@ namespace RotMG.Networking
             return PacketWriter.RentedBytes();
         }
 
-        public static ReadOnlySpan<byte> Text(string name, int objectId, int numStars, int bubbleTime, string recipent, string text)
+        //nameColor and textColor follow betterSkillys: 0 keeps the client's default color. Clients that predate
+        //them stop reading after text, so the two trailing ints are ignored there.
+        public static ReadOnlySpan<byte> Text(string name, int objectId, int numStars, int bubbleTime, string recipent, string text, int nameColor = 0, int textColor = 0)
         {
             PacketWriter wtr = PacketWriter.Rent();
             wtr.Write((byte)PacketId.Text);
@@ -1123,6 +1125,8 @@ namespace RotMG.Networking
             wtr.Write((byte)bubbleTime);
             wtr.Write(recipent);
             wtr.Write(text);
+            wtr.Write(nameColor);
+            wtr.Write(textColor);
             return PacketWriter.RentedBytes();
         }
 

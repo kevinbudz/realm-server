@@ -21,6 +21,47 @@ namespace RotMG.Game.Entities
             SendInfo($"Ally shots set to {Client.Account.AllyShots}");
         }
 
+        //betterSkillys /namecolor and /chatcolor: hex colors kept on the account; "reset" restores the default.
+        [Command("/namecolor", Rank.Donor)]
+        private void CmdNamecolor(CommandCall call)
+        {
+            if (!TryParseChatColor(call.Input, out int color))
+            {
+                SendInfo("Usage: /namecolor <color> (hex format: 0xFFFFFF, or reset)");
+                return;
+            }
+            Client.Account.NameChatColor = color;
+            Client.Account.Save();
+            SendInfo(color == 0 ? "Name color reset." : $"Name color set to 0x{color:X6}.");
+        }
+
+        [Command("/chatcolor", Rank.Donor)]
+        private void CmdChatcolor(CommandCall call)
+        {
+            if (!TryParseChatColor(call.Input, out int color))
+            {
+                SendInfo("Usage: /chatcolor <color> (hex format: 0xFFFFFF, or reset)");
+                return;
+            }
+            Client.Account.ChatColor = color;
+            Client.Account.Save();
+            SendInfo(color == 0 ? "Chat color reset." : $"Chat color set to 0x{color:X6}.");
+        }
+
+        private static bool TryParseChatColor(string input, out int color)
+        {
+            color = 0;
+            string value = input.Trim();
+            if (value.Equals("reset", StringComparison.InvariantCultureIgnoreCase))
+                return true;
+            if (value.StartsWith("0x", StringComparison.InvariantCultureIgnoreCase))
+                value = value.Substring(2);
+            else if (value.StartsWith("#"))
+                value = value.Substring(1);
+            return value.Length > 0 && value.Length <= 6 &&
+                int.TryParse(value, System.Globalization.NumberStyles.HexNumber, null, out color);
+        }
+
         [Command("/allydamage", Rank.Player)]
         private void CmdAllydamage(CommandCall call)
         {
@@ -311,7 +352,7 @@ namespace RotMG.Game.Entities
                 SendError("You are muted");
                 return;
             }
-            ReadOnlySpan<byte> local = GameServer.Text(Name, Id, NumStars, 5, "", input);
+            ReadOnlySpan<byte> local = GameServer.Text(Name, Id, NumStars, 5, "", input, ChatNameColor, ChatTextColor);
             foreach (Player player in Parent.Players.Values.ToArray())
                 if (!player.Client.Account.IgnoredIds.Contains(AccountId))
                     player.Client.Send(local);

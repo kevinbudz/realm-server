@@ -407,7 +407,7 @@ namespace RotMG.Game.Entities
             ReadOnlySpan<byte> death = GameServer.Death(Client.Account.Id, Client.Character.Id, killer);
             Client.Send(death);
 
-            byte[] text = GameServer.Text("", 0, -1, 0, "", $"{Name} died at level {Level} killed by {killer}!").ToArray();
+            byte[] text = GameServer.Text("Death", 0, -1, 0, "", $"{Name} died at level {Level} killed by {killer}!", DeathNameColor, WhiteTextColor).ToArray();
             ReadOnlySpan<byte> sound = GameServer.PlaySound("quack");
 
             foreach (Player p in Parent.Players.Values)

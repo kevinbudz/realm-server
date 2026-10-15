@@ -22,7 +22,15 @@ namespace RotMG.Game.Entities
         public void SendError(string text) => Client.Send(GameServer.Text("*Error*", 0, -1, 0, "", text));
         public void SendHelp(string text) => Client.Send(GameServer.Text("*Help*", 0, -1, 0, "", text));
         public void SendClientText(string text) => Client.Send(GameServer.Text("*Client*", 0, -1, 0, "", text));
-        public void SendEnemy(string name, string text) => Client.Send(GameServer.Text(name, 0, -1, 0, "", text));
+        public void SendEnemy(string name, string text) => Client.Send(GameServer.Text("#" + name, 0, -1, 0, "", text));
+
+        //betterSkillys chat colors. DefaultNameColor asks the client for its default player name color.
+        public const int DefaultNameColor = 0x123456;
+        public const int DeathNameColor = 0xFF2F00;
+        public const int WhiteTextColor = 0xFFFFFF;
+
+        public int ChatNameColor => Client.Account.NameChatColor != 0 ? Client.Account.NameChatColor : DefaultNameColor;
+        public int ChatTextColor => Client.Account.ChatColor != 0 ? Client.Account.ChatColor : WhiteTextColor;
 
         private void TransferToWorld(int worldId)
         {
@@ -93,7 +101,7 @@ namespace RotMG.Game.Entities
                 return;
             }
 
-            ReadOnlySpan<byte> packet = GameServer.Text(Name, Id, NumStars, 5, "", validText);
+            ReadOnlySpan<byte> packet = GameServer.Text(Name, Id, NumStars, 5, "", validText, ChatNameColor, ChatTextColor);
 
             foreach (Player player in Parent.Players.Values)
                 if (!player.Client.Account.IgnoredIds.Contains(AccountId))

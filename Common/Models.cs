@@ -385,6 +385,9 @@ namespace RotMG.Common
         public bool Effects;
         public bool Sounds;
         public bool Notifications;
+        //Chat colors set with /namecolor and /chatcolor; 0 keeps the default.
+        public int NameChatColor;
+        public int ChatColor;
 
         public AccountModel() : base(null) { }
         //Detached build for a brand-new id: skips the database Reload (the
@@ -426,6 +429,8 @@ namespace RotMG.Common
             Effects = Data.ParseBool("Effects", true);
             Sounds = Data.ParseBool("Sounds", true);
             Notifications = Data.ParseBool("Notifications", true);
+            NameChatColor = Data.ParseInt("NameChatColor");
+            ChatColor = Data.ParseInt("ChatColor");
 
             Stats = new StatsInfo
             {
@@ -481,6 +486,8 @@ namespace RotMG.Common
                 data.Add(new XElement("Effects", Effects));
                 data.Add(new XElement("Sounds", Sounds));
                 data.Add(new XElement("Notifications", Notifications));
+                data.Add(new XElement("NameChatColor", NameChatColor));
+                data.Add(new XElement("ChatColor", ChatColor));
             }
 
             data.Add(Stats.Export(appExport));
