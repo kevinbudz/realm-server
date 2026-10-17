@@ -145,6 +145,87 @@ namespace RotMG.Networking
             return data;
         }
 
+        private static byte[] CharFameStats(HttpListenerContext context, NameValueCollection query)
+        {
+            byte[] data = null;
+
+            string username = query["username"];
+            string password = query["password"];
+            int charId;
+            if (!int.TryParse(query["charId"], out charId))
+                return WriteError("Invalid character");
+
+            _listenEvent.Reset();
+            Program.PushWork(() =>
+            {
+                AccountModel acc = Database.Verify(username, password, GetIPFromContext(context));
+                if (acc == null)
+                {
+                    data = WriteError("Account credentials not valid");
+                    return;
+                }
+
+                //Prefer the live character so unsaved progress is included.
+                AccountModel account;
+                CharacterModel character;
+                Client live = Manager.GetClient(acc.Id);
+                if (live != null && live.Character != null && live.Character.Id == charId && live.Player != null)
+                {
+                    live.Player.SaveToCharacter();
+                    account = live.Account;
+                    character = live.Character;
+                }
+                else if (acc.AliveChars.Contains(charId))
+                {
+                    account = acc;
+                    character = Database.LoadCharacter(acc, charId);
+                }
+                else
+                {
+                    data = WriteError("Invalid character");
+                    return;
+                }
+
+                FameStats fameStats = Database.CalculateStats(account, character, "");
+
+                XElement xml = new XElement("CharFameStats");
+                XElement export = character.Export();
+                export.Add(new XAttribute("id", charId));
+                xml.Add(export);
+                xml.Add(new XElement("Name", account.Name));
+                xml.Add(new XElement("CreatedOn", character.CreationTime));
+                xml.Add(character.FameStats.Export());
+
+                //Every tracked dungeon, including zero counts, so the client shows only what this server version tracks.
+                XElement dungeons = new XElement("Dungeons");
+                foreach (string label in FameStatsInfo.DungeonLabels)
+                {
+                    int count;
+                    character.FameStats.Dungeons.TryGetValue(label, out count);
+                    dungeons.Add(new XElement("Dungeon", new XAttribute("id", label), count));
+                }
+                xml.Add(dungeons);
+
+                xml.Add(new XElement("BaseFame", fameStats.BaseFame));
+                xml.Add(new XElement("TotalFame", fameStats.TotalFame));
+
+                XElement bonuses = new XElement("Bonuses");
+                foreach (FameBonusLine line in Database.EvaluateBonuses(account, character, ""))
+                    bonuses.Add(new XElement("Bonus",
+                        new XAttribute("id", line.Name),
+                        new XAttribute("level", line.MinLevel),
+                        new XAttribute("percent", line.Percent),
+                        new XAttribute("earned", line.Earned ? 1 : 0),
+                        new XAttribute("desc", line.Description),
+                        line.Fame));
+                xml.Add(bonuses);
+
+                data = Write(xml.ToString());
+            }, () => _listenEvent.Set());
+            _listenEvent.WaitOne(30000);
+            return data;
+        }
+
         private static byte[] CharDelete(HttpListenerContext context, NameValueCollection query)
         {
             byte[] data = null;

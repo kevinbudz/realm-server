@@ -1554,6 +1554,8 @@ namespace RotMG.Common
 
             ClassStatsInfo classStats = acc.Stats.GetClassStats(character.ClassType);
             FameStats fameStats = CalculateStats(acc, character, killer);
+            if (acc.Stats.BestCharFame < baseFame)
+                acc.Stats.BestCharFame = baseFame;
             totalFame = fameStats.TotalFame;
             foreach (FameBonus bonus in fameStats.Bonuses)
                 fame.Add(new XElement("Bonus", new XAttribute("id", bonus.Name), bonus.Fame));
@@ -1638,6 +1640,119 @@ namespace RotMG.Common
             acc.Data = XElement.Parse(accountXml);
         }
 
+        //Pure: evaluates every fame bonus in order without mutating the account. Death records BestCharFame itself.
+        public static List<FameBonusLine> EvaluateBonuses(AccountModel acc, CharacterModel character, string killer = "")
+        {
+            int baseFame = character.Fame;
+            FameStatsInfo fs = character.FameStats;
+            List<FameBonusLine> lines = new List<FameBonusLine>();
+
+            //Ratio conditions are not met when the denominator is 0.
+            bool godRatio = fs.MonsterKills > 0;
+            bool shotRatio = fs.Shots > 0;
+            bool finalBlowRatio = (fs.MonsterKills + fs.MonsterAssists) > 0;
+
+            lines.Add(BonusLine(baseFame, "Ancestor", "First death of this class.", 20, 1,
+                acc.Stats.GetClassStats(character.ClassType).BestLevel == 0));
+            lines.Add(BonusLine(baseFame, "First Born", "Best fame of any of your characters.", 20, 1,
+                acc.Stats.BestCharFame < baseFame));
+            lines.Add(BonusLine(baseFame, "Pacifist", "Never dealt any damage.", 25, 20,
+                fs.DamageDealt == 0 && character.Level == 20));
+            lines.Add(BonusLine(baseFame, "Thirsty", "Never drank a potion.", 25, 20,
+                fs.PotionsDrank == 0 && character.Level == 20));
+            lines.Add(BonusLine(baseFame, "Mundane", "Never used a special ability.", 25, 20,
+                fs.AbilitiesUsed == 0 && character.Level == 20));
+            lines.Add(BonusLine(baseFame, "Boots On The Ground", "Never teleported.", 25, 20,
+                fs.Teleports == 0 && character.Level == 20));
+            lines.Add(BonusLine(baseFame, "Tunnel Rat", "Completed every classic dungeon.", 10, 1,
+                fs.PirateCavesCompleted >= 1 &&
+                fs.AbyssOfDemonsCompleted >= 1 &&
+                fs.SnakePitsCompleted >= 1 &&
+                fs.SpiderDensCompleted >= 1 &&
+                fs.SpriteWorldsCompleted >= 1 &&
+                fs.TombsCompleted >= 1 &&
+                fs.UndeadLairsCompleted >= 1));
+            lines.Add(BonusLine(baseFame, "Dungeon Master", "Completed every classic dungeon 20 times.", 20, 1,
+                fs.PirateCavesCompleted >= 20 &&
+                fs.AbyssOfDemonsCompleted >= 20 &&
+                fs.SnakePitsCompleted >= 20 &&
+                fs.SpiderDensCompleted >= 20 &&
+                fs.SpriteWorldsCompleted >= 20 &&
+                fs.TombsCompleted >= 20 &&
+                fs.UndeadLairsCompleted >= 20));
+            lines.Add(BonusLine(baseFame, "Enemy Of The Gods", "At least 10% of kills are gods.", 10, 1,
+                godRatio && (float)fs.GodKills / fs.MonsterKills >= 0.1f));
+            lines.Add(BonusLine(baseFame, "Slayer Of The Gods", "At least 50% of kills are gods.", 10, 1,
+                godRatio && (float)fs.GodKills / fs.MonsterKills >= 0.5f));
+            lines.Add(BonusLine(baseFame, "Oryx Slayer", "Dealt the killing blow to Oryx.", 10, 1,
+                fs.OryxKills >= 1));
+            lines.Add(BonusLine(baseFame, "Dominator Of Realms", "Killed Oryx 1000 times.", 25, 1,
+                fs.OryxKills >= 1000));
+            lines.Add(BonusLine(baseFame, "Accurate", "Accuracy of at least 25%.", 10, 1,
+                shotRatio && (float)fs.ShotsThatDamage / fs.Shots >= .25f));
+            lines.Add(BonusLine(baseFame, "Sharpshooter", "Accuracy of at least 50%.", 10, 1,
+                shotRatio && (float)fs.ShotsThatDamage / fs.Shots >= .5f));
+            lines.Add(BonusLine(baseFame, "Sniper", "Accuracy of at least 75%.", 10, 1,
+                shotRatio && (float)fs.ShotsThatDamage / fs.Shots >= .75f));
+            lines.Add(BonusLine(baseFame, "Explorer", "Uncovered 1 million tiles.", 5, 1,
+                fs.TilesUncovered >= 1000000));
+            lines.Add(BonusLine(baseFame, "Cartographer", "Uncovered 4 million tiles.", 5, 1,
+                fs.TilesUncovered >= 4000000));
+            lines.Add(BonusLine(baseFame, "Pathfinder", "Uncovered 20 million tiles.", 5, 1,
+                fs.TilesUncovered >= 20000000));
+            lines.Add(BonusLine(baseFame, "Team Player", "Assisted 100 party member level ups.", 10, 1,
+                fs.LevelUpAssists >= 100));
+            lines.Add(BonusLine(baseFame, "Leader Of Men", "Assisted 1000 party member level ups.", 10, 1,
+                fs.LevelUpAssists >= 1000));
+            lines.Add(BonusLine(baseFame, "Friend Of The Cubes", "Never killed a cube.", 10, 20,
+                fs.CubeKills == 0 && character.Level == 20));
+            lines.Add(BonusLine(baseFame, "Careless", "Took 100,000 damage.", 5, 1,
+                fs.DamageTaken >= 100000));
+            lines.Add(BonusLine(baseFame, "Expert Manoeuvres", "Never took any damage.", 50, 20,
+                fs.DamageTaken == 0 && character.Level == 20));
+            lines.Add(BonusLine(baseFame, "Beginner's Luck", "Escaped near death.", 5, 1,
+                fs.NearDeathEscapes >= 1));
+            lines.Add(BonusLine(baseFame, "Living On The Edge", "Escaped near death 50 times.", 10, 1,
+                fs.NearDeathEscapes >= 50));
+            lines.Add(BonusLine(baseFame, "Living In The Nexus", "Escaped to the Nexus 1000 times.", 5, 1,
+                fs.Escapes >= 1000));
+            lines.Add(BonusLine(baseFame, "Seal The Deal", "Dealt the final blow on at least half of your kills.", 10, 20,
+                finalBlowRatio && (float)fs.MonsterKills / (fs.MonsterKills + fs.MonsterAssists) >= 0.5f && character.Level == 20));
+            lines.Add(BonusLine(baseFame, "Realm Riches", "Found 100 white bags.", 15, 1,
+                fs.WhiteBags >= 100));
+            lines.Add(BonusLine(baseFame, "Devil's Advocate", "A pact sealed in lava.", 100, 1,
+                fs.AbyssOfDemonsCompleted >= 1000 &&
+                fs.CubeKills >= 50000 &&
+                fs.OryxKills >= 666 &&
+                killer == "Lava"));
+
+            //Percent carries the equipment sum; the fame is the sum of worn item bonuses.
+            int wellEquipped = 0;
+            for (int k = 0; k < 4; k++)
+                if (character.Inventory[k] != -1)
+                {
+                    wellEquipped += Resources.Type2Item[(ushort)character.Inventory[k]].FameBonus;
+                    wellEquipped += (int)ItemDesc.GetStat(character.ItemDatas[k], ItemData.FameBonus, 1);
+                }
+            lines.Add(BonusLine(baseFame, "Well Equipped", "Combined fame bonus of all worn equipment.", wellEquipped, 1,
+                wellEquipped > 0));
+
+            return lines;
+        }
+
+        private static FameBonusLine BonusLine(int baseFame, string name, string description, int percent, int minLevel, bool earned)
+        {
+            return new FameBonusLine
+            {
+                Name = name,
+                Description = description,
+                Percent = percent,
+                MinLevel = minLevel,
+                Earned = earned,
+                Fame = earned ? (int)(baseFame * (percent / 100f)) : 0
+            };
+        }
+
         public static FameStats CalculateStats(AccountModel acc, CharacterModel character, string killer = "")
         {
             int baseFame = character.Fame;
@@ -1647,269 +1762,14 @@ namespace RotMG.Common
             {
                 BaseFame = baseFame,
                 Bonuses = new List<FameBonus>()
-            }; ClassStatsInfo classStats = acc.Stats.GetClassStats(character.ClassType);
+            };
 
-            //Ancestor
-            if (acc.Stats.GetClassStats(character.ClassType).BestLevel == 0)
+            foreach (FameBonusLine line in EvaluateBonuses(acc, character, killer))
             {
-                int bonus = (int)(baseFame * .2f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Ancestor", Fame = bonus });
-            }
-
-            //First Born
-            if (acc.Stats.BestCharFame < baseFame)
-            {
-                int bonus = (int)(baseFame * .2f);
-                totalFame += bonus;
-                acc.Stats.BestCharFame = baseFame;
-                stats.Bonuses.Add(new FameBonus { Name = "First Born", Fame = bonus });
-            }
-
-            //Pacifist
-            if (character.FameStats.DamageDealt == 0 && character.Level == 20)
-            {
-                int bonus = (int)(baseFame * .25f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Pacifist", Fame = bonus });
-            }
-
-            //Thirsty
-            if (character.FameStats.PotionsDrank == 0 && character.Level == 20)
-            {
-                int bonus = (int)(baseFame * .25f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Thirsty", Fame = bonus });
-            }
-
-            //Mundane
-            if (character.FameStats.AbilitiesUsed == 0 && character.Level == 20)
-            {
-                int bonus = (int)(baseFame * .25f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Mundane", Fame = bonus });
-            }
-
-            //Boots On The Ground
-            if (character.FameStats.Teleports == 0 && character.Level == 20)
-            {
-                int bonus = (int)(baseFame * .25f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Boots On The Ground", Fame = bonus });
-            }
-
-            //Tunnel Rat
-            if (character.FameStats.PirateCavesCompleted >= 1 &&
-                character.FameStats.AbyssOfDemonsCompleted >= 1 &&
-                character.FameStats.SnakePitsCompleted >= 1 &&
-                character.FameStats.SpiderDensCompleted >= 1 &&
-                character.FameStats.SpriteWorldsCompleted >= 1 &&
-                character.FameStats.TombsCompleted >= 1 &&
-                character.FameStats.UndeadLairsCompleted >= 1)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Tunnel Rat", Fame = bonus });
-            }
-
-            //Dungeon Master
-            if (character.FameStats.PirateCavesCompleted >= 20 &&
-                character.FameStats.AbyssOfDemonsCompleted >= 20 &&
-                character.FameStats.SnakePitsCompleted >= 20 &&
-                character.FameStats.SpiderDensCompleted >= 20 &&
-                character.FameStats.SpriteWorldsCompleted >= 20 &&
-                character.FameStats.TombsCompleted >= 20 &&
-                character.FameStats.UndeadLairsCompleted >= 20)
-            {
-                int bonus = (int)(baseFame * .2f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Dungeon Master", Fame = bonus });
-            }
-
-            //Enemy Of The Gods
-            if (((float)character.FameStats.GodKills / character.FameStats.MonsterKills) >= 0.1f)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Enemy Of The Gods", Fame = bonus });
-            }
-
-            //Slayer Of The Gods
-            if (((float)character.FameStats.GodKills / character.FameStats.MonsterKills) >= 0.5f)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Slayer Of The Gods", Fame = bonus });
-            }
-
-            //Oryx Slayer
-            if (character.FameStats.OryxKills >= 1)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Oryx Slayer", Fame = bonus });
-            }
-
-            //Dominator Of Realms
-            if (character.FameStats.OryxKills >= 1000)
-            {
-                int bonus = (int)(baseFame * .25f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Dominator Of Realms", Fame = bonus });
-            }
-
-            //Accurate
-            if (((float)character.FameStats.ShotsThatDamage / character.FameStats.Shots) >= .25f)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Accurate", Fame = bonus });
-            }
-
-            //Sharpshooter
-            if (((float)character.FameStats.ShotsThatDamage / character.FameStats.Shots) >= .5f)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Sharpshooter", Fame = bonus });
-            }
-
-            //Sniper
-            if (((float)character.FameStats.ShotsThatDamage / character.FameStats.Shots) >= .75f)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Sniper", Fame = bonus });
-            }
-
-            //Explorer
-            if (character.FameStats.TilesUncovered >= 1000000)
-            {
-                int bonus = (int)(baseFame * .05f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Explorer", Fame = bonus });
-            }
-
-            //Cartographer
-            if (character.FameStats.TilesUncovered >= 4000000)
-            {
-                int bonus = (int)(baseFame * .05f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Cartographer", Fame = bonus });
-            }
-
-            //Pathfinder
-            if (character.FameStats.TilesUncovered >= 20000000)
-            {
-                int bonus = (int)(baseFame * .05f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Pathfinder", Fame = bonus });
-            }
-
-            //Team Player
-            if (character.FameStats.LevelUpAssists >= 100)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Team Player", Fame = bonus });
-            }
-
-            //Leader Of Men
-            if (character.FameStats.LevelUpAssists >= 1000)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Leader Of Men", Fame = bonus });
-            }
-
-            //Friend Of The Cubes
-            if (character.FameStats.CubeKills == 0 && character.Level == 20)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Friend Of The Cubes", Fame = bonus });
-            }
-
-            //Careless
-            if (character.FameStats.DamageTaken >= 100000)
-            {
-                int bonus = (int)(baseFame * .05f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Careless", Fame = bonus });
-            }
-
-            //Expert Manoeuvres
-            if (character.FameStats.DamageTaken == 0 && character.Level == 20)
-            {
-                int bonus = (int)(baseFame * .5f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Expert Manoeuvres", Fame = bonus });
-            }
-
-            //Beginner's Luck
-            if (character.FameStats.NearDeathEscapes >= 1)
-            {
-                int bonus = (int)(baseFame * .05f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Beginner's Luck", Fame = bonus });
-            }
-
-            //Living On The Edge
-            if (character.FameStats.NearDeathEscapes >= 50)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Living On The Edge", Fame = bonus });
-            }
-
-            //Living In The Nexus
-            if (character.FameStats.Escapes >= 1000)
-            {
-                int bonus = (int)(baseFame * .05f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Living In The Nexus", Fame = bonus });
-            }
-
-            //Seal The Deal
-            if (((float)character.FameStats.MonsterKills / (character.FameStats.MonsterKills + character.FameStats.MonsterAssists) >= 0.5f) && character.Level == 20)
-            {
-                int bonus = (int)(baseFame * .1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Seal The Deal", Fame = bonus });
-            }
-
-            //Realm Riches
-            if (character.FameStats.WhiteBags >= 100)
-            {
-                int bonus = (int)(baseFame * .15f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Realm Riches", Fame = bonus });
-            }
-
-            //Devil's Advocate
-            if (character.FameStats.AbyssOfDemonsCompleted >= 1000 &&
-                character.FameStats.CubeKills >= 50000 &&
-                character.FameStats.OryxKills >= 666 &&
-                killer == "Lava")
-            {
-                int bonus = (int)(baseFame * 1f);
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Devil's Advocate", Fame = bonus });
-            }
-
-            //Well Equipped
-            int wellEquipped = 0;
-            for (int k = 0; k < 4; k++)
-                if (character.Inventory[k] != -1)
-                {
-                    wellEquipped += Resources.Type2Item[(ushort)character.Inventory[k]].FameBonus;
-                    wellEquipped += (int)ItemDesc.GetStat(character.ItemDatas[k], ItemData.FameBonus, 1);
-                }
-            if (wellEquipped > 0)
-            {
-                int bonus = (int)(baseFame * (wellEquipped / 100.0f));
-                totalFame += bonus;
-                stats.Bonuses.Add(new FameBonus { Name = "Well Equipped", Fame = bonus });
+                if (!line.Earned)
+                    continue;
+                totalFame += line.Fame;
+                stats.Bonuses.Add(new FameBonus { Name = line.Name, Fame = line.Fame });
             }
 
             stats.TotalFame = totalFame;

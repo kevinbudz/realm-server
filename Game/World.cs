@@ -43,6 +43,8 @@ namespace RotMG.Game
 
         public Dictionary<int, Entity> Entities;
         public Dictionary<int, Entity> Quests;
+        //Set once per world instance when its last quest enemy dies, so the dungeon is credited once.
+        public bool DungeonCompleted;
         public Dictionary<int, Entity> Constants;
         public Dictionary<int, Player> Players;
         public Dictionary<int, StaticObject> Statics;

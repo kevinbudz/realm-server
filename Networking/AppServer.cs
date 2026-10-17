@@ -70,6 +70,9 @@ namespace RotMG.Networking
                         case "/char/fame":
                             buffer = CharFame(context, query);
                             break;
+                        case "/char/fameStats":
+                            buffer = CharFameStats(context, query);
+                            break;
                         case "/char/delete":
                             buffer = CharDelete(context, query);
                             break;

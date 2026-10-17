@@ -22,6 +22,16 @@ namespace RotMG.Common
         public int Fame;
     }
 
+    public struct FameBonusLine
+    {
+        public string Name;
+        public string Description;
+        public int Percent;   //of base fame; Well Equipped reports the equipment sum
+        public int MinLevel;  //20 for the bonuses whose condition includes character.Level == 20, else 1
+        public bool Earned;
+        public int Fame;      //0 when not earned
+    }
+
     public struct TileData
     {
         public ushort TileType;

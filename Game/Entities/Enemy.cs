@@ -83,6 +83,9 @@ namespace RotMG.Game.Entities
                 if (player is Bot)
                     continue;
 
+                if (Desc.Quest && player != null)
+                    player.FameStats.QuestsCompleted++;
+
                 if (Desc.Quest)
                 {
                     player.HealthPotions = Math.Min(Player.MaxPotions, player.HealthPotions + 1);
@@ -145,6 +148,19 @@ namespace RotMG.Game.Entities
                 }
 
                 position++;
+            }
+
+            //The dungeon completes when the last quest enemy dies; this enemy is still in Quests while dying.
+            if (Desc.Quest && Parent != null && !Parent.DungeonCompleted)
+            {
+                string label = FameStatsInfo.DungeonLabel(Parent.Name);
+                if (label != null && Parent.Quests.Keys.All(k => k == Id))
+                {
+                    Parent.DungeonCompleted = true;
+                    foreach (Player p in Parent.Players.Values)
+                        if (!(p is Bot))
+                            p.FameStats.CompleteDungeon(label);
+                }
             }
 
             killer.FameStats.MonsterKills++;

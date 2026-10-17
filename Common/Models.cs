@@ -231,6 +231,99 @@ namespace RotMG.Common
         public int SpiderDensCompleted;
         public int SpriteWorldsCompleted;
         public int TombsCompleted;
+        //Completions per DungeonLabel(); includes the named counters above.
+        public Dictionary<string, int> Dungeons = new Dictionary<string, int>();
+
+        //Tracked server world ids, in mapping order.
+        private static readonly string[] DungeonWorldIds =
+        {
+            "Spider Den",
+            "Undead Lair",
+            "Tomb of the Ancients",
+            "Sprite World",
+            "Cave of A Thousand Treasures",
+            "Manor of the Immortals",
+            "Forbidden Jungle",
+            "Davy Jones's Locker",
+            "Haunted Cemetery Final Battle",
+            "Abyss of Demons",
+            "Mad Lab",
+            "Pirate Cave",
+            "Snake Pit",
+            "Ocean Trench"
+        };
+
+        //Distinct dungeon labels, in mapping order.
+        public static IEnumerable<string> DungeonLabels
+        {
+            get
+            {
+                HashSet<string> seen = new HashSet<string>();
+                foreach (string worldId in DungeonWorldIds)
+                {
+                    string label = DungeonLabel(worldId);
+                    if (seen.Add(label))
+                        yield return label;
+                }
+            }
+        }
+
+        //Maps a server world id (World.Name, Resources/Worlds/Worlds.xml) to a tracked dungeon label. Null when untracked.
+        public static string DungeonLabel(string worldId)
+        {
+            switch (worldId)
+            {
+                case "Spider Den": return "Spider Den";
+                case "Undead Lair": return "Undead Lair";
+                case "Tomb of the Ancients": return "Tomb of the Ancients";
+                case "Sprite World": return "Sprite World";
+                case "Cave of A Thousand Treasures": return "Cave of a Thousand Treasures";
+                case "Manor of the Immortals": return "Manor of the Immortals";
+                case "Forbidden Jungle": return "Forbidden Jungle";
+                case "Davy Jones's Locker": return "Davy Jones' Locker";
+                case "Haunted Cemetery Final Battle": return "Haunted Cemetery";
+                case "Abyss of Demons": return "Abyss of Demons";
+                case "Mad Lab": return "Mad Lab";
+                case "Pirate Cave": return "Pirate Cave";
+                case "Snake Pit": return "Snake Pit";
+                case "Ocean Trench": return "Ocean Trench";
+                default: return null;
+            }
+        }
+
+        public void CompleteDungeon(string label)
+        {
+            int count;
+            Dungeons.TryGetValue(label, out count);
+            Dungeons[label] = count + 1;
+
+            switch (label)
+            {
+                case "Pirate Cave": PirateCavesCompleted++; break;
+                case "Undead Lair": UndeadLairsCompleted++; break;
+                case "Abyss of Demons": AbyssOfDemonsCompleted++; break;
+                case "Snake Pit": SnakePitsCompleted++; break;
+                case "Spider Den": SpiderDensCompleted++; break;
+                case "Sprite World": SpriteWorldsCompleted++; break;
+                case "Tomb of the Ancients": TombsCompleted++; break;
+            }
+        }
+
+        private void SeedDungeon(string label, int namedCounter)
+        {
+            //Old saves only have the named counters.
+            if (namedCounter > 0 && !Dungeons.ContainsKey(label))
+                Dungeons[label] = namedCounter;
+        }
+
+        private XElement ExportDungeons()
+        {
+            XElement dungeons = new XElement("Dungeons");
+            foreach (KeyValuePair<string, int> d in Dungeons)
+                if (d.Value > 0)
+                    dungeons.Add(new XElement("Dungeon", new XAttribute("id", d.Key), d.Value));
+            return dungeons;
+        }
 
         public FameStatsInfo() { }
         public FameStatsInfo(XElement data)
@@ -270,6 +363,24 @@ namespace RotMG.Common
             SpiderDensCompleted = data.ParseInt("SpiderDensCompleted");
             SpriteWorldsCompleted = data.ParseInt("SpriteWorldsCompleted");
             TombsCompleted = data.ParseInt("TombsCompleted");
+
+            XElement dungeons = data.Element("Dungeons");
+            if (dungeons != null)
+                foreach (XElement d in dungeons.Elements("Dungeon"))
+                {
+                    XAttribute id = d.Attribute("id");
+                    int count;
+                    if (id != null && int.TryParse(d.Value, out count) && count > 0)
+                        Dungeons[id.Value] = count;
+                }
+
+            SeedDungeon("Pirate Cave", PirateCavesCompleted);
+            SeedDungeon("Undead Lair", UndeadLairsCompleted);
+            SeedDungeon("Abyss of Demons", AbyssOfDemonsCompleted);
+            SeedDungeon("Snake Pit", SnakePitsCompleted);
+            SeedDungeon("Spider Den", SpiderDensCompleted);
+            SeedDungeon("Sprite World", SpriteWorldsCompleted);
+            SeedDungeon("Tomb of the Ancients", TombsCompleted);
         }
 
         public XElement Export(bool appExport = true)
@@ -285,6 +396,7 @@ namespace RotMG.Common
             data.Add(new XElement("SnakePitsCompleted", SnakePitsCompleted));
             data.Add(new XElement("SpiderDensCompleted", SpiderDensCompleted));
             data.Add(new XElement("SpriteWorldsCompleted", SpriteWorldsCompleted));
+            data.Add(new XElement("TombsCompleted", TombsCompleted));
             data.Add(new XElement("Escapes", Escapes));
             data.Add(new XElement("NearDeathEscapes", NearDeathEscapes));
             data.Add(new XElement("LevelUpAssists", LevelUpAssists));
@@ -305,6 +417,7 @@ namespace RotMG.Common
             data.Add(new XElement("WhiteBags", WhiteBags));
             data.Add(new XElement("MinutesActive", MinutesActive));
             data.Add(new XElement("AbilitiesUsed", AbilitiesUsed));
+            data.Add(ExportDungeons());
             return data;
         }
 
@@ -320,6 +433,7 @@ namespace RotMG.Common
             e.Add(new XElement("SnakePitsCompleted", SnakePitsCompleted));
             e.Add(new XElement("SpiderDensCompleted", SpiderDensCompleted));
             e.Add(new XElement("SpriteWorldsCompleted", SpriteWorldsCompleted));
+            e.Add(new XElement("TombsCompleted", TombsCompleted));
             e.Add(new XElement("Escapes", Escapes));
             e.Add(new XElement("NearDeathEscapes", NearDeathEscapes));
             e.Add(new XElement("LevelUpAssists", LevelUpAssists));
@@ -340,6 +454,7 @@ namespace RotMG.Common
             e.Add(new XElement("WhiteBags", WhiteBags));
             e.Add(new XElement("MinutesActive", MinutesActive));
             e.Add(new XElement("AbilitiesUsed", AbilitiesUsed));
+            e.Add(ExportDungeons());
         }
     }
 
