@@ -6,16 +6,43 @@ using System.Collections.Generic;
 
 namespace RotMG.Game.Entities
 {
-    //Fabianos-style ninja star ability: hold to channel (Speedy + 10 MP/s
-    //drain), release to throw. Ported from fabianos
-    //wServer/realm/entities/player/Player.UseItem.cs (ShurikenAbility case)
-    //and Player.Boosts.cs (HandleBoosts MP drain).
+    //Two-phase ninja star ability, as betterskillys: hold to channel (Speedy + 10 MP/s drain),
+    //release to throw and pay MpEndCost. The key-down and key-up arrive as UseItem useType
+    //START_USE and END_USE.
     public partial class Player
     {
+        //The key is held: START_USE has been accepted and END_USE has not.
         private bool _ninjaCharging;
+        //The channel's Speedy is active. It ends when MP runs out, while the key stays held, so MP
+        //can regenerate and END_USE can still throw (betterskillys removes NinjaSpeedy at MP 0).
+        private bool _ninjaSpeedOn;
         private float _ninjaDrainCounter;
 
         public bool IsNinjaCharging => _ninjaCharging;
+
+        //betterskillys blocks MP regeneration only while the channel's speed is active.
+        public bool NinjaBlocksMPRegen => _ninjaSpeedOn;
+
+        private void StartNinjaCharge()
+        {
+            ApplyConditionEffect(ConditionEffectIndex.Speedy, -1);
+            _ninjaCharging = true;
+            _ninjaSpeedOn = true;
+            _ninjaDrainCounter = 0;
+        }
+
+        private void ReleaseNinjaCharge(int time, ItemDesc desc, SlotData slot, Position target)
+        {
+            RemoveConditionEffect(ConditionEffectIndex.Speedy);
+            _ninjaCharging = false;
+            _ninjaSpeedOn = false;
+            _ninjaDrainCounter = 0;
+            if (MP >= desc.MpEndCost)
+            {
+                FireShuriken(time, desc, slot, target);
+                MP -= desc.MpEndCost;
+            }
+        }
 
         public void TickNinjaCharge()
         {
@@ -25,12 +52,13 @@ namespace RotMG.Game.Entities
             if (Dead || Parent == null)
             {
                 _ninjaCharging = false;
+                _ninjaSpeedOn = false;
                 _ninjaDrainCounter = 0;
                 RemoveConditionEffect(ConditionEffectIndex.Speedy);
                 return;
             }
 
-            if (MP > 0)
+            if (_ninjaSpeedOn && MP > 0)
             {
                 _ninjaDrainCounter += 10f * Settings.SecondsPerTick;
                 int drain = (int)_ninjaDrainCounter;
@@ -39,7 +67,10 @@ namespace RotMG.Game.Entities
                     MP = Math.Max(0, MP - drain);
                     _ninjaDrainCounter -= drain;
                     if (MP <= 0)
+                    {
+                        _ninjaSpeedOn = false;
                         RemoveConditionEffect(ConditionEffectIndex.Speedy);
+                    }
                 }
             }
         }

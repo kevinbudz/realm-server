@@ -477,7 +477,10 @@ namespace RotMG.Networking
             int time = rdr.ReadInt32();
             SlotData slot = new SlotData(ref rdr);
             Position usePos = new Position(ref rdr);
-            client.Player.TryUseItem(time, slot, usePos);
+            //useType is 0 (legacy toggle, sent by the AS3 client which omits the byte), 1 = START_USE
+            //(key down), 2 = END_USE (key up). Mirrors betterskillys UseItem useType.
+            byte useType = rdr.Remaining > 0 ? rdr.ReadByte() : (byte)0;
+            client.Player.TryUseItem(time, slot, usePos, useType);
         }
 
         public static void EditAccountList(Client client, ref SpanReader rdr)

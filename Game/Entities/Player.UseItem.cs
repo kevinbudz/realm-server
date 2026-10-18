@@ -15,6 +15,12 @@ namespace RotMG.Game.Entities
         public const float UseCooldownThreshold = 1.1f;
         public const int MaxAbilityDist = 14;
 
+        //UseItem useType, mirroring betterskillys Player.UseItem. DefaultUse is the legacy single-message
+        //toggle (the AS3 client sends no useType byte); StartUse is key down, EndUse is key up.
+        public const byte DefaultUse = 0;
+        public const byte StartUse = 1;
+        public const byte EndUse = 2;
+
         public Queue<ushort> ShootAEs;
         public int UseDuration;
         public int UseTime;
@@ -39,7 +45,7 @@ namespace RotMG.Game.Entities
             ConditionEffectIndex.Hexed,
         };
 
-        public void TryUseItem(int time, SlotData slot, Position target)
+        public void TryUseItem(int time, SlotData slot, Position target, byte useType = DefaultUse)
         {
             if (!ValidTime(time))
             {
@@ -55,6 +61,13 @@ namespace RotMG.Game.Entities
             if (!float.IsFinite(target.X) || !float.IsFinite(target.Y))
             {
                 Client.Disconnect();
+                return;
+            }
+
+            //A key-up only ends a two-phase ability in the ability slot. Anywhere else it is not a use.
+            if (useType == EndUse && slot.SlotId != 1)
+            {
+                ReplyInv(false);
                 return;
             }
 
@@ -170,22 +183,36 @@ namespace RotMG.Game.Entities
                     return;
                 }
 
-                if (UseTime + (UseDuration * (1f / UseCooldownThreshold)) > time)
+                //Key-up of a two-phase ability only ends the channel started by the key-down, so it skips the
+                //cooldown and MP gates (betterskillys END_USE). It still gets exactly one InvResult: the client
+                //queues one pending inventory op per USEITEM.
+                if (useType == EndUse)
                 {
-#if DEBUG
-                    Program.Print(PrintType.Error, "Used ability too soon");
-#endif
-                    ReplyInv(false);
-                    return;
+                    if (!desc.MultiPhase)
+                    {
+                        ReplyInv(false);
+                        return;
+                    }
                 }
-
-                if (MP - desc.MpCost < 0)
+                else
                 {
+                    if (UseTime + (UseDuration * (1f / UseCooldownThreshold)) > time)
+                    {
 #if DEBUG
-                    Program.Print(PrintType.Error, "Not enough MP");
+                        Program.Print(PrintType.Error, "Used ability too soon");
 #endif
-                    ReplyInv(false);
-                    return;
+                        ReplyInv(false);
+                        return;
+                    }
+
+                    if (MP - desc.MpCost < 0)
+                    {
+#if DEBUG
+                        Program.Print(PrintType.Error, "Not enough MP");
+#endif
+                        ReplyInv(false);
+                        return;
+                    }
                 }
             }
 
@@ -197,27 +224,23 @@ namespace RotMG.Game.Entities
                 {
                     case ActivateEffectIndex.ShurikenAbility:
                     case ActivateEffectIndex.Shuriken: //Legacy alias, same ability.
-                        //Fabianos two-phase ninja star: first press starts the
-                        //channel (Speedy while the key is held, 10 MP/s drain
-                        //via TickNinjaCharge); releasing the key throws the
-                        //star and pays MpEndCost.
-                        if (!_ninjaCharging)
+                        //Two-phase ninja star, as betterskillys: key down starts the channel (Speedy
+                        //while held, 10 MP/s drain via TickNinjaCharge); key up throws the star and
+                        //pays MpEndCost. DefaultUse keeps the legacy toggle for clients without useType.
+                        if (useType == EndUse)
                         {
-                            ApplyConditionEffect(ConditionEffectIndex.Speedy, -1);
-                            _ninjaCharging = true;
-                            _ninjaDrainCounter = 0;
+                            if (_ninjaCharging)
+                                ReleaseNinjaCharge(time, desc, slot, target);
                         }
+                        else if (useType == StartUse)
+                        {
+                            if (!_ninjaCharging)
+                                StartNinjaCharge();
+                        }
+                        else if (!_ninjaCharging)
+                            StartNinjaCharge();
                         else
-                        {
-                            RemoveConditionEffect(ConditionEffectIndex.Speedy);
-                            _ninjaCharging = false;
-                            _ninjaDrainCounter = 0;
-                            if (MP >= desc.MpEndCost)
-                            {
-                                FireShuriken(time, desc, slot, target);
-                                MP -= desc.MpEndCost;
-                            }
-                        }
+                            ReleaseNinjaCharge(time, desc, slot, target);
                         break;
                     case ActivateEffectIndex.VampireBlast: //Maybe optimize this...?
                         if (inRange)
@@ -369,28 +392,25 @@ namespace RotMG.Game.Entities
                                 HashSet<Entity> targets = new HashSet<Entity>();
                                 List<byte[]> pkts = new List<byte[]>();
                                 targets.Add(current);
-                                if (current is Enemy currentEnemy &&
-                                    !currentEnemy.HasConditionEffect(ConditionEffectIndex.Invincible) &&
-                                    !currentEnemy.HasConditionEffect(ConditionEffectIndex.Stasis))
-                                    currentEnemy.Damage(this, eff.TotalDamage, eff.Effects, false, true);
                                 for (int i = 1; i < eff.MaxTargets + 1; i++)
                                 {
                                     pkts.Add(GameServer.ShowEffect(ShowEffectIndex.Lightning, prev.Id, 0xffff0088,
                                         new Position(current.Position.X, current.Position.Y),
                                         new Position(350, 0)).ToArray());
 
-                                    if (i == eff.MaxTargets) 
-                                        break;
+                                    //Search from current before damaging it: a lethal hit runs Enemy.Death, which
+                                    //removes current and sets Parent = null, and GetNearestEnemy needs a live Parent.
+                                    Entity next = i == eff.MaxTargets ? null : current.GetNearestEnemy(10, targets);
 
-                                    Entity next = current.GetNearestEnemy(10, targets);
+                                    if (current is Enemy currentEnemy &&
+                                        !currentEnemy.HasConditionEffect(ConditionEffectIndex.Invincible) &&
+                                        !currentEnemy.HasConditionEffect(ConditionEffectIndex.Stasis))
+                                        currentEnemy.Damage(this, eff.TotalDamage, eff.Effects, false, true);
+
                                     if (next == null)
                                         break;
 
                                     targets.Add(next);
-                                    if (next is Enemy nextEnemy &&
-                                        !nextEnemy.HasConditionEffect(ConditionEffectIndex.Invincible) &&
-                                        !nextEnemy.HasConditionEffect(ConditionEffectIndex.Stasis))
-                                        nextEnemy.Damage(this, eff.TotalDamage, eff.Effects, false, true);
                                     prev = current;
                                     current = next;
                                 }
@@ -398,10 +418,7 @@ namespace RotMG.Game.Entities
                                 foreach (Entity j in Parent.PlayerChunks.HitTest(Position, SightRadius))
                                     if (j is Player k && k.Client.Account.Effects)
                                         foreach (byte[] p in pkts)
-                                        {
-                                            Console.WriteLine(p.Length);
                                             k.Client.Send(p);
-                                        }
                             }
                         }
                         break;
@@ -698,7 +715,9 @@ namespace RotMG.Game.Entities
                 }
             }
 
-            if (isAbility)
+            //A key-up ends a channel rather than using the ability again, so it costs nothing and
+            //does not restart the cooldown.
+            if (isAbility && useType != EndUse)
             {
                 MP -= desc.MpCost;
                 UseTime = time;

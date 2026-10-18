@@ -141,9 +141,9 @@ namespace RotMG.Game.Entities
 
         public bool CanMPRegen()
         {
-            //No MP regen while channeling a ninja star, mirroring
-            //fabianos Player.CanMpRegen (Quiet || ninjaShoot).
-            return !HasConditionEffect(ConditionEffectIndex.Quiet) && !_ninjaCharging;
+            //No MP regen while the ninja star channel's speed is active, mirroring betterskillys
+            //CanRegenerateMana (Quiet || NinjaSpeedy).
+            return !HasConditionEffect(ConditionEffectIndex.Quiet) && !NinjaBlocksMPRegen;
         }
 
         public bool CanHPRegen()
