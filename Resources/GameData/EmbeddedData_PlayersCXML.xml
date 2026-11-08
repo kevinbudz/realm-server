@@ -27,7 +27,7 @@
 		<LevelIncrease min="0" max="1">HpRegen</LevelIncrease>
 		<LevelIncrease min="0" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="5" type="0x0307">Archer</UnlockLevel>
-        <UnlockCost>199</UnlockCost>
+        <UnlockCost>100</UnlockCost>
 	</Object>
 	<Object type="0x0307" id="Archer">
 		<Class>Player</Class>
@@ -56,7 +56,7 @@
 		<LevelIncrease min="0" max="1">HpRegen</LevelIncrease>
 		<LevelIncrease min="0" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="5" type="0x0310">Priest</UnlockLevel>
-        <UnlockCost>199</UnlockCost>
+        <UnlockCost>100</UnlockCost>
 	</Object>
 	<Object type="0x030e" id="Wizard">
 		<Class>Player</Class>
@@ -142,7 +142,7 @@
 		<LevelIncrease min="1" max="2">HpRegen</LevelIncrease>
 		<LevelIncrease min="0" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="5" type="0x0300">Rogue</UnlockLevel>
-        <UnlockCost>199</UnlockCost>
+        <UnlockCost>100</UnlockCost>
 	</Object>
 	<Object type="0x031e" id="Knight">
 		<Class>Player</Class>
@@ -171,7 +171,7 @@
 		<LevelIncrease min="1" max="2">HpRegen</LevelIncrease>
 		<LevelIncrease min="0" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="20" type="0x031d">Warrior</UnlockLevel>
-        <UnlockCost>499</UnlockCost>
+        <UnlockCost>150</UnlockCost>
 	</Object>
 	<Object type="0x031f" id="Paladin">
 		<Class>Player</Class>
@@ -201,7 +201,7 @@
 		<LevelIncrease min="1" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="20" type="0x031e">Knight</UnlockLevel>
 		<UnlockLevel level="20" type="0x0310">Priest</UnlockLevel>
-        <UnlockCost>499</UnlockCost>
+        <UnlockCost>150</UnlockCost>
 	</Object>
 	<Object type="0x0320" id="Assassin">
 		<Class>Player</Class>
@@ -231,7 +231,7 @@
 		<LevelIncrease min="1" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="20" type="0x0300">Rogue</UnlockLevel>
 		<UnlockLevel level="20" type="0x030e">Wizard</UnlockLevel>
-        <UnlockCost>499</UnlockCost>
+        <UnlockCost>150</UnlockCost>
 	</Object>
 	<Object type="0x0321" id="Necromancer">
 		<Class>Player</Class>
@@ -261,7 +261,7 @@
 		<LevelIncrease min="1" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="20" type="0x030e">Wizard</UnlockLevel>
 		<UnlockLevel level="20" type="0x0310">Priest</UnlockLevel>
-        <UnlockCost>499</UnlockCost>
+        <UnlockCost>150</UnlockCost>
 	</Object>
 	<Object type="0x0322" id="Huntress">
 		<Class>Player</Class>
@@ -291,7 +291,7 @@
 		<LevelIncrease min="0" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="20" type="0x0300">Rogue</UnlockLevel>
 		<UnlockLevel level="20" type="0x0307">Archer</UnlockLevel>
-        <UnlockCost>499</UnlockCost>
+        <UnlockCost>150</UnlockCost>
 	</Object>
 	<Object type="0x0323" id="Mystic">
 		<Class>Player</Class>
@@ -321,7 +321,7 @@
 		<LevelIncrease min="1" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="20" type="0x0322">Huntress</UnlockLevel>
 		<UnlockLevel level="20" type="0x0321">Necromancer</UnlockLevel>
-        <UnlockCost>999</UnlockCost>
+        <UnlockCost>200</UnlockCost>
 	</Object>
 	<Object type="0x0324" id="Trickster">
 		<Class>Player</Class>
@@ -351,7 +351,7 @@
 		<LevelIncrease min="0" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="20" type="0x0320">Assassin</UnlockLevel>
 		<UnlockLevel level="20" type="0x031f">Paladin</UnlockLevel>
-        <UnlockCost>999</UnlockCost>
+        <UnlockCost>200</UnlockCost>
 	</Object>
 	<Object type="0x0325" id="Sorcerer">
 		<Class>Player</Class>
@@ -381,7 +381,7 @@
 		<LevelIncrease min="1" max="2">MpRegen</LevelIncrease>
 		<UnlockLevel level="20" type="0x0321">Necromancer</UnlockLevel>
 		<UnlockLevel level="20" type="0x0320">Assassin</UnlockLevel>
-        <UnlockCost>999</UnlockCost>
+        <UnlockCost>200</UnlockCost>
 	</Object>
     <Object type="0x0326" id="Ninja">
 		<Class>Player</Class>

@@ -6,6 +6,7 @@ using RotMG.Utils;
 
 namespace RotMG.Game.Logic.Behaviors
 {
+    //Hand-written toolkit: not emitted by Tools/XmlBehaviorConverter (files/xml has no equivalent).
     public class KillPlayer : Behavior
     {
         public readonly string KillMessage;

@@ -145,10 +145,12 @@ namespace RotMG.Common
         
         public static void LoadWebFiles()
         {
-            string[] paths = Directory.EnumerateFiles(CombineResourcePath("Web/"), "*", SearchOption.AllDirectories).ToArray();
+            string root = CombineResourcePath("Web/");
+            string[] paths = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToArray();
             for (int i = 0; i < paths.Length; i++)
             {
-                string display = '/' + paths[i].Split('/')[2].Replace(@"\", "/");
+                //Key by the full path below Web/ (/sfx/spell/magic_nova.mp3), not just its first folder.
+                string display = '/' + Path.GetRelativePath(root, paths[i]).Replace(@"\", "/");
 #if DEBUG
                 Program.Print(PrintType.Debug, $"Loading Web File <{display}>");
 #endif

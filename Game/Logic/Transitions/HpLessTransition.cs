@@ -1,8 +1,18 @@
 namespace RotMG.Game.Logic.Transitions
 {
-    public class HpLessTransition : HealthTransition
+    //Old hitpointsLessThan: holds while the host's HP fraction is strictly below Threshold (reference HPLessThanCondition).
+    public class HpLessTransition : Transition
     {
-        public HpLessTransition(double threshold, string targetState)
-            : base((float)threshold, targetState) { }
+        public readonly float Threshold;
+
+        public HpLessTransition(double threshold, string targetState) : base(targetState)
+        {
+            Threshold = (float)threshold;
+        }
+
+        public override bool Tick(Entity host)
+        {
+            return host.GetHealthPercentage() < Threshold;
+        }
     }
 }

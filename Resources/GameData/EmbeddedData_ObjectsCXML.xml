@@ -212,7 +212,6 @@
     </Object>
     <Object type="0x0504" id="Vault Chest">
         <Class>Container</Class>
-        <ShowName/>
         <Container/>
         <CanPutNormalObjects/>
         <CanPutSoulboundObjects/>
@@ -229,9 +228,10 @@
         <Container/>
         <CanPutNormalObjects/>
         <Loot/>
-        <Texture><File>lofiObj4</File><Index>0x9D</Index></Texture>
+        <Texture><File>lofiObj4</File><Index>0x91</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
+        <CanPutSoulboundObjects/>
     </Object>
     <Object type="0x0507" id="Loot Bag 3">
         <DisplayId>Loot Bag</DisplayId>
@@ -240,7 +240,7 @@
         <CanPutNormalObjects/>
         <CanPutSoulboundObjects/>
         <Loot/>
-        <Texture><File>lofiObj4</File><Index>0x91</Index></Texture>
+        <Texture><File>lofiObj4</File><Index>0x92</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
     </Object>
@@ -251,7 +251,7 @@
         <CanPutNormalObjects/>
         <CanPutSoulboundObjects/>
         <Loot/>
-        <Texture><File>lofiObj4</File><Index>0x9C</Index></Texture>
+        <Texture><File>lofiObj4</File><Index>0x93</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
     </Object>
@@ -262,7 +262,7 @@
         <CanPutNormalObjects/>
         <CanPutSoulboundObjects/>
         <Loot/>
-        <Texture><File>lofiObj4</File><Index>0x92</Index></Texture>
+        <Texture><File>lofiObj4</File><Index>0x94</Index></Texture>
         <Size>80</Size>
         <SlotTypes>0, 0, 0, 0, 0, 0, 0, 0</SlotTypes>
     </Object>
@@ -734,7 +734,7 @@
         <Class>Portal</Class>
         <DungeonName>Vault Explanation</DungeonName>
         <IntergamePortal/>
-        <Texture><File>lofiEnvironment2</File><Index>0x37</Index></Texture>
+        <Texture><File>lofiEnvironment3</File><Index>0xf8</Index></Texture>
     </Object>
 
     <Object type="0x0748" id="Guild Explanation Portal">

@@ -1322,7 +1322,7 @@
 	</Object>
   
 	<Object type="0x1539" id="Baby Generator">
-	    <DisplayId>Baby</DisplayId>
+	    <DisplayId>Baby New Years</DisplayId>
 	    <Class>Equipment</Class>
 	    <Item/>
         <AnimatedTexture><File>chars8x8rPets1</File><Index>45</Index></AnimatedTexture>
@@ -1340,6 +1340,7 @@
         <AnimatedTexture><File>chars8x8rPets1</File><Index>45</Index></AnimatedTexture>
 	    <NoMiniMap/>
 	    <Size>60</Size>
+        <DisplayId>Baby New Years</DisplayId>
 	</Object>
   
 	<Object type="0x153a" id="Baby Dragon Generator">

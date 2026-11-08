@@ -14,7 +14,7 @@
 		<Terrain>HighSand</Terrain>
 		<God/>
 		<SpawnProb>0.7</SpawnProb>
-		<XpMult>0.8</XpMult>
+		<XpMult>1.7</XpMult>
 		
 		<Projectile id="0">
 			<ObjectId>Blade</ObjectId>

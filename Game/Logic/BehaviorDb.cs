@@ -87,6 +87,9 @@ namespace RotMG.Game.Logic
                           where typeof(IBehaviorDatabase).IsAssignableFrom(type) && !type.IsInterface
                           select type;
 
+            // Behaviors are generated from files/xml by Tools/XmlBehaviorConverter
+            // into Game/Logic/Database/*.cs. Each database registers its own
+            // object types; registering a type twice is an error in DEBUG.
             foreach (Type k in results)
             {
 #if DEBUG

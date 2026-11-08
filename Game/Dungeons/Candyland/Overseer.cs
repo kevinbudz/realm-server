@@ -10,7 +10,7 @@ namespace RotMG.Game.Dungeons.Candyland
     //Candyland is a hunting ground, not a realm biome and not a camp around
     //the six clustered map spawners. Hunt enemies are placed on open
     //walkable tiles (see HuntLayout) when the first player joins. Each
-    //hunt enemy brings 1-3 of its own minions once via SpawnOnce; the
+    //hunt enemy brings 1-3 of its own minions through its own behavior; the
     //Overseer never places minions. Killing a hunt enemy rolls a 10%
     //chance to spawn its mapped boss. Emptied slots refill 30-40s after
     //the kill, and only on tiles at least 25 tiles from any player.

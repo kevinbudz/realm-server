@@ -1653,6 +1653,7 @@
 
 
 
+        <NoMiniMap/>
     </Object>
 
     <Object type="0x5f33" id="Arena Statue Left">

@@ -2,6 +2,7 @@ using RotMG.Game.Entities;
 
 namespace RotMG.Game.Logic.Transitions
 {
+    //Hand-written toolkit: not emitted by Tools/XmlBehaviorConverter (files/xml has no equivalent).
     public class NoEntityWithinTransition : Transition
     {
         public readonly float Distance;

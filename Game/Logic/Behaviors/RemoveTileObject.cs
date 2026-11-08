@@ -2,6 +2,7 @@ using System;
 
 namespace RotMG.Game.Logic.Behaviors
 {
+    //Hand-written toolkit: not emitted by Tools/XmlBehaviorConverter (files/xml has no equivalent).
     public class RemoveTileObject : Behavior
     {
         public readonly string ObjName;

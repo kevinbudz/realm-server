@@ -21,7 +21,7 @@ namespace RotMG.Game.Dungeons.Candyland
         //Hunt slots hold the 5 hunt enemies plus Spilled IceCream and
         //Hard Candy, which spawn independently of any mob and never roll
         //a boss. The remaining minions are never placed by the Overseer;
-        //each hunt enemy brings 1-3 of its own once via SpawnOnce.
+        //each hunt enemy brings 1-3 of its own through its own behavior.
         private static readonly (string Name, int Count)[] HuntMix =
         {
             ("Big Creampuff", 4),

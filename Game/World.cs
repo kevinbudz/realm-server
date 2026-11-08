@@ -61,6 +61,23 @@ namespace RotMG.Game
         public int PlayerListVersion;
         public List<string> ChatMessages;
 
+        //Recent player chat for PlayerSaysTransition, oldest first. Filled by Player.Chat through AddRecentChat;
+        //entries older than RecentChatWindowMs are dropped by PruneRecentChats.
+        public const int RecentChatWindowMs = 3000;
+        public struct RecentChat
+        {
+            public Position Position;
+            public string Text;
+            public int Time;
+        }
+        public readonly List<RecentChat> RecentChats = new List<RecentChat>();
+
+        //Per-world tags (old game.setTag/hasTag), read by GlobalTagTransition, written by SetGlobalTag.
+        private readonly HashSet<string> _globalTags = new HashSet<string>();
+        //Live entity count per type over Entities and Statics (players excluded). Kept in step by AddEntity and
+        //RemoveEntity so WorldEntitiesTransition does not scan the world.
+        private readonly Dictionary<ushort, int> _liveTypeCounts = new Dictionary<ushort, int>();
+
         public Tile[,] Tiles;
         public IGameMap Map;
 
@@ -554,6 +571,53 @@ namespace RotMG.Game
             return Tiles[x, y];
         }
 
+        public bool HasGlobalTag(string tag)
+        {
+            return _globalTags.Contains(tag);
+        }
+
+        public void AddGlobalTag(string tag)
+        {
+            _globalTags.Add(tag);
+        }
+
+        public void RemoveGlobalTag(string tag)
+        {
+            _globalTags.Remove(tag);
+        }
+
+        public int CountLiveOfType(ushort type)
+        {
+            return _liveTypeCounts.TryGetValue(type, out int count) ? count : 0;
+        }
+
+        private void TrackType(ushort type, int delta)
+        {
+            _liveTypeCounts.TryGetValue(type, out int count);
+            count += delta;
+            if (count <= 0)
+                _liveTypeCounts.Remove(type);
+            else
+                _liveTypeCounts[type] = count;
+        }
+
+        public void AddRecentChat(Position at, string text)
+        {
+            PruneRecentChats();
+            RecentChats.Add(new RecentChat { Position = at, Text = text, Time = Manager.TotalTime });
+        }
+
+        //Chats are appended in time order, so only the front of the list can be expired.
+        public void PruneRecentChats()
+        {
+            int now = Manager.TotalTime;
+            int drop = 0;
+            while (drop < RecentChats.Count && now - RecentChats[drop].Time > RecentChatWindowMs)
+                drop++;
+            if (drop > 0)
+                RecentChats.RemoveRange(0, drop);
+        }
+
         public Entity GetEntity(int id)
         {
             if (Entities.TryGetValue(id, out Entity en))
@@ -607,12 +671,12 @@ namespace RotMG.Game
             en.Id = ++NextObjectId;
             en.Parent = this;
             en.Position = at;
-            en.SpawnPoint = at;
             MoveEntity(en, en.Position);
 
             if (en is StaticObject staticObj)
             {
                 Statics.Add(en.Id, staticObj);
+                TrackType(en.Type, 1);
                 StaticGrid.Add(staticObj);
                 //Clients discover statics through their tile (see Player
                 //updates); without this link runtime-spawned portals and
@@ -651,11 +715,13 @@ namespace RotMG.Game
             else if (en is Decoy)
             {
                 Entities.Add(en.Id, en);
+                TrackType(en.Type, 1);
                 PlayerChunks.Insert(en);
             }
             else
             {
                 Entities.Add(en.Id, en);
+                TrackType(en.Type, 1);
                 EntityChunks.Insert(en);
 
                 if (en.Desc.Quest)
@@ -691,7 +757,8 @@ namespace RotMG.Game
 #endif     
             if (en is StaticObject staticObj)
             {
-                Statics.Remove(en.Id);
+                if (Statics.Remove(en.Id))
+                    TrackType(en.Type, -1);
                 StaticGrid.Remove(staticObj);
                 _behaviorStatics.Remove(staticObj);
                 //Clear the tile link so removed statics (e.g. expired
@@ -727,12 +794,14 @@ namespace RotMG.Game
             }
             else if (en is Decoy)
             {
-                Entities.Remove(en.Id);
+                if (Entities.Remove(en.Id))
+                    TrackType(en.Type, -1);
                 PlayerChunks.Remove(en);
             }
             else
             {
-                Entities.Remove(en.Id);
+                if (Entities.Remove(en.Id))
+                    TrackType(en.Type, -1);
                 EntityChunks.Remove(en);
 
                 if (en.Desc.Quest)

@@ -3,6 +3,7 @@ using System.Linq;
 
 namespace RotMG.Game.Logic.Behaviors
 {
+    //Hand-written toolkit: not emitted by Tools/XmlBehaviorConverter (files/xml has no equivalent).
     public class BringEnemy : Behavior
     {
         public readonly string Name;

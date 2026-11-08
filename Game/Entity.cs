@@ -116,10 +116,6 @@ namespace RotMG.Game
         public ushort Type;
         public ObjectDesc Desc;
         public Position Position;
-        //Where this entity was placed by World.AddEntity. ReturnToSpawn
-        //walks back here; mirrors realm-src-master Enemy.SpawnPoint
-        //(captured at spawn, not on state enter).
-        public Position SpawnPoint;
         public Chunk CurrentChunk;
         public World Parent;
 
@@ -621,6 +617,25 @@ namespace RotMG.Game
             if (desc == null)
                 return false;
             return StaticBlocksPlayerWalk(desc.OccupySquare, desc.FullOccupy, desc.EnemyOccupySquare, desc.Enemy);
+        }
+
+        //Per-entity tags (old setTag/hasTag): written by SetTag, read by TagTransition. Allocated on first use.
+        private HashSet<string> _tags;
+
+        public bool HasTag(string tag)
+        {
+            return _tags != null && _tags.Contains(tag);
+        }
+
+        public void AddTag(string tag)
+        {
+            _tags ??= new HashSet<string>();
+            _tags.Add(tag);
+        }
+
+        public void RemoveTag(string tag)
+        {
+            _tags?.Remove(tag);
         }
 
         public void InitStates()

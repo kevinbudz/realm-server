@@ -1,5 +1,6 @@
 ﻿using RotMG.Common;
 using RotMG.Game.Entities;
+using RotMG.Networking;
 using RotMG.Utils;
 using System;
 using System.Collections.Generic;
@@ -163,11 +164,98 @@ namespace RotMG.Game.Logic.Behaviors
                     player.Client.Send(packet);
         }
 
-        public static void BroadcastToViewers(Entity host, ReadOnlySpan<byte> packet)
+        //Players who can see host: within sight radius and tracking it in Entities. Collected eagerly, in hit-test order.
+        public static Player[] GetViewers(Entity host)
         {
+            List<Player> viewers = new List<Player>();
             foreach (Entity en in host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius))
                 if (en is Player player && player.Entities.Contains(host))
-                    player.Client.Send(packet);
+                    viewers.Add(player);
+            return viewers.ToArray();
+        }
+
+        public static void BroadcastToViewers(Entity host, ReadOnlySpan<byte> packet)
+        {
+            foreach (Player player in GetViewers(host))
+                player.Client.Send(packet);
+        }
+
+        //Sends one volley of count projectiles starting at startAngle, stepping angleStep radians, to the viewers of host.
+        //Each viewer is told about the projectiles first so their hits resolve.
+        public static void SendVolley(Entity host, ProjectileDesc desc, float startAngle, float angleStep, int count)
+        {
+            int damage = desc.Damage;
+            int startId = host.Parent.NextProjectileId;
+            host.Parent.NextProjectileId += count;
+
+            List<Projectile> projectiles = new List<Projectile>();
+            for (int k = 0; k < count; k++)
+                projectiles.Add(new Projectile(host, desc, startId + k, Manager.TotalTime, startAngle + angleStep * k, host.Position, damage));
+
+            ReadOnlySpan<byte> packet = GameServer.EnemyShoot(startId, host.Id, desc.BulletType, host.Position, startAngle, (short)damage, (byte)count, angleStep);
+            foreach (Player player in GetViewers(host))
+            {
+                player.AwaitProjectiles(projectiles);
+                player.Client.Send(packet);
+            }
+        }
+
+        //Steps host up to step tiles toward dest without passing it. False when already there (within 0.0001) or when
+        //the move did not change the position (blocked).
+        public static bool MoveToward(Entity host, Position dest, float step)
+        {
+            Position from = host.Position;
+            float dist = from.Distance(dest);
+            if (dist <= 0.0001f)
+                return false;
+            host.ValidateAndMove(from + (dest - from) * (MathF.Min(step, dist) / dist));
+            return host.Position != from;
+        }
+
+        //Condition effect by name (case-insensitive, trimmed). Unknown names give Nothing; owner names the caller in the
+        //DEBUG diagnostic.
+        public static ConditionEffectIndex ParseEffect(string name, string owner)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return ConditionEffectIndex.Nothing;
+            foreach (ConditionEffectIndex index in Enum.GetValues(typeof(ConditionEffectIndex)))
+                if (index != ConditionEffectIndex.Nothing && string.Equals(index.ToString(), name.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return index;
+#if DEBUG
+            Program.Print(PrintType.Error, $"{owner}: unknown condition effect <{name}>.");
+#endif
+            return ConditionEffectIndex.Nothing;
+        }
+
+        //Comma-separated condition effect names. Unknown names are dropped.
+        public static ConditionEffectIndex[] ParseEffects(string names, string owner)
+        {
+            List<ConditionEffectIndex> list = new List<ConditionEffectIndex>();
+            if (string.IsNullOrWhiteSpace(names))
+                return list.ToArray();
+
+            foreach (string raw in names.Split(','))
+            {
+                string name = raw.Trim();
+                if (name.Length == 0)
+                    continue;
+                ConditionEffectIndex? match = null;
+                foreach (ConditionEffectIndex index in Enum.GetValues(typeof(ConditionEffectIndex)))
+                {
+                    if (index != ConditionEffectIndex.Nothing && string.Equals(index.ToString(), name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        match = index;
+                        break;
+                    }
+                }
+                if (match != null)
+                    list.Add(match.Value);
+#if DEBUG
+                else
+                    Program.Print(PrintType.Error, $"{owner}: unknown condition effect <{name}>.");
+#endif
+            }
+            return list.ToArray();
         }
 
         public static State FindState(IEnumerable<State> roots, string name)

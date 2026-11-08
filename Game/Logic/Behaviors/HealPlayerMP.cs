@@ -4,6 +4,7 @@ using RotMG.Utils;
 
 namespace RotMG.Game.Logic.Behaviors
 {
+    //Hand-written toolkit: not emitted by Tools/XmlBehaviorConverter (files/xml has no equivalent).
     public class HealPlayerMP : Behavior
     {
         public readonly float Range;

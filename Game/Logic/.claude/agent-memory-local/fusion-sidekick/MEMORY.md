@@ -1,0 +1,4 @@
+- [behavior-engine-port-facts](behavior-engine-port-facts.md) — C# behavior engine limits for C++ ports: kill without player, pet-owned hitters, empty chests, PlaceMap paths, packet span lifetime
+- [build-lock-compiler-server](build-lock-compiler-server.md) — build.lock stalls behind a leftover VBCSCompiler; check lslocks, build an isolated copy in scratch
+- [tags-orders-port](tags-orders-port.md) — tags, global tags, OrderDb/FollowOrders, chat window and census counts: where they live and why
+- [hand-written-toolkit-behaviors](hand-written-toolkit-behaviors.md) — 15 unused hand-written behaviors/transitions restored 2026-11-08; keep the toolkit comment, not converter output

@@ -8,6 +8,7 @@ namespace RotMG.Game.Logic.Transitions
         public int Delay;
     }
 
+    //Hand-written toolkit: not emitted by Tools/XmlBehaviorConverter (files/xml has no equivalent).
     public class NotMovingTransition : Transition
     {
         public readonly int Delay;

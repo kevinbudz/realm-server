@@ -90,19 +90,18 @@ namespace RotMG.Game.Logic.Behaviors
                     //Copies: both builders share the scratch, and aoe is captured by the timer lambda below.
                     byte[] eff = GameServer.ThrowEffect(host.Id, Color, p, TravelTime).ToArray();
                     byte[] aoe = GameServer.Aoe(p, Radius, Damage, Effects[0].Effect, Color).ToArray();
-                    Entity[] players = host.Parent.PlayerChunks.HitTest(host.Position, Player.SightRadius)
-                        .Where(e => (e is Player j) && j.Entities.Contains(host)).ToArray();
+                    Player[] players = BehaviorHelpers.GetViewers(host);
 
-                    foreach (Entity en in players)
-                        (en as Player).Client.Send(eff);
+                    foreach (Player en in players)
+                        en.Client.Send(eff);
 
                     Manager.AddTimedAction(TravelTime, () =>
                     {
-                        foreach (Entity en in players)
+                        foreach (Player en in players)
                             if (en.Parent != null)
                             {
-                                (en as Player).AwaitAoe(ack);
-                                (en as Player).Client.Send(aoe);
+                                en.AwaitAoe(ack);
+                                en.Client.Send(aoe);
                             }
                     });
                 }
