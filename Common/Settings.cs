@@ -15,7 +15,9 @@ namespace RotMG.Common
         //headroom above 4 (P18).
         public static int MaxClientsPerIp = 8;
         public static string Address;
+        //Ports[0] HTTP API, Ports[1] game TCP, Ports[2] browser WebSocket (optional, default 2051).
         public static int[] Ports;
+        public static int WebSocketPort = 2051;
         public static string ResourceDirectory;
         public static string DatabaseDirectory;
         public static string DatabasePath;
@@ -43,6 +45,8 @@ namespace RotMG.Common
                 MaxClientsPerIp = Math.Max(1, data.ParseInt("MaxClientsPerIp", 8));
                 Address = data.ParseString("Address", "127.0.0.1");
                 Ports = data.ParseIntArray("Ports", ":");
+                if (Ports != null && Ports.Length > 2)
+                    WebSocketPort = Ports[2];
                 ResourceDirectory = data.ParseString("@res", "Common/Resources");
                 DatabaseDirectory = data.ParseString("@db", "Database");
                 //The db attribute is either a directory (realm.db is created inside it)

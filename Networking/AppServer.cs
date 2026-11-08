@@ -42,6 +42,16 @@ namespace RotMG.Networking
                 {
                     //Wait for new request.
                     HttpListenerContext context = _listener.GetContext();
+                    //The API is called from pages on other origins, so every response (errors and static files too) carries CORS.
+                    context.Response.AddHeader("Access-Control-Allow-Origin", "*");
+                    if (context.Request.HttpMethod == "OPTIONS")
+                    {
+                        context.Response.StatusCode = 204;
+                        context.Response.AddHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                        context.Response.AddHeader("Access-Control-Allow-Headers", "Content-Type");
+                        context.Response.Close();
+                        continue;
+                    }
                     //Process request and push work to main thread.
                     string request = context.Request.Url.LocalPath;
 #if DEBUG

@@ -44,6 +44,7 @@ namespace RotMG
             Database.Init();
             AppServer.Init();
             GameServer.Init();
+            WebSocketServer.Init();
             Manager.Init();
             //[W05] Discover chat commands at startup (main thread), not on the first command.
             RotMG.Game.Commands.CommandTable.Warm();
@@ -51,6 +52,7 @@ namespace RotMG
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, AppServer.Start);
             ThreadUtils.StartNewThread(ThreadPriority.Lowest, GameServer.Start);
             GameServer.StartIo();
+            ThreadUtils.StartNewThread(ThreadPriority.Lowest, WebSocketServer.Start);
 
             AppDomain.CurrentDomain.ProcessExit += new EventHandler(Terminate);
             AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(Terminate);
@@ -131,6 +133,7 @@ namespace RotMG
             Thread.Sleep(200);
             try
             {
+                WebSocketServer.Stop();
                 AppServer.Stop();
                 GameServer.Stop();
             }

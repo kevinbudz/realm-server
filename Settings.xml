@@ -4,7 +4,7 @@
 <!--Per-IP game sockets. 8 leaves room for 4 NAT'd players each holding an old+new socket during a portal.-->
 	<MaxClientsPerIp>8</MaxClientsPerIp>
 	<Address>127.0.0.1</Address>
-	<Ports>7777:2050</Ports>
+	<Ports>7777:2050:2051</Ports>
 	<TicksPerSecond>10</TicksPerSecond> 
 <!--Client & Server designed to run at 10TPS, changing that might result in laggy animations/movement-->
 <!--Soak-test flag (default false): build large worlds off the tick thread-->

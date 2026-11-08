@@ -239,15 +239,21 @@ namespace RotMG.Networking
         //the PushWork hand-off on. Nothing is registered (pool slot, IP count) until the peer address is known.
         private static void Admit(Socket skt)
         {
+            Admit(skt, ((IPEndPoint)skt.RemoteEndPoint).Address);
+        }
+
+        //realIp is the peer that per-IP caps and logs use. The WebSocket bridge passes the browser's address here,
+        //because the socket it hands over is a loopback socket whose own peer is 127.0.0.1.
+        internal static void Admit(Socket skt, IPAddress realIp)
+        {
             long hopAccept = HopTrace.Enabled ? HopTrace.Now() : 0; //[hop]
-            IPEndPoint remote = (IPEndPoint)skt.RemoteEndPoint;
-            string ip = remote.Address.ToString(); //[W10] was Split(':')[0]: every IPv6 peer shared the key "["
+            string ip = realIp.ToString(); //[W10] was Split(':')[0]: every IPv6 peer shared the key "["
             DrainAddBack();
 
             if (!_clients.TryDequeue(out Client client))
             {
 #if DEBUG
-                Program.Print(PrintType.Warn, $"No pooled client available, aborted connection from <{remote}>");
+                Program.Print(PrintType.Warn, $"No pooled client available, aborted connection from <{ip}>");
 #endif
                 RejectSocket(skt, ServerFullMessage);
                 return;
@@ -255,14 +261,14 @@ namespace RotMG.Networking
             if (!TryAcquireIp(ip))
             {
 #if DEBUG
-                Program.Print(PrintType.Warn, $"Too many clients connected, disconnecting <{remote}>");
+                Program.Print(PrintType.Warn, $"Too many clients connected, disconnecting <{ip}>");
 #endif
                 _clients.Enqueue(client);
                 RejectSocket(skt, TooManyConnectionsMessage);
                 return;
             }
 #if DEBUG
-            Program.Print(PrintType.Debug, $"Client connected from <{remote}>");
+            Program.Print(PrintType.Debug, $"Client connected from <{ip}>");
 #endif
             if (HopTrace.Enabled) HopTrace.Accepted(client, hopAccept); //[hop]
             Program.PushWork(() =>
